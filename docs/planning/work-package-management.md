@@ -233,3 +233,89 @@ Doğrulananlar:
 - Uygulama commit'i: `82e1de1` (`feat: add durable approval state machine`).
 
 Aktif iş paketi WP6'dır.
+
+## WP6 ilk kabul denetimi — düzeltme gerekli
+
+Karar: **Eksik**
+
+Doğrulananlar:
+
+- Server-owned hash tabanlı persistent Codex home adayı, durable recovery alanları, session detail/resume API'si, generated `thread/read` → `thread/resume`, steer/interrupt endpoint'leri ve adreslenebilir session route'u uygulanmış.
+- `pnpm verify` başarılı: 6 test dosyasında 69 test geçti; typecheck ve TanStack Start client/SSR build tamamlandı.
+- Fake runtime testinde aynı-key concurrent resume coalesce ediliyor ve `THREAD_NOT_RESUMABLE` thread binding'i değiştirmeden durable `recovery_required` durumu üretiyor.
+
+Eksik/hatalı davranış:
+
+- WP6 değişiklikleri staged fakat commit edilmemiş; zorunlu `feat: add session resume and recovery` commit'i yok ve çalışma ağacı temiz değil.
+- Gerçek iki-instance app-server restart/resume smoke komutu ve kanıtı bulunmuyor.
+- Persistent home auth/config provisioning uygulanmamış; yeni home yalnız boş dizin oluşturuyor. Gerçek authenticated turn ve resume davranışı kanıtlanmamış.
+- `thread/read`/`thread/resume` snapshot'larındaki eksik authoritative completed item/turn event'lerini event store ile reconcile eden kod yok; yalnız aktif turn belleği yeniden kuruluyor.
+- WP6 test kapsamı yalnız iki control-plane resume testi ve iki home testi ekliyor. Runtime crash/generation auto-resume, schema v2→v3 migration, pending idempotency crash-window, snapshot dedupe/reconciliation, steer, interrupt, approval expiry, session isolation ve browser reload/reconnect testleri eksik.
+- Interrupt'ın crash penceresinde duplicate upstream etkiyi engelleyen durable idempotency kaydı yok.
+- Bütün `thread/read`/`thread/resume` hataları transient runtime/auth/timeout ayrımı yapılmadan `THREAD_NOT_RESUMABLE` olarak kalıcılaştırılıyor.
+- API `recoveryOptions` döndürse de UI yalnız retry resume butonu gösteriyor; `start_new_session` ve `view_read_only` seçenekleri recovery bağlamında sunulmuyor.
+- Browser reload, WebSocket reconnect, aynı thread'de ikinci turn, steer/interrupt ve 390×844 recovery UI bağımsız olarak doğrulanmamış.
+- Teslimata ait dev server process'leri 3000 ve 3100 portlarında çalışır durumda bırakılmış; geçici kaynak cleanup tamamlanmamış.
+
+WP6 tamamlanmadan WP7 aktif edilemez.
+
+## WP6 ilk düzeltme yeniden denetimi — runtime UI düzeltmesi gerekli
+
+Karar: **Eksik**
+
+Kapatılan ilk denetim maddeleri:
+
+- `2d7f3ac` commit'i oluşturuldu ve çalışma ağacı temizdi.
+- `pnpm verify` başarılı: 6 test dosyasında 78 test geçti; typecheck ve production build tamamlandı.
+- Persistent home provisioning, schema v2→v3 migration, crash-window idempotency, snapshot reconciliation/dedupe, typed transient recovery, steer/interrupt ve runtime generation recovery testleri eklendi.
+- Gerçek iki-instance restart smoke aynı thread ID'yi resume etti; sequence 22'den 43'e ilerledi, tekrar resume duplicate snapshot üretmedi ve geçici DB/home temizlendi.
+
+Kalan kabul engeli:
+
+- Gerçek dev/SSR başlangıcında `/` endpoint'i HTTP 500 döndü. `apps/web/src/routes/sessions.$sessionId.tsx`, index route modülünü import ederek circular route bağımlılığı oluşturuyor ve runtime'da `ReferenceError: SessionPage is not defined` üretiyor.
+- Bu nedenle session URL reload, recovery UI, steer/interrupt kontrolleri ve 390×844 browser akışı bağımsız olarak doğrulanamadı. Mevcut build kontrolü route modülünü gerçek SSR request'iyle execute etmediği için hatayı yakalamıyor.
+
+WP6 aktif kalır; WP7'ye geçilemez.
+
+## WP6 runtime UI düzeltmesi — yeniden denetim bekliyor
+
+Durum: **Aktif / kabul bekliyor**
+
+Session route, index route component'ini modül yükleme anında okumak yerine render
+zamanında çözen bir wrapper kullanacak biçimde düzeltildi. Gerçek dev/SSR
+başlangıcında `/` ve `/sessions/:sessionId` HTTP 200 döndürdü; session sayfası
+browser reload sonrasında console warning/error veya overlay olmadan render edildi.
+390×844 görünümünde yatay taşma oluşmadı. `pnpm verify` ve gerçek iki-instance
+restart/resume smoke yeniden geçti.
+
+Bu kayıt WP6'yı tamamlandı yapmaz; nihai karar yönetici yeniden denetimindedir.
+
+## WP6 ikinci düzeltme yeniden denetimi — yapısal route/test düzeltmesi gerekli
+
+Karar: **Eksik**
+
+Doğrulananlar:
+
+- `f7e3bac` commit'i mevcut ve çalışma ağacı temiz.
+- `pnpm verify` başarılı: 6 test dosyasında 78 test geçti; typecheck ve production build tamamlandı.
+- Bağımsız gerçek dev/SSR kontrolünde `/` ve `/sessions/test-session` HTTP 200 döndü; önceki `SessionPage is not defined` runtime hatası artık oluşmadı.
+- Önceki yeniden denetimde gerçek iki-instance restart/resume smoke aynı thread, monotonic sequence ve snapshot dedupe davranışını kanıtladı.
+
+Kalan kabul engeli:
+
+- `apps/web/src/routes/sessions.$sessionId.tsx` hâlâ `./index` route modülünü import ediyor. İstenen route-olmayan ortak `WorkspacePage` component ayrımı yapılmadı; circular route bağımlılığı yalnız değer okuması render zamanına ertelenerek maskelendi.
+- `/` ve `/sessions/:sessionId` route'larını gerçek SSR HTTP request'iyle execute eden otomatik regresyon testi eklenmedi. Bu nedenle `pnpm verify`, ilk bulunan runtime 500 sınıfındaki hatayı gelecekte yine yakalayamaz.
+
+WP6 aktif kalır; WP7'ye geçilemez.
+
+## WP6 yapısal route/test düzeltmesi — yeniden denetim bekliyor
+
+Durum: **Aktif / kabul bekliyor**
+
+Ortak `WorkspacePage`, route modülleri dışındaki `apps/web/src/workspace-page.tsx`
+dosyasına taşındı. `/` ve `/sessions/:sessionId` route'ları artık birbirini import
+etmeden bu component'i kullanıyor. `pnpm verify` kapsamına gerçek Vite HTTP server
+üzerinden iki route'a request gönderen ve HTTP 200, beklenen SSR gövdesi ile runtime
+error yokluğunu doğrulayan regresyon smoke'u eklendi.
+
+Bu kayıt WP6'yı tamamlandı yapmaz; nihai karar yönetici yeniden denetimindedir.

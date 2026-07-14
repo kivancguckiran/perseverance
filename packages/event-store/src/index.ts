@@ -16,6 +16,9 @@ export interface StoreScope {
 export interface SessionRecord extends StoreScope {
   codexThreadId: string | null
   status: string
+  recoveryErrorCode: string | null
+  lastResumedAt: string | null
+  runtimeGeneration: number | null
   lastSequence: number
   createdAt: string
   updatedAt: string
@@ -142,6 +145,9 @@ interface SessionRow {
   session_id: string
   codex_thread_id: string | null
   status: string
+  recovery_error_code: string | null
+  last_resumed_at: string | null
+  runtime_generation: number | null
   last_sequence: number
   created_at: string
   updated_at: string
@@ -215,6 +221,9 @@ function sessionFromRow(row: SessionRow): SessionRecord {
     sessionId: row.session_id,
     codexThreadId: row.codex_thread_id,
     status: row.status,
+    recoveryErrorCode: row.recovery_error_code,
+    lastResumedAt: row.last_resumed_at,
+    runtimeGeneration: row.runtime_generation,
     lastSequence: row.last_sequence,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -279,6 +288,15 @@ export class SqliteEventStore {
     bootstrapSchema(this.#database, this.#timestamp())
     this.#database
       .prepare(
+        `UPDATE idempotency_keys SET status = 'outcome_unknown',
+       response_json = ?, updated_at = ? WHERE status = 'pending'`,
+      )
+      .run(
+        JSON.stringify({ code: 'RECOVERY_OUTCOME_UNKNOWN' }),
+        this.#timestamp(),
+      )
+    this.#database
+      .prepare(
         `UPDATE approvals SET status = 'expired', upstream_response_status = 'unknown', resolved_at = ?, version = version + 1 WHERE status = 'resolving'`,
       )
       .run(this.#timestamp())
@@ -321,6 +339,20 @@ export class SqliteEventStore {
       SessionRow | undefined
     if (!row) throw new StoreNotFoundError()
     return sessionFromRow(row)
+  }
+
+  listWorkspaceSessions(scope: {
+    tenantId: string
+    workspaceId: string
+  }): SessionRecord[] {
+    assertIdentifier(scope.tenantId, 'tenantId')
+    assertIdentifier(scope.workspaceId, 'workspaceId')
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM sessions WHERE tenant_id = ? AND workspace_id = ? ORDER BY created_at`,
+      )
+      .all(scope.tenantId, scope.workspaceId) as unknown as SessionRow[]
+    return rows.map(sessionFromRow)
   }
 
   bindCodexThread(scope: StoreScope, codexThreadId: string): SessionRecord {
@@ -379,6 +411,38 @@ export class SqliteEventStore {
       .run(
         status,
         this.#timestamp(),
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      )
+    if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+    return this.getSession(scope)
+  }
+
+  updateSessionRecovery(
+    scope: StoreScope,
+    input: {
+      status: 'active' | 'recovering' | 'recovery_required' | 'failed'
+      recoveryErrorCode?: string | null
+      runtimeGeneration?: number | null
+      resumed?: boolean
+    },
+  ): SessionRecord {
+    assertScope(scope)
+    const timestamp = this.#timestamp()
+    const result = this.#database
+      .prepare(
+        `UPDATE sessions SET status = ?, recovery_error_code = ?,
+       runtime_generation = ?, last_resumed_at = CASE WHEN ? THEN ? ELSE last_resumed_at END,
+       updated_at = ? WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+      )
+      .run(
+        input.status,
+        input.recoveryErrorCode ?? null,
+        input.runtimeGeneration ?? null,
+        input.resumed ? 1 : 0,
+        timestamp,
+        timestamp,
         scope.tenantId,
         scope.workspaceId,
         scope.sessionId,
@@ -629,6 +693,65 @@ export class SqliteEventStore {
       nextAfterSequence: events.at(-1)?.sequence ?? afterSequence,
       hasMore,
     }
+  }
+
+  hasTimelineEvent(
+    scope: StoreScope,
+    identity: {
+      type: TimelineEvent['type']
+      codexThreadId: string
+      codexTurnId: string
+      codexItemId?: string
+    },
+  ): boolean {
+    assertScope(scope)
+    const row = this.#database
+      .prepare(
+        `SELECT 1 FROM events WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+         AND type = ? AND json_extract(payload_json, '$.codexThreadId') = ?
+         AND json_extract(payload_json, '$.codexTurnId') = ?
+         AND (? IS NULL OR json_extract(payload_json, '$.codexItemId') = ?)
+         LIMIT 1`,
+      )
+      .get(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        identity.type,
+        identity.codexThreadId,
+        identity.codexTurnId,
+        identity.codexItemId ?? null,
+        identity.codexItemId ?? null,
+      )
+    return Boolean(row)
+  }
+
+  hasEquivalentTimelineEvent(scope: StoreScope, event: TimelineEvent): boolean {
+    assertScope(scope)
+    if (!event.codexThreadId || !event.codexTurnId) return false
+    const rows = this.#database
+      .prepare(
+        `SELECT payload_json FROM events WHERE tenant_id = ? AND workspace_id = ?
+         AND session_id = ? AND type = ?
+         AND json_extract(payload_json, '$.codexThreadId') = ?
+         AND json_extract(payload_json, '$.codexTurnId') = ?`,
+      )
+      .all(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        event.type,
+        event.codexThreadId,
+        event.codexTurnId,
+      ) as unknown as EventRow[]
+    return rows.some((row) => {
+      const candidate = parseTimelineEvent(JSON.parse(row.payload_json))
+      return (
+        (event.codexItemId !== undefined &&
+          candidate.codexItemId === event.codexItemId) ||
+        JSON.stringify(candidate.payload) === JSON.stringify(event.payload)
+      )
+    })
   }
 
   getHighWaterSequence(scope: StoreScope): number {
@@ -998,7 +1121,7 @@ export class SqliteEventStore {
     workspaceId: string
     scope: string
     key: string
-    status: 'completed' | 'failed'
+    status: 'completed' | 'failed' | 'outcome_unknown'
     response: unknown
   }): IdempotencyRecord {
     const result = this.#database

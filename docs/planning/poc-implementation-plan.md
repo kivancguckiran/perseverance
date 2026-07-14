@@ -295,6 +295,8 @@ Kabul kriterleri:
 
 Durum: Aktif
 
+Uygulama notu: Persistent tenant/workspace Codex home, schema v3 recovery modeli, `thread/read` → `thread/resume`, crash sonrası `outcome_unknown`, session detail/resume ve generated steer/interrupt uçları ile `/sessions/:sessionId` route’u uygulama adayına eklendi. Yönetici kabulü ve gerçek restart/browser kanıtı beklenmektedir; WP6 tamamlandı sayılmaz.
+
 İşler:
 
 - Kalıcı PoC `CODEX_HOME`

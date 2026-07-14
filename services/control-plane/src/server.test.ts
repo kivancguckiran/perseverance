@@ -4,9 +4,11 @@ import type {
   ProcessHealth,
   WorkspaceRuntimeClient,
 } from '@persistent-codex/workspace-agent'
+import { RequestTimeoutError } from '@persistent-codex/workspace-agent'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import {
   serverMessageSchema,
+  sessionResponseSchema,
   type ServerMessage,
 } from '@persistent-codex/control-plane-contracts'
 import {
@@ -110,6 +112,7 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
   initializeCalls = 0
   turnStartCalls = 0
   failThreadStart = false
+  snapshotTurns: unknown[] = []
   readonly requests: string[] = []
   readonly responses: Array<{ id: string | number; result: unknown }> = []
   readonly #notifications = new Set<
@@ -235,6 +238,20 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
         },
       } as TResult
     }
+    if (method === 'thread/read' || method === 'thread/resume') {
+      return {
+        thread: {
+          id: this.fixture.threadId,
+          turns: this.snapshotTurns,
+        },
+      } as TResult
+    }
+    if (method === 'turn/steer') {
+      return {
+        turnId: (params as { expectedTurnId: string }).expectedTurnId,
+      } as TResult
+    }
+    if (method === 'turn/interrupt') return {} as TResult
     throw new Error(`Unexpected method ${method}`)
   }
 
@@ -1043,7 +1060,7 @@ describe('WP4 session, turn and live event flow', () => {
     const { current, response } = await setupLive(client)
 
     expect(response.statusCode).toBe(201)
-    expect(response.json()).toEqual({
+    expect(response.json()).toMatchObject({
       tenantId: 'ten_live',
       workspaceId: 'wsp_live',
       sessionId: 'ses_live',
@@ -1194,6 +1211,383 @@ describe('WP4 session, turn and live event flow', () => {
     expect(response.statusCode).toBe(404)
     expect(response.json()).toMatchObject({ code: 'SESSION_NOT_FOUND' })
     expect(client.turnStartCalls).toBe(0)
+  })
+})
+
+describe('WP6 session resume and recovery', () => {
+  it('reads before resuming, coalesces concurrent calls, and keeps the same thread', async () => {
+    const client = new FakeRuntimeClient({ threadId: 'thr_resume' })
+    await setup({
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_resume',
+      runtimeInstanceIdFactory: () => 'runtime_resume',
+    })
+    const scoped = {
+      'x-tenant-id': 'ten_resume',
+      'x-workspace-id': 'wsp_resume',
+    }
+    expect(
+      (
+        await app!.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers: scoped,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(201)
+    client.requests.length = 0
+    const [first, second] = await Promise.all([
+      app!.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_resume/resume',
+        headers: { ...scoped, 'idempotency-key': 'resume-key' },
+        payload: {},
+      }),
+      app!.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_resume/resume',
+        headers: { ...scoped, 'idempotency-key': 'resume-key' },
+        payload: {},
+      }),
+    ])
+    expect([first.statusCode, second.statusCode]).toEqual([200, 200])
+    expect(client.requests).toEqual(['thread/read', 'thread/resume'])
+    expect(first.json()).toMatchObject({
+      codexThreadId: 'thr_resume',
+      status: 'active',
+      runtimeConnected: true,
+    })
+  })
+
+  it('durably exposes THREAD_NOT_RESUMABLE without replacing the thread', async () => {
+    class BrokenResumeClient extends FakeRuntimeClient {
+      override async request<TResult>(
+        method: string,
+        params: unknown,
+      ): Promise<TResult> {
+        if (method === 'thread/read') throw new Error('rollout corrupt')
+        return super.request(method, params)
+      }
+    }
+    const client = new BrokenResumeClient({ threadId: 'thr_broken' })
+    await setup({
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_broken',
+    })
+    const scoped = {
+      'x-tenant-id': 'ten_broken',
+      'x-workspace-id': 'wsp_broken',
+    }
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers: scoped,
+      payload: {},
+    })
+    const failed = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_broken/resume',
+      headers: { ...scoped, 'idempotency-key': 'broken-key' },
+      payload: {},
+    })
+    expect(failed.statusCode).toBe(409)
+    expect(failed.json()).toMatchObject({ code: 'THREAD_NOT_RESUMABLE' })
+    const detail = await app!.inject({
+      method: 'GET',
+      url: '/v1/sessions/ses_broken',
+      headers: scoped,
+    })
+    expect(detail.json()).toMatchObject({
+      codexThreadId: 'thr_broken',
+      status: 'recovery_required',
+      recoveryErrorCode: 'THREAD_NOT_RESUMABLE',
+      recoveryOptions: ['retry_resume', 'start_new_session', 'view_read_only'],
+    })
+  })
+
+  it('reconciles completed snapshot items and terminal turns without duplicates', async () => {
+    const client = new FakeRuntimeClient({ threadId: 'thr_snapshot' })
+    client.snapshotTurns = [
+      {
+        id: 'turn_snapshot',
+        status: 'completed',
+        items: [
+          {
+            type: 'agentMessage',
+            id: 'msg_snapshot',
+            text: 'snapshot authoritative final',
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1000,
+      },
+    ]
+    await setup({
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_snapshot',
+    })
+    const scoped = {
+      'x-tenant-id': 'ten_snapshot',
+      'x-workspace-id': 'wsp_snapshot',
+    }
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers: scoped,
+      payload: {},
+    })
+    client.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thr_snapshot',
+        turnId: 'turn_snapshot',
+        item: {
+          type: 'agentMessage',
+          id: 'msg_live_original',
+          text: 'snapshot authoritative final',
+          phase: null,
+          memoryCitation: null,
+        },
+        completedAtMs: 2_000,
+      },
+    })
+    client.emitNotification({
+      method: 'turn/completed',
+      params: {
+        threadId: 'thr_snapshot',
+        turn: client.snapshotTurns[0],
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    for (const key of ['snapshot-a', 'snapshot-b']) {
+      expect(
+        (
+          await app!.inject({
+            method: 'POST',
+            url: '/v1/sessions/ses_snapshot/resume',
+            headers: { ...scoped, 'idempotency-key': key },
+            payload: {},
+          })
+        ).statusCode,
+      ).toBe(200)
+    }
+    const replay = await app!.inject({
+      method: 'GET',
+      url: '/v1/sessions/ses_snapshot/events?after=0&limit=100',
+      headers: scoped,
+    })
+    expect(replay.json().events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'agent.message.completed',
+          payload: { text: 'snapshot authoritative final' },
+        }),
+        expect.objectContaining({ type: 'turn.completed' }),
+      ]),
+    )
+    expect(replay.json().events).toHaveLength(2)
+  })
+
+  it('keeps transient recovery failures retryable and distinct', async () => {
+    class TransientClient extends FakeRuntimeClient {
+      override async request<TResult>(
+        method: string,
+        params: unknown,
+      ): Promise<TResult> {
+        if (method === 'thread/read') throw new Error('temporary upstream')
+        return super.request(method, params)
+      }
+    }
+    await setup({
+      runtimeClientFactory: () => new TransientClient(),
+      sessionIdFactory: () => 'ses_transient',
+    })
+    const scoped = {
+      'x-tenant-id': 'ten_transient',
+      'x-workspace-id': 'wsp_transient',
+    }
+    await app!.inject({ method: 'POST', url: '/v1/sessions', headers: scoped })
+    const failed = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_transient/resume',
+      headers: { ...scoped, 'idempotency-key': 'transient' },
+    })
+    expect(failed.statusCode).toBe(502)
+    expect(failed.json()).toMatchObject({ code: 'RECOVERY_TRANSIENT_FAILURE' })
+    const detail = await app!.inject({
+      method: 'GET',
+      url: '/v1/sessions/ses_transient',
+      headers: scoped,
+    })
+    expect(detail.json()).toMatchObject({
+      status: 'recovering',
+      recoveryOptions: ['retry_resume', 'view_read_only'],
+    })
+  })
+
+  it.each([
+    {
+      label: 'authentication',
+      error: new Error('login required'),
+      code: 'RECOVERY_AUTH_REQUIRED',
+      status: 401,
+    },
+    {
+      label: 'timeout',
+      error: new RequestTimeoutError(9, 'thread/read', 10),
+      code: 'RECOVERY_TIMEOUT',
+      status: 504,
+    },
+  ])(
+    'classifies $label recovery failures without marking the thread permanent',
+    async ({ error, code, status }) => {
+      class ClassifiedClient extends FakeRuntimeClient {
+        override async request<TResult>(
+          method: string,
+          params: unknown,
+        ): Promise<TResult> {
+          if (method === 'thread/read') throw error
+          return super.request(method, params)
+        }
+      }
+      await setup({
+        runtimeClientFactory: () => new ClassifiedClient(),
+        sessionIdFactory: () => `ses_${code.toLowerCase()}`,
+      })
+      const scoped = {
+        'x-tenant-id': `ten_${code.toLowerCase()}`,
+        'x-workspace-id': `wsp_${code.toLowerCase()}`,
+      }
+      const created = sessionResponseSchema.parse(
+        (
+          await app!.inject({
+            method: 'POST',
+            url: '/v1/sessions',
+            headers: scoped,
+          })
+        ).json(),
+      )
+      const failed = await app!.inject({
+        method: 'POST',
+        url: `/v1/sessions/${created.sessionId}/resume`,
+        headers: { ...scoped, 'idempotency-key': `key-${code}` },
+      })
+      expect(failed.statusCode).toBe(status)
+      expect(failed.json()).toMatchObject({ code })
+      const detail = await app!.inject({
+        method: 'GET',
+        url: `/v1/sessions/${created.sessionId}`,
+        headers: scoped,
+      })
+      expect(detail.json()).toMatchObject({
+        codexThreadId: created.codexThreadId,
+        status: 'recovering',
+        recoveryErrorCode: code,
+      })
+    },
+  )
+
+  it('steers with expectedTurnId and idempotently interrupts the active turn', async () => {
+    const client = new FakeRuntimeClient({ threadId: 'thr_actions' })
+    client.snapshotTurns = [
+      {
+        id: 'turn_active',
+        status: 'inProgress',
+        items: [],
+        itemsView: 'full',
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      },
+    ]
+    await setup({
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_actions',
+    })
+    const scoped = {
+      'x-tenant-id': 'ten_actions',
+      'x-workspace-id': 'wsp_actions',
+    }
+    await app!.inject({ method: 'POST', url: '/v1/sessions', headers: scoped })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_actions/resume',
+      headers: { ...scoped, 'idempotency-key': 'actions-resume' },
+    })
+    const noMatch = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_actions/turns/wrong/steer',
+      headers: { ...scoped, 'idempotency-key': 'steer-wrong' },
+      payload: { expectedTurnId: 'wrong', prompt: 'wrong' },
+    })
+    expect(noMatch.statusCode).toBe(409)
+    expect(noMatch.json()).toMatchObject({ code: 'ACTIVE_TURN_CONFLICT' })
+    const steer = () =>
+      app!.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_actions/turns/turn_active/steer',
+        headers: { ...scoped, 'idempotency-key': 'steer-once' },
+        payload: { expectedTurnId: 'turn_active', prompt: 'continue' },
+      })
+    expect((await steer()).statusCode).toBe(200)
+    expect((await steer()).statusCode).toBe(200)
+    expect(
+      client.requests.filter((method) => method === 'turn/steer'),
+    ).toHaveLength(1)
+    const interrupt = () =>
+      app!.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_actions/turns/turn_active/interrupt',
+        headers: { ...scoped, 'idempotency-key': 'interrupt-once' },
+        payload: {},
+      })
+    expect((await interrupt()).statusCode).toBe(200)
+    expect((await interrupt()).statusCode).toBe(200)
+    expect(
+      client.requests.filter((method) => method === 'turn/interrupt'),
+    ).toHaveLength(1)
+    const noActive = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_actions/turns/turn_active/steer',
+      headers: { ...scoped, 'idempotency-key': 'steer-after-interrupt' },
+      payload: { expectedTurnId: 'turn_active', prompt: 'late' },
+    })
+    expect(noActive.statusCode).toBe(409)
+    expect(noActive.json()).toMatchObject({ code: 'NO_ACTIVE_TURN' })
+  })
+
+  it('auto-recovers once when a ready runtime advances generation', async () => {
+    const client = new FakeRuntimeClient({ threadId: 'thr_auto' })
+    await setup({
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_auto',
+      runtimeInstanceIdFactory: () => 'runtime_auto',
+    })
+    const scoped = {
+      'x-tenant-id': 'ten_auto',
+      'x-workspace-id': 'wsp_auto',
+    }
+    await app!.inject({ method: 'POST', url: '/v1/sessions', headers: scoped })
+    client.requests.length = 0
+    client.setHealth('restarting', 1)
+    client.setHealth('ready', 2)
+    for (
+      let attempt = 0;
+      attempt < 50 && client.requests.length < 2;
+      attempt += 1
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(client.requests).toEqual(['thread/read', 'thread/resume'])
+    client.setHealth('ready', 2)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(client.requests).toEqual(['thread/read', 'thread/resume'])
   })
 })
 

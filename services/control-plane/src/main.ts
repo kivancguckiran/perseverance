@@ -11,6 +11,13 @@ if (
 const app = await buildControlPlane({
   databasePath: process.env.EVENT_DATABASE_PATH ?? '.runtime/events.sqlite',
   workspaceCwd: process.env.WORKSPACE_CWD ?? process.cwd(),
+  codexHomeRoot: process.env.CODEX_HOME_ROOT ?? '.runtime/codex-homes',
+  ...((process.env.CODEX_PROVISIONING_SOURCE ?? process.env.CODEX_HOME)
+    ? {
+        codexProvisioningSource:
+          process.env.CODEX_PROVISIONING_SOURCE ?? process.env.CODEX_HOME!,
+      }
+    : {}),
   logger: true,
   ...(approvalPolicy
     ? {

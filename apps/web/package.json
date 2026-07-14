@@ -6,6 +6,7 @@
   "scripts": {
     "build": "vite build && tsc --noEmit",
     "dev": "vite dev",
+    "test:ssr-http": "node scripts/ssr-http-smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

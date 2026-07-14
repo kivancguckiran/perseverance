@@ -1,8 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import {
-  CodexEventAdapter,
-  type EventAdapterContext,
-} from '@persistent-codex/codex-event-adapter'
+import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
 import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import {
   sessionResponseSchema,
@@ -18,6 +15,10 @@ import {
   type ApprovalRecord,
 } from '@persistent-codex/event-store'
 import {
+  CodexAppServerError,
+  ProcessExitedError,
+  ProcessUnavailableError,
+  RequestTimeoutError,
   WorkspaceRuntimeRegistry,
   type RuntimeDelivery,
   type WorkspaceRuntime,
@@ -30,6 +31,23 @@ type ThreadStartParams = codexV2.ThreadStartParams
 type ThreadStartResponse = codexV2.ThreadStartResponse
 type TurnStartParams = codexV2.TurnStartParams
 type TurnStartResponse = codexV2.TurnStartResponse
+type ThreadReadResponse = codexV2.ThreadReadResponse
+type ThreadResumeResponse = codexV2.ThreadResumeResponse
+type TurnSteerParams = codexV2.TurnSteerParams
+type TurnSteerResponse = codexV2.TurnSteerResponse
+type TurnInterruptParams = codexV2.TurnInterruptParams
+
+interface RecoveryFailure {
+  code:
+    | 'THREAD_NOT_RESUMABLE'
+    | 'RECOVERY_RUNTIME_UNAVAILABLE'
+    | 'RECOVERY_TIMEOUT'
+    | 'RECOVERY_AUTH_REQUIRED'
+    | 'RECOVERY_TRANSIENT_FAILURE'
+  message: string
+  permanent: boolean
+  statusCode: number
+}
 
 export class OrchestrationError extends Error {
   readonly code: string
@@ -46,7 +64,13 @@ export class OrchestrationError extends Error {
 export interface SessionOrchestratorOptions {
   store: SqliteEventStore
   workspaceCwd:
-    string | ((identity: Omit<WorkspaceRuntimeIdentity, 'cwd'>) => string)
+    | string
+    | ((
+        identity: Pick<WorkspaceRuntimeIdentity, 'tenantId' | 'workspaceId'>,
+      ) => string)
+  codexHome: (
+    identity: Pick<WorkspaceRuntimeIdentity, 'tenantId' | 'workspaceId'>,
+  ) => string
   runtimeClientFactory?: (
     identity: WorkspaceRuntimeIdentity,
   ) => WorkspaceRuntimeClient
@@ -55,6 +79,7 @@ export interface SessionOrchestratorOptions {
   sourceVersion?: string
   onDeliveryError?: WorkspaceRuntimeRegistryOptions['onDeliveryError']
   approvalPolicy?: ThreadStartParams['approvalPolicy']
+  onRecoveryError?: (input: StoreScope & { code: string }) => void
 }
 
 function threadIdOf(message: Record<string, unknown>): string | undefined {
@@ -95,16 +120,65 @@ function errorPayload(error: unknown) {
   }
 }
 
+function classifyRecoveryError(error: unknown): RecoveryFailure {
+  const message = error instanceof Error ? error.message : String(error)
+  if (error instanceof RequestTimeoutError)
+    return {
+      code: 'RECOVERY_TIMEOUT',
+      message: 'Codex recovery request timed out',
+      permanent: false,
+      statusCode: 504,
+    }
+  if (
+    error instanceof ProcessExitedError ||
+    error instanceof ProcessUnavailableError
+  )
+    return {
+      code: 'RECOVERY_RUNTIME_UNAVAILABLE',
+      message: 'Codex runtime became unavailable during recovery',
+      permanent: false,
+      statusCode: 503,
+    }
+  if (/auth|unauthori[sz]ed|credential|login required/i.test(message))
+    return {
+      code: 'RECOVERY_AUTH_REQUIRED',
+      message: 'Codex authentication is required before recovery can continue',
+      permanent: false,
+      statusCode: 401,
+    }
+  if (
+    /not found|missing|rollout.*(?:corrupt|invalid)|history.*(?:corrupt|invalid)|identity mismatch|thread.*home/i.test(
+      message,
+    )
+  )
+    return {
+      code: 'THREAD_NOT_RESUMABLE',
+      message: 'The bound Codex thread cannot be read from this workspace home',
+      permanent: true,
+      statusCode: 409,
+    }
+  return {
+    code: 'RECOVERY_TRANSIENT_FAILURE',
+    message: 'Codex recovery failed temporarily',
+    permanent: false,
+    statusCode: error instanceof CodexAppServerError ? 503 : 502,
+  }
+}
+
 export class SessionOrchestrator {
   readonly #store: SqliteEventStore
   readonly #workspaceCwd: SessionOrchestratorOptions['workspaceCwd']
+  readonly #codexHome: SessionOrchestratorOptions['codexHome']
   readonly #sessionIdFactory: () => string
   readonly #sourceVersion: string
   readonly #approvalPolicy: ThreadStartParams['approvalPolicy'] | undefined
+  readonly #onRecoveryError: SessionOrchestratorOptions['onRecoveryError']
   readonly #registry: WorkspaceRuntimeRegistry
   readonly #threadScopes = new Map<string, StoreScope>()
   readonly #adapters = new Map<string, CodexEventAdapter>()
   readonly #turnsInFlight = new Map<string, Promise<TurnAcceptedResponse>>()
+  readonly #resumesInFlight = new Map<string, Promise<SessionResponse>>()
+  readonly #actionsInFlight = new Map<string, Promise<unknown>>()
   readonly #activeTurns = new Map<
     string,
     { sessionId: string; turnId?: string }
@@ -113,10 +187,12 @@ export class SessionOrchestrator {
   constructor(options: SessionOrchestratorOptions) {
     this.#store = options.store
     this.#workspaceCwd = options.workspaceCwd
+    this.#codexHome = options.codexHome
     this.#sessionIdFactory =
       options.sessionIdFactory ?? (() => `ses_${randomUUID()}`)
     this.#sourceVersion = options.sourceVersion ?? '0.144.2'
     this.#approvalPolicy = options.approvalPolicy
+    this.#onRecoveryError = options.onRecoveryError
     this.#registry = new WorkspaceRuntimeRegistry({
       ...(options.runtimeClientFactory
         ? { clientFactory: options.runtimeClientFactory }
@@ -135,6 +211,27 @@ export class SessionOrchestrator {
             ...runtime,
             currentProcessGeneration: runtime.client.processGeneration,
           })
+          for (const session of this.#store.listWorkspaceSessions(runtime)) {
+            if (
+              session.codexThreadId &&
+              session.status === 'active' &&
+              session.runtimeGeneration !== null &&
+              session.runtimeGeneration !== runtime.client.processGeneration
+            ) {
+              void this.resumeSession(
+                session,
+                `auto-runtime-${runtime.runtimeInstanceId}-${runtime.client.processGeneration}`,
+              ).catch((error) => {
+                this.#onRecoveryError?.({
+                  ...session,
+                  code:
+                    error instanceof OrchestrationError
+                      ? error.code
+                      : 'RECOVERY_TRANSIENT_FAILURE',
+                })
+              })
+            }
+          }
         } else if (['restarting', 'failed', 'stopped'].includes(health.state)) {
           this.#store.expireRuntimeApprovals(runtime)
         }
@@ -161,7 +258,11 @@ export class SessionOrchestrator {
         : this.#workspaceCwd
 
     try {
-      const runtime = await this.#registry.getOrInitialize({ ...input, cwd })
+      const runtime = await this.#registry.getOrInitialize({
+        ...input,
+        cwd,
+        codexHome: this.#codexHome(input),
+      })
       const params: ThreadStartParams = {
         cwd,
         ...(this.#approvalPolicy
@@ -174,19 +275,453 @@ export class SessionOrchestrator {
       )
       const codexThreadId = response.thread.id
       this.#store.bindCodexThread(scope, codexThreadId)
-      this.#store.updateSessionStatus(scope, 'active')
-      this.#threadScopes.set(this.#threadKey(input, codexThreadId), scope)
-      return sessionResponseSchema.parse({
-        ...scope,
-        codexThreadId,
+      this.#store.updateSessionRecovery(scope, {
         status: 'active',
+        runtimeGeneration: runtime.client.processGeneration,
       })
+      this.#threadScopes.set(this.#threadKey(input, codexThreadId), scope)
+      return this.getSession(scope)
     } catch (error) {
       this.#store.updateSessionStatus(scope, 'failed')
       throw new OrchestrationError(
         'SESSION_START_FAILED',
         error instanceof Error ? error.message : String(error),
       )
+    }
+  }
+
+  getSession(scope: StoreScope): SessionResponse {
+    const session = this.#store.getSession(scope)
+    const runtime = this.#registry.get(scope)
+    return sessionResponseSchema.parse({
+      ...session,
+      runtimeConnected: runtime?.client.health.state === 'ready',
+      replay: { afterSequence: 0, highWaterSequence: session.lastSequence },
+      recoveryOptions:
+        session.status === 'recovery_required'
+          ? ['retry_resume', 'start_new_session', 'view_read_only']
+          : session.status === 'recovering' && session.recoveryErrorCode
+            ? ['retry_resume', 'view_read_only']
+            : [],
+    })
+  }
+
+  async resumeSession(
+    scope: StoreScope,
+    idempotencyKey: string,
+  ): Promise<SessionResponse> {
+    const session = this.#store.getSession(scope)
+    if (!session.codexThreadId)
+      throw new OrchestrationError(
+        'THREAD_NOT_RESUMABLE',
+        'Session has no Codex thread binding',
+        409,
+      )
+    const keyScope = `resume:${scope.sessionId}`
+    const hash = createHash('sha256')
+      .update(session.codexThreadId)
+      .digest('hex')
+    const reservation = this.#store.reserveIdempotencyKey({
+      ...scope,
+      scope: keyScope,
+      key: idempotencyKey,
+      requestHash: hash,
+    })
+    if (!reservation.created) {
+      if (reservation.record.status === 'completed')
+        return sessionResponseSchema.parse(reservation.record.response)
+      if (reservation.record.status === 'outcome_unknown')
+        throw new OrchestrationError(
+          'RECOVERY_OUTCOME_UNKNOWN',
+          'Previous resume outcome is unknown; use a new explicit retry key',
+          409,
+        )
+      const flight = this.#resumesInFlight.get(
+        JSON.stringify([scope.tenantId, scope.workspaceId, scope.sessionId]),
+      )
+      if (flight) return flight
+      throw new OrchestrationError(
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+        'Resume is already in progress',
+        409,
+      )
+    }
+    const flightKey = JSON.stringify([
+      scope.tenantId,
+      scope.workspaceId,
+      scope.sessionId,
+    ])
+    const existing = this.#resumesInFlight.get(flightKey)
+    if (existing) return existing
+    const operation = this.#resumeReserved(
+      scope,
+      session.codexThreadId,
+      keyScope,
+      idempotencyKey,
+    )
+    this.#resumesInFlight.set(flightKey, operation)
+    try {
+      return await operation
+    } finally {
+      this.#resumesInFlight.delete(flightKey)
+    }
+  }
+
+  async #resumeReserved(
+    scope: StoreScope,
+    threadId: string,
+    keyScope: string,
+    key: string,
+  ): Promise<SessionResponse> {
+    this.#store.updateSessionRecovery(scope, { status: 'recovering' })
+    try {
+      const cwd =
+        typeof this.#workspaceCwd === 'function'
+          ? this.#workspaceCwd(scope)
+          : this.#workspaceCwd
+      const runtime = await this.#registry.getOrInitialize({
+        ...scope,
+        cwd,
+        codexHome: this.#codexHome(scope),
+      })
+      const read = await runtime.client.request<ThreadReadResponse>(
+        'thread/read',
+        { threadId, includeTurns: true } satisfies codexV2.ThreadReadParams,
+      )
+      if (read.thread.id !== threadId)
+        throw new Error('Thread identity mismatch')
+      this.#reconcileSnapshot(scope, read.thread, 'thread/read')
+      const resumed = await runtime.client.request<ThreadResumeResponse>(
+        'thread/resume',
+        {
+          threadId,
+          cwd,
+          ...(this.#approvalPolicy
+            ? { approvalPolicy: this.#approvalPolicy }
+            : {}),
+        } satisfies codexV2.ThreadResumeParams,
+      )
+      if (resumed.thread.id !== threadId)
+        throw new Error('Thread identity mismatch')
+      this.#reconcileSnapshot(scope, resumed.thread, 'thread/resume')
+      this.#threadScopes.set(this.#threadKey(scope, threadId), scope)
+      const active = [...resumed.thread.turns]
+        .reverse()
+        .find((turn) => turn.status === 'inProgress')
+      if (active)
+        this.#activeTurns.set(this.#activeTurnKey(scope), {
+          sessionId: scope.sessionId,
+          turnId: active.id,
+        })
+      const record = this.#store.updateSessionRecovery(scope, {
+        status: 'active',
+        runtimeGeneration: runtime.client.processGeneration,
+        resumed: true,
+      })
+      const response = this.getSession(record)
+      this.#store.completeIdempotencyKey({
+        ...scope,
+        scope: keyScope,
+        key,
+        status: 'completed',
+        response,
+      })
+      return response
+    } catch (error) {
+      const failure = classifyRecoveryError(error)
+      this.#store.updateSessionRecovery(scope, {
+        status: failure.permanent ? 'recovery_required' : 'recovering',
+        recoveryErrorCode: failure.code,
+      })
+      this.#store.completeIdempotencyKey({
+        ...scope,
+        scope: keyScope,
+        key,
+        status: 'failed',
+        response: failure,
+      })
+      throw new OrchestrationError(
+        failure.code,
+        failure.message,
+        failure.statusCode,
+      )
+    }
+  }
+
+  #reconcileSnapshot(
+    scope: StoreScope,
+    thread: codexV2.Thread,
+    snapshotMethod: 'thread/read' | 'thread/resume',
+  ): void {
+    for (const turn of thread.turns) {
+      for (const item of turn.items) {
+        const envelope = {
+          method: 'item/completed',
+          params: {
+            threadId: thread.id,
+            turnId: turn.id,
+            item,
+            completedAtMs: turn.completedAt ? turn.completedAt * 1_000 : 0,
+          },
+        }
+        this.#ingestRecoveryEnvelope(
+          scope,
+          envelope,
+          `recovery:item:${thread.id}:${turn.id}:${item.id}`,
+          snapshotMethod,
+        )
+      }
+      if (turn.status !== 'inProgress') {
+        const envelope = {
+          method: 'turn/completed',
+          params: { threadId: thread.id, turn },
+        }
+        this.#ingestRecoveryEnvelope(
+          scope,
+          envelope,
+          `recovery:turn:${thread.id}:${turn.id}:${turn.status}`,
+          snapshotMethod,
+        )
+      }
+    }
+  }
+
+  #ingestRecoveryEnvelope(
+    scope: StoreScope,
+    envelope: Record<string, unknown>,
+    ingestKey: string,
+    snapshotMethod: string,
+  ): void {
+    const adapter = this.#adapterFor(scope)
+    const adapted = adapter.adapt(envelope)
+    if (this.#store.hasEquivalentTimelineEvent(scope, adapted.event)) return
+    this.#store.ingest({
+      ...scope,
+      ingestKey,
+      raw: {
+        envelope: adapted.envelope,
+        checksum: adapted.checksum,
+        sourceMethod: adapted.event.sourceMethod,
+        sourceVersion: this.#sourceVersion,
+        sourceMetadata: {
+          recoverySnapshot: true,
+          snapshotMethod,
+        },
+        receivedAt: adapted.event.receivedAt,
+      },
+      event: adapted.event,
+    })
+  }
+
+  #adapterFor(scope: StoreScope): CodexEventAdapter {
+    const adapterKey = JSON.stringify([
+      scope.tenantId,
+      scope.workspaceId,
+      scope.sessionId,
+    ])
+    let adapter = this.#adapters.get(adapterKey)
+    if (!adapter) {
+      adapter = new CodexEventAdapter({
+        ...scope,
+        sourceVersion: this.#sourceVersion,
+        nextSequence: () => 0,
+      })
+      this.#adapters.set(adapterKey, adapter)
+    }
+    return adapter
+  }
+
+  async steerTurn(
+    scope: StoreScope,
+    turnId: string,
+    expectedTurnId: string,
+    prompt: string,
+    idempotencyKey: string,
+  ) {
+    return this.#idempotentTurnAction(
+      scope,
+      `steer:${scope.sessionId}:${turnId}`,
+      idempotencyKey,
+      createHash('sha256')
+        .update(JSON.stringify({ expectedTurnId, prompt }))
+        .digest('hex'),
+      () => this.#steerTurn(scope, turnId, expectedTurnId, prompt),
+    )
+  }
+
+  async #steerTurn(
+    scope: StoreScope,
+    turnId: string,
+    expectedTurnId: string,
+    prompt: string,
+  ) {
+    const session = this.#store.getSession(scope)
+    const active = this.#activeTurns.get(this.#activeTurnKey(scope))
+    if (!active?.turnId)
+      throw new OrchestrationError(
+        'NO_ACTIVE_TURN',
+        'There is no active turn',
+        409,
+      )
+    if (turnId !== expectedTurnId || active.turnId !== expectedTurnId)
+      throw new OrchestrationError(
+        'ACTIVE_TURN_CONFLICT',
+        'expectedTurnId does not match the active turn',
+        409,
+      )
+    const runtime = this.#registry.get(scope)
+    if (!runtime || !session.codexThreadId)
+      throw new OrchestrationError(
+        'WORKSPACE_RUNTIME_UNAVAILABLE',
+        'Workspace runtime is unavailable',
+        503,
+      )
+    const params: TurnSteerParams = {
+      threadId: session.codexThreadId,
+      expectedTurnId,
+      input: [{ type: 'text', text: prompt, text_elements: [] }],
+    }
+    const response = await runtime.client.request<TurnSteerResponse>(
+      'turn/steer',
+      params,
+    )
+    return {
+      ...scope,
+      codexThreadId: session.codexThreadId,
+      codexTurnId: response.turnId,
+      status: 'accepted' as const,
+    }
+  }
+
+  async interruptTurn(
+    scope: StoreScope,
+    turnId: string,
+    idempotencyKey: string,
+  ) {
+    return this.#idempotentTurnAction(
+      scope,
+      `interrupt:${scope.sessionId}:${turnId}`,
+      idempotencyKey,
+      createHash('sha256').update(JSON.stringify({ turnId })).digest('hex'),
+      () => this.#interruptTurn(scope, turnId),
+    )
+  }
+
+  async #interruptTurn(scope: StoreScope, turnId: string) {
+    const session = this.#store.getSession(scope)
+    const activeKey = this.#activeTurnKey(scope)
+    const active = this.#activeTurns.get(activeKey)
+    if (!session.codexThreadId)
+      throw new OrchestrationError(
+        'SESSION_NOT_ACTIVE',
+        'Session has no thread',
+        409,
+      )
+    if (!active)
+      return {
+        ...scope,
+        codexThreadId: session.codexThreadId,
+        codexTurnId: turnId,
+        status: 'interrupted' as const,
+      }
+    if (active.turnId && active.turnId !== turnId)
+      throw new OrchestrationError(
+        'ACTIVE_TURN_CONFLICT',
+        'Turn is not active',
+        409,
+      )
+    const runtime = this.#registry.get(scope)
+    if (!runtime)
+      throw new OrchestrationError(
+        'WORKSPACE_RUNTIME_UNAVAILABLE',
+        'Workspace runtime is unavailable',
+        503,
+      )
+    await runtime.client.request('turn/interrupt', {
+      threadId: session.codexThreadId,
+      turnId,
+    } satisfies TurnInterruptParams)
+    this.#store.expireApprovals(scope, 'superseded')
+    this.#activeTurns.delete(activeKey)
+    return {
+      ...scope,
+      codexThreadId: session.codexThreadId,
+      codexTurnId: turnId,
+      status: 'interrupted' as const,
+    }
+  }
+
+  async #idempotentTurnAction<T>(
+    scope: StoreScope,
+    keyScope: string,
+    key: string,
+    requestHash: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const reservation = this.#store.reserveIdempotencyKey({
+      ...scope,
+      scope: keyScope,
+      key,
+      requestHash,
+    })
+    const flightKey = JSON.stringify([
+      scope.tenantId,
+      scope.workspaceId,
+      keyScope,
+      key,
+    ])
+    if (!reservation.created) {
+      if (reservation.record.status === 'completed')
+        return reservation.record.response as T
+      if (reservation.record.status === 'outcome_unknown')
+        throw new OrchestrationError(
+          'RECOVERY_OUTCOME_UNKNOWN',
+          'Previous upstream action outcome is unknown and will not be retried',
+          409,
+        )
+      if (reservation.record.status === 'failed') {
+        const failure = reservation.record.response as {
+          code: string
+          message: string
+        }
+        throw new OrchestrationError(failure.code, failure.message, 409)
+      }
+      const pending = this.#actionsInFlight.get(flightKey) as
+        Promise<T> | undefined
+      if (pending) return pending
+      throw new OrchestrationError(
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+        'The turn action is already in progress',
+        409,
+      )
+    }
+    const running = (async () => {
+      try {
+        const response = await operation()
+        this.#store.completeIdempotencyKey({
+          ...scope,
+          scope: keyScope,
+          key,
+          status: 'completed',
+          response,
+        })
+        return response
+      } catch (error) {
+        this.#store.completeIdempotencyKey({
+          ...scope,
+          scope: keyScope,
+          key,
+          status: 'failed',
+          response: errorPayload(error),
+        })
+        throw error
+      }
+    })()
+    this.#actionsInFlight.set(flightKey, running)
+    try {
+      return await running
+    } finally {
+      this.#actionsInFlight.delete(flightKey)
     }
   }
 
@@ -410,21 +945,7 @@ export class SessionOrchestrator {
       this.#threadKey(runtime, codexThreadId),
     )
     if (!scope) return
-    const adapterKey = JSON.stringify([
-      scope.tenantId,
-      scope.workspaceId,
-      scope.sessionId,
-    ])
-    let adapter = this.#adapters.get(adapterKey)
-    if (!adapter) {
-      const context: EventAdapterContext = {
-        ...scope,
-        sourceVersion: this.#sourceVersion,
-        nextSequence: () => 0,
-      }
-      adapter = new CodexEventAdapter(context)
-      this.#adapters.set(adapterKey, adapter)
-    }
+    const adapter = this.#adapterFor(scope)
     const adapted = adapter.adapt(message)
     const approvalPayload =
       adapted.event.type === 'approval.requested'

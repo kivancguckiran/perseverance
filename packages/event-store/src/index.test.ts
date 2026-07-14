@@ -395,6 +395,54 @@ describe('SqliteEventStore replay and durability', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it('migrates schema v2 sessions to v3 without losing bindings or cursors', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'event-store-v2-v3-'))
+    const path = join(directory, 'events.sqlite')
+    const legacy = new DatabaseSync(path)
+    legacy.exec(`
+      CREATE TABLE sessions (
+        tenant_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL, codex_thread_id TEXT,
+        status TEXT NOT NULL, last_sequence INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, workspace_id, session_id)
+      );
+      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      PRAGMA user_version = 2;
+    `)
+    legacy
+      .prepare(`INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        'thr_v2',
+        'active',
+        9,
+        '2026-07-14T00:00:00.000Z',
+        '2026-07-14T00:00:01.000Z',
+      )
+    legacy.close()
+    const migrated = new SqliteEventStore(path)
+    try {
+      expect(migrated.getSession(scope)).toMatchObject({
+        codexThreadId: 'thr_v2',
+        lastSequence: 9,
+        recoveryErrorCode: null,
+        lastResumedAt: null,
+        runtimeGeneration: null,
+      })
+      const database = new DatabaseSync(path)
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({
+        user_version: 3,
+      })
+      database.close()
+    } finally {
+      migrated.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('SqliteEventStore idempotency keys', () => {
@@ -421,5 +469,47 @@ describe('SqliteEventStore idempotency keys', () => {
         }),
       ).toMatchObject({ status: 'completed', response: { turnId: 'turn_1' } })
     })
+  })
+
+  it('marks pending turn/resume/interrupt outcomes unknown after reopen', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'event-store-idem-crash-'))
+    const path = join(directory, 'events.sqlite')
+    const first = new SqliteEventStore(path)
+    first.createSession(scope)
+    for (const actionScope of [
+      'turn:ses_1',
+      'resume:ses_1',
+      'interrupt:ses_1:turn_1',
+    ]) {
+      first.reserveIdempotencyKey({
+        ...scope,
+        scope: actionScope,
+        key: 'crash-key',
+        requestHash: actionScope,
+      })
+    }
+    first.close()
+    const reopened = new SqliteEventStore(path)
+    try {
+      for (const actionScope of [
+        'turn:ses_1',
+        'resume:ses_1',
+        'interrupt:ses_1:turn_1',
+      ]) {
+        expect(
+          reopened.getIdempotencyKey({
+            ...scope,
+            scope: actionScope,
+            key: 'crash-key',
+          }),
+        ).toMatchObject({
+          status: 'outcome_unknown',
+          response: { code: 'RECOVERY_OUTCOME_UNKNOWN' },
+        })
+      }
+    } finally {
+      reopened.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

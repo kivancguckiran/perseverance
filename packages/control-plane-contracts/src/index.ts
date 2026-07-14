@@ -3,7 +3,26 @@ import { z } from 'zod'
 
 const identifierSchema = z.string().min(1)
 const sequenceSchema = z.number().int().nonnegative()
-const sessionStatusSchema = z.enum(['starting', 'active', 'failed'])
+export const sessionStatusSchema = z.enum([
+  'starting',
+  'active',
+  'recovering',
+  'recovery_required',
+  'failed',
+])
+export const recoveryErrorCodeSchema = z.enum([
+  'THREAD_NOT_RESUMABLE',
+  'RECOVERY_OUTCOME_UNKNOWN',
+  'RECOVERY_RUNTIME_UNAVAILABLE',
+  'RECOVERY_TIMEOUT',
+  'RECOVERY_AUTH_REQUIRED',
+  'RECOVERY_TRANSIENT_FAILURE',
+])
+export const recoveryOptionSchema = z.enum([
+  'retry_resume',
+  'start_new_session',
+  'view_read_only',
+])
 export const approvalDecisionSchema = z.enum([
   'accept',
   'accept_for_session',
@@ -113,10 +132,30 @@ export const createSessionRequestSchema = z.object({}).strict()
 export const sessionResponseSchema = scopeSchema.extend({
   codexThreadId: identifierSchema.nullable(),
   status: sessionStatusSchema,
+  recoveryErrorCode: recoveryErrorCodeSchema.nullable(),
+  lastResumedAt: z.iso.datetime().nullable(),
+  runtimeGeneration: z.number().int().nonnegative().nullable(),
+  runtimeConnected: z.boolean(),
+  replay: z.object({
+    afterSequence: sequenceSchema,
+    highWaterSequence: sequenceSchema,
+  }),
+  recoveryOptions: z.array(recoveryOptionSchema),
 })
 
 export const createTurnRequestSchema = z.object({
   prompt: z.string().trim().min(1).max(100_000),
+})
+export const steerTurnRequestSchema = z.object({
+  expectedTurnId: identifierSchema,
+  prompt: z.string().trim().min(1).max(100_000),
+})
+export const interruptTurnRequestSchema = z.object({}).strict()
+
+export const turnActionResponseSchema = scopeSchema.extend({
+  codexThreadId: identifierSchema,
+  codexTurnId: identifierSchema,
+  status: z.enum(['accepted', 'interrupted']),
 })
 
 export const turnAcceptedResponseSchema = scopeSchema.extend({
@@ -158,6 +197,8 @@ export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>
 export type SessionResponse = z.infer<typeof sessionResponseSchema>
 export type CreateTurnRequest = z.infer<typeof createTurnRequestSchema>
 export type TurnAcceptedResponse = z.infer<typeof turnAcceptedResponseSchema>
+export type SteerTurnRequest = z.infer<typeof steerTurnRequestSchema>
+export type TurnActionResponse = z.infer<typeof turnActionResponseSchema>
 export type ApiErrorResponse = z.infer<typeof apiErrorResponseSchema>
 export type Approval = z.infer<typeof approvalSchema>
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>

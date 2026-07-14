@@ -10,6 +10,10 @@ import {
   clientMessageSchema,
   createSessionRequestSchema,
   createTurnRequestSchema,
+  steerTurnRequestSchema,
+  interruptTurnRequestSchema,
+  sessionResponseSchema,
+  turnActionResponseSchema,
   replayResponseSchema,
   serverMessageSchema,
   type ServerMessage,
@@ -29,6 +33,7 @@ import type {
   WorkspaceRuntimeClient,
   WorkspaceRuntimeIdentity,
 } from '@persistent-codex/workspace-agent'
+import { PersistentCodexHomeManager } from '@persistent-codex/workspace-agent'
 import Fastify from 'fastify'
 import {
   isIdempotencyConflict,
@@ -45,13 +50,18 @@ export interface ControlPlaneOptions {
   eventStore?: SqliteEventStore
   logger?: boolean
   workspaceCwd?:
-    string | ((identity: Omit<WorkspaceRuntimeIdentity, 'cwd'>) => string)
+    | string
+    | ((
+        identity: Pick<WorkspaceRuntimeIdentity, 'tenantId' | 'workspaceId'>,
+      ) => string)
   runtimeClientFactory?: (
     identity: WorkspaceRuntimeIdentity,
   ) => WorkspaceRuntimeClient
   sessionIdFactory?: () => string
   runtimeInstanceIdFactory?: () => string
   approvalPolicy?: 'untrusted' | 'on-request' | 'never'
+  codexHomeRoot?: string
+  codexProvisioningSource?: string
 }
 
 interface SubscriptionState extends StoreScope {
@@ -125,9 +135,17 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const app = Fastify({ logger: options.logger ?? false })
   const store = options.eventStore ?? new SqliteEventStore(options.databasePath)
   const ownsStore = options.eventStore === undefined
+  const codexHomes = new PersistentCodexHomeManager(
+    options.codexHomeRoot ?? '.runtime/codex-homes',
+    options.codexProvisioningSource
+      ? { provisioningSource: options.codexProvisioningSource }
+      : {},
+  )
   const orchestrator = new SessionOrchestrator({
     store,
     workspaceCwd: options.workspaceCwd ?? process.cwd(),
+    codexHome: (identity) =>
+      codexHomes.homeFor(identity.tenantId, identity.workspaceId),
     ...(options.runtimeClientFactory
       ? { runtimeClientFactory: options.runtimeClientFactory }
       : {}),
@@ -150,6 +168,17 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           delivery,
         },
         'workspace runtime delivery failed',
+      )
+    },
+    onRecoveryError: (failure) => {
+      app.log.warn(
+        {
+          tenantId: failure.tenantId,
+          workspaceId: failure.workspaceId,
+          sessionId: failure.sessionId,
+          code: failure.code,
+        },
+        'automatic session recovery failed',
       )
     },
   })
@@ -321,6 +350,152 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       )
     }
   })
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        return sessionResponseSchema.parse(orchestrator.getSession(scope))
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/resume',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const key = headerValue(request.headers['idempotency-key'])
+      if (!key?.trim())
+        return reply.code(400).send({
+          code: 'MISSING_IDEMPOTENCY_KEY',
+          message: 'Idempotency-Key header is required',
+        })
+      try {
+        return sessionResponseSchema.parse(
+          await orchestrator.resumeSession(scope, key),
+        )
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        if (error instanceof StoreConflictError)
+          return reply
+            .code(409)
+            .send({ code: error.code, message: error.message })
+        if (error instanceof OrchestrationError)
+          return reply
+            .code(error.statusCode)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { sessionId: string; turnId: string } }>(
+    '/v1/sessions/:sessionId/turns/:turnId/steer',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const body = steerTurnRequestSchema.safeParse(request.body)
+      if (!body.success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Steer request body is invalid',
+        })
+      const idempotencyKey = headerValue(request.headers['idempotency-key'])
+      if (!idempotencyKey?.trim())
+        return reply.code(400).send({
+          code: 'MISSING_IDEMPOTENCY_KEY',
+          message: 'Idempotency-Key header is required',
+        })
+      try {
+        return turnActionResponseSchema.parse(
+          await orchestrator.steerTurn(
+            scope,
+            request.params.turnId,
+            body.data.expectedTurnId,
+            body.data.prompt,
+            idempotencyKey,
+          ),
+        )
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        if (error instanceof OrchestrationError)
+          return reply
+            .code(error.statusCode)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { sessionId: string; turnId: string } }>(
+    '/v1/sessions/:sessionId/turns/:turnId/interrupt',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const body = interruptTurnRequestSchema.safeParse(request.body ?? {})
+      if (!body.success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Interrupt request body is invalid',
+        })
+      const idempotencyKey = headerValue(request.headers['idempotency-key'])
+      if (!idempotencyKey?.trim())
+        return reply.code(400).send({
+          code: 'MISSING_IDEMPOTENCY_KEY',
+          message: 'Idempotency-Key header is required',
+        })
+      try {
+        return turnActionResponseSchema.parse(
+          await orchestrator.interruptTurn(
+            scope,
+            request.params.turnId,
+            idempotencyKey,
+          ),
+        )
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        if (error instanceof OrchestrationError)
+          return reply
+            .code(error.statusCode)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
 
   app.post<{ Params: { sessionId: string } }>(
     '/v1/sessions/:sessionId/turns',

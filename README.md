@@ -76,3 +76,20 @@ pnpm --filter @persistent-codex/workspace-agent smoke:real-approval
 - `GET /v1/realtime`: shared Zod `subscribe`, `replay`, `event` ve `ack` WebSocket sözleşmesi.
 
 Runtime yaşam döngüsü ve idempotency kararı [ADR-0004](docs/architecture/adr-0004-live-thread-turn-orchestration.md) içinde açıklanır.
+
+## WP6 resume yüzeyi
+
+Control plane, `CODEX_HOME_ROOT` altında tenant/workspace kimliklerinin hash’iyle ayrılmış, canonical ve `0700` persistent home’lar kullanır. Browser bu path’i gönderemez. Session URL’si `/sessions/:sessionId` biçimindedir.
+
+- `GET /v1/sessions/:sessionId`: durable recovery durumu, runtime bağlılığı ve replay high-water.
+- `POST /v1/sessions/:sessionId/resume`: `Idempotency-Key` ile `thread/read` → `thread/resume`.
+- `POST /v1/sessions/:sessionId/turns/:turnId/steer`: zorunlu `expectedTurnId` ve `prompt`.
+- `POST /v1/sessions/:sessionId/turns/:turnId/interrupt`: idempotent durdurma.
+
+Resume başarısızlığı thread’i değiştirmez; `THREAD_NOT_RESUMABLE` ve recovery seçenekleri durable session detail’de görünür. Kararlar [ADR-0006](docs/architecture/adr-0006-session-resume-recovery.md) içinde açıklanır.
+
+İki control-plane instance’ı, aynı SQLite ve persistent home ile gerçek `thread/read`/`thread/resume` akışını opt-in doğrulamak için:
+
+```bash
+pnpm --filter @persistent-codex/workspace-agent smoke:real-recovery
+```

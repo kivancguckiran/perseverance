@@ -5,6 +5,10 @@ export {
   createIsolatedCodexHome,
   type IsolatedCodexHome,
 } from './isolated-codex-home'
+export {
+  PersistentCodexHomeManager,
+  CodexHomePathError,
+} from './persistent-codex-home'
 
 export type JsonRpcId = number | string
 
@@ -539,6 +543,7 @@ export interface WorkspaceRuntimeIdentity {
   tenantId: string
   workspaceId: string
   cwd: string
+  codexHome?: string
 }
 
 export interface RuntimeDelivery {
@@ -621,7 +626,10 @@ export class WorkspaceRuntimeRegistry {
     const key = runtimeKey(identity)
     const current = this.#runtimes.get(key)
     if (current) {
-      if (current.cwd !== identity.cwd) {
+      if (
+        current.cwd !== identity.cwd ||
+        current.codexHome !== identity.codexHome
+      ) {
         throw new CodexAppServerError(
           'WORKSPACE_CWD_CONFLICT',
           'Workspace runtime is already initialized with a different cwd',
@@ -668,7 +676,12 @@ export class WorkspaceRuntimeRegistry {
     }
     const client =
       this.#options.clientFactory?.(identity) ??
-      new CodexAppServerClient({ cwd: identity.cwd })
+      new CodexAppServerClient({
+        cwd: identity.cwd,
+        env: identity.codexHome
+          ? { ...process.env, CODEX_HOME: identity.codexHome }
+          : process.env,
+      })
     let runtime: WorkspaceRuntime | undefined
     const ordinals = new Map<number, number>()
     const deliver = (

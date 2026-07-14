@@ -34,6 +34,8 @@ WP4 tamamlandı.
 
 WP5 kabul edildi: atomik durable approval, optimistic-lock/idempotent karar, generated command/file mapping, runtime lifecycle expiry, WebSocket reconciliation ve responsive approval kartı 65 testle doğrulandı. Gerçek control-plane smoke karar öncesi sıfır, karar sonrası tek upstream response ve terminal turn kanıtladı; browser denetiminde pending→resolved akışı desktop ve mobilde tamamlandı. Aktif iş paketi WP6 resume ve arıza senaryolarıdır.
 
+WP6 uygulama adayı: server-owned persistent home, durable recovery alanları, scoped session detail/resume, generated steer/interrupt ve adreslenebilir browser session route’u eklendi. WP6 yönetici kabulü yapılmadı; gerçek restart smoke ve bağımsız browser kanıtı kabul öncesi ayrıca denetlenmelidir.
+
 ## Uygulama sırası
 
 ### P0. Repository ve sözleşme temeli

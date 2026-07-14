@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -14,6 +14,9 @@ export const CREATE_SCHEMA_SQL = `
     session_id TEXT NOT NULL,
     codex_thread_id TEXT,
     status TEXT NOT NULL,
+    recovery_error_code TEXT,
+    last_resumed_at TEXT,
+    runtime_generation INTEGER,
     last_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_sequence >= 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -149,6 +152,15 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
     }
 
     database.exec(CREATE_SCHEMA_SQL)
+
+    if (!hasColumn(database, 'sessions', 'recovery_error_code'))
+      database.exec(`ALTER TABLE sessions ADD COLUMN recovery_error_code TEXT`)
+    if (!hasColumn(database, 'sessions', 'last_resumed_at'))
+      database.exec(`ALTER TABLE sessions ADD COLUMN last_resumed_at TEXT`)
+    if (!hasColumn(database, 'sessions', 'runtime_generation'))
+      database.exec(
+        `ALTER TABLE sessions ADD COLUMN runtime_generation INTEGER`,
+      )
 
     if (hasLegacyEvents) {
       database.exec(`
