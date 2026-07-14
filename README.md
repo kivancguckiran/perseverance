@@ -50,6 +50,20 @@ pnpm verify
 pnpm dev
 ```
 
+WP8 kabul adayı, üç gerçek golden görevi ve dört arıza senaryosunu redakte kanıtla
+çalıştıran birleşik smoke komutuna sahiptir:
+
+```bash
+pnpm demo:smoke
+pnpm demo:golden:read-only
+pnpm demo:golden:change
+pnpm demo:golden:approval
+```
+
+Temiz kurulum, browser adımları, beklenen semantik timeline kartları, cleanup ve sorun
+giderme için [PoC demo rehberine](docs/demo/poc-demo.md) bakın. WP8 uygulaması
+tamamlanmış ancak bağımsız kabul beklemektedir.
+
 - Web: `http://localhost:3000`
 - Control plane: `http://127.0.0.1:3100`
 - Health: `http://127.0.0.1:3100/healthz`

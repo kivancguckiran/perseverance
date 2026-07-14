@@ -10,6 +10,10 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "dev": "pnpm --parallel --filter @persistent-codex/control-plane --filter @persistent-codex/web dev",
+    "demo:smoke": "pnpm test -- --run services/control-plane/src/server.test.ts packages/codex-event-adapter/src/index.test.ts && pnpm --filter @persistent-codex/workspace-agent smoke:unknown-replay && pnpm --filter @persistent-codex/workspace-agent smoke:real-recovery",
+    "demo:golden:read-only": "WP8_GOLDEN_SCENARIO=read-only pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
+    "demo:golden:change": "WP8_GOLDEN_SCENARIO=change pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
+    "demo:golden:approval": "WP8_GOLDEN_SCENARIO=approval pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:codex-protocol": "node scripts/generate-codex-protocol.mjs",

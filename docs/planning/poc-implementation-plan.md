@@ -333,7 +333,7 @@ Kabul kriterleri:
 
 ### WP8 — Golden senaryolar ve PoC demosu
 
-Durum: Aktif
+Durum: Uygulandı / kabul bekliyor
 
 Golden görevler:
 
@@ -353,6 +353,12 @@ Kabul kriterleri:
 - Üç golden görev web timeline'ında semantik olarak doğru görünür.
 - Kayıp/çift event ve çift approval kararı oluşmaz.
 - Demo temiz kurulum talimatıyla yeniden çalıştırılabilir.
+
+Uygulama notu: `pnpm demo:smoke`; reconnect/unknown/concurrent-approval contract
+regresyonlarını ve gerçek iki-instance recovery smoke'unu çalıştırır. Üç
+`pnpm demo:golden:*` komutu gerçek app-server golden görevlerini yürütür. Geçici workspace, SQLite ve `CODEX_HOME` kapanışta
+silinir. Temiz kurulum ve browser kabul adımları `docs/demo/poc-demo.md` içindedir.
+Bu kayıt WP8'i tamamlandı ilan etmez; bağımsız kabul denetimi beklenmektedir.
 
 ## 8. Önerilen teslimat sırası
 
