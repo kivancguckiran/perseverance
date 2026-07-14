@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 14 Temmuz 2026
-- Aktif iş paketi: WP11
+- Aktif iş paketi: WP12
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
@@ -44,12 +44,12 @@ Faz 1 ancak aşağıdaki koşullar birlikte sağlandığında tamamlanır:
 
 ## 4. İş paketi özeti
 
-| Paket | Durum                      | Hedef                                                                |
-| ----- | -------------------------- | -------------------------------------------------------------------- |
-| WP9   | Tamamlandı                 | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
-| WP10  | Tamamlandı                 | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
-| WP11  | Uygulandı / kabul bekliyor | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
-| WP12  | Bekliyor                   | Tek kiracılı alfa hardening, runbook ve release kabulü               |
+| Paket | Durum      | Hedef                                                                |
+| ----- | ---------- | -------------------------------------------------------------------- |
+| WP9   | Tamamlandı | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
+| WP10  | Tamamlandı | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
+| WP11  | Tamamlandı | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
+| WP12  | Aktif      | Tek kiracılı alfa hardening, runbook ve release kabulü               |
 
 ## 5. WP9 — Alfa başlatma ve auth bootstrap
 
@@ -272,6 +272,5 @@ kullanım için runbook ve release gate hazırlamak.
 
 ## 9. Paket geçiş kuralı
 
-WP11 tek aktif pakettir. WP12 yalnız WP11 bağımsız denetimde tamamen kabul edildikten
-sonra aktif edilebilir. Eksik paket
+WP12 tek aktif pakettir. Eksik paket
 için yeni pakete geçilmez, yalnız kabul engellerini kapatan düzeltme prompt'u üretilir.
