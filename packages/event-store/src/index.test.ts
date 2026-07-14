@@ -435,7 +435,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 3,
+        user_version: 4,
       })
       database.close()
     } finally {

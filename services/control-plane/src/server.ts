@@ -1,4 +1,6 @@
 import { setImmediate as waitForImmediate } from 'node:timers/promises'
+import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
+import { artifactMetadataSchema } from '@persistent-codex/control-plane-contracts'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import {
@@ -62,6 +64,7 @@ export interface ControlPlaneOptions {
   approvalPolicy?: 'untrusted' | 'on-request' | 'never'
   codexHomeRoot?: string
   codexProvisioningSource?: string
+  artifactRoot?: string
 }
 
 interface SubscriptionState extends StoreScope {
@@ -70,6 +73,17 @@ interface SubscriptionState extends StoreScope {
   lastSentSequence: number
   ackSequence: number
   buffer: TimelineEvent[]
+  bufferBytes: number
+  droppedEventCount: number
+}
+const REALTIME_MAX_QUEUE_EVENTS = 256
+const REALTIME_MAX_QUEUE_BYTES = 1024 * 1024
+function isAuthoritative(event: TimelineEvent) {
+  return (
+    event.type.endsWith('.completed') ||
+    event.type.startsWith('approval.') ||
+    event.type === 'error.reported'
+  )
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -135,6 +149,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const app = Fastify({ logger: options.logger ?? false })
   const store = options.eventStore ?? new SqliteEventStore(options.databasePath)
   const ownsStore = options.eventStore === undefined
+  const artifacts = new LocalArtifactStorage(
+    options.artifactRoot ?? '.runtime/artifacts',
+  )
   const codexHomes = new PersistentCodexHomeManager(
     options.codexHomeRoot ?? '.runtime/codex-homes',
     options.codexProvisioningSource
@@ -143,6 +160,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   )
   const orchestrator = new SessionOrchestrator({
     store,
+    artifactStorage: artifacts,
     workspaceCwd: options.workspaceCwd ?? process.cwd(),
     codexHome: (identity) =>
       codexHomes.homeFor(identity.tenantId, identity.workspaceId),
@@ -198,6 +216,58 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     codexVersion: '0.144.2',
     transport: 'stdio-jsonl',
   }))
+
+  app.get<{
+    Params: { artifactId: string }
+    Querystring: { metadata?: string }
+  }>('/v1/artifacts/:artifactId', async (request, reply) => {
+    const scope = workspaceScope(request.headers)
+    if (!scope)
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    try {
+      const metadata = artifacts.metadata(request.params.artifactId, scope)
+      if (request.query.metadata === '1')
+        return artifactMetadataSchema.parse({
+          ...metadata,
+          downloadUrl: `/v1/artifacts/${encodeURIComponent(metadata.artifactId)}`,
+        })
+      const range = headerValue(request.headers.range)
+      let selected: { start: number; end: number } | undefined
+      if (range) {
+        const match = /^bytes=(\d+)-(\d*)$/.exec(range)
+        if (!match) return reply.code(416).send()
+        const start = Number(match[1])
+        const end = match[2] ? Number(match[2]) : metadata.byteLength - 1
+        if (start > end || end >= metadata.byteLength)
+          return reply.code(416).send()
+        selected = { start, end }
+      }
+      const body = artifacts.read(request.params.artifactId, scope, selected)
+      reply
+        .header('content-type', 'text/plain; charset=utf-8')
+        .header(
+          'content-disposition',
+          `attachment; filename="command-output-${request.params.artifactId}.txt"`,
+        )
+        .header('accept-ranges', 'bytes')
+        .header('cache-control', 'private, no-store')
+      if (selected)
+        reply
+          .code(206)
+          .header(
+            'content-range',
+            `bytes ${selected.start}-${selected.end}/${metadata.byteLength}`,
+          )
+      return reply.send(Buffer.from(body))
+    } catch {
+      return reply
+        .code(404)
+        .send({ code: 'ARTIFACT_NOT_FOUND', message: 'Artifact not found' })
+    }
+  })
 
   app.get<{ Querystring: { status?: string } }>(
     '/v1/approvals',
@@ -612,7 +682,37 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       if (!current || !sameScope(current, event)) return
       if (event.sequence <= current.highWaterSequence) return
       if (current.replaying) {
+        const bytes = Buffer.byteLength(JSON.stringify(event))
+        if (
+          current.buffer.length >= REALTIME_MAX_QUEUE_EVENTS ||
+          current.bufferBytes + bytes > REALTIME_MAX_QUEUE_BYTES
+        ) {
+          const disposable = current.buffer.findIndex(
+            (candidate) => candidate.type === 'command.output.delta',
+          )
+          if (disposable >= 0) {
+            const [removed] = current.buffer.splice(disposable, 1)
+            current.bufferBytes -= Buffer.byteLength(JSON.stringify(removed))
+            current.droppedEventCount++
+          } else if (!isAuthoritative(event)) {
+            current.droppedEventCount++
+            return
+          } else {
+            send(socket, {
+              type: 'resync',
+              ...current,
+              reason: 'queue_overflow',
+              afterSequence: current.ackSequence,
+              highWaterSequence: store.getHighWaterSequence(current),
+              droppedEventCount: current.droppedEventCount,
+            })
+            current.buffer = []
+            current.bufferBytes = 0
+            return
+          }
+        }
         current.buffer.push(event)
+        current.bufferBytes += bytes
         return
       }
       if (event.sequence <= current.lastSentSequence) return
@@ -686,6 +786,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         lastSentSequence: message.afterSequence,
         ackSequence: message.afterSequence,
         buffer: [],
+        bufferBytes: 0,
+        droppedEventCount: 0,
       }
 
       let cursor = message.afterSequence
@@ -720,6 +822,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         .filter((event) => event.sequence > highWaterSequence)
         .sort((left, right) => left.sequence - right.sequence)
       current.buffer.length = 0
+      current.bufferBytes = 0
       const delivered = new Set<number>()
       for (const event of buffered) {
         if (

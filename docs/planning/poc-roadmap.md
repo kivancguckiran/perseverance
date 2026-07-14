@@ -14,16 +14,16 @@ PoC'nin kabul edilmiş teknoloji yığını ve repository sınırları için `do
 
 ## Uygulama durumu — 14 Temmuz 2026
 
-| Paket                      | Durum      | Kanıt                                                                                                                                                      |
-| -------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P0 Repository ve sözleşme  | Tamamlandı | pnpm/TypeScript monorepo, Codex 0.144.2 pini, generated TS + JSON Schema ve schema hash                                                                    |
-| P1 Workspace Agent köprüsü | Tamamlandı | Typed process/protocol/timeout hataları, health state, restart/backoff, crash-loop limiti, fake server lifecycle testleri ve gerçek app-server smoke testi |
-| P2 Normalize event adapter | Tamamlandı | Tüm hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve on golden fixture doğrulandı                                              |
-| P3 Session ve replay       | Tamamlandı | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
-| P4 Thread, turn ve web     | Tamamlandı | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
-| P5 Approval                | Tamamlandı | Durable state machine, concurrent karar, gerçek control-plane smoke ve responsive approval UI doğrulandı                                                   |
-| P6 Resume ve arıza         | Tamamlandı | Persistent home, aynı-thread restart/resume, recovery modeli ve adreslenebilir session route doğrulandı                                                    |
-| P7 Büyük çıktı             | Aktif      | Bounded live tail, redakte artifact spill, backpressure ve timeline sanallaştırma uygulanacak                                                              |
+| Paket                      | Durum                  | Kanıt                                                                                                                                                      |
+| -------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 Repository ve sözleşme  | Tamamlandı             | pnpm/TypeScript monorepo, Codex 0.144.2 pini, generated TS + JSON Schema ve schema hash                                                                    |
+| P1 Workspace Agent köprüsü | Tamamlandı             | Typed process/protocol/timeout hataları, health state, restart/backoff, crash-loop limiti, fake server lifecycle testleri ve gerçek app-server smoke testi |
+| P2 Normalize event adapter | Tamamlandı             | Tüm hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve on golden fixture doğrulandı                                              |
+| P3 Session ve replay       | Tamamlandı             | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
+| P4 Thread, turn ve web     | Tamamlandı             | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
+| P5 Approval                | Tamamlandı             | Durable state machine, concurrent karar, gerçek control-plane smoke ve responsive approval UI doğrulandı                                                   |
+| P6 Resume ve arıza         | Tamamlandı             | Persistent home, aynı-thread restart/resume, recovery modeli ve adreslenebilir session route doğrulandı                                                    |
+| P7 Büyük çıktı             | Aktif / kabul bekliyor | Bounded live tail, redakte artifact spill, backpressure ve timeline sanallaştırma uygulama adayı doğrulanıyor                                              |
 
 WP2 adapter teslimatı tamamlandı: generated Codex sözleşmeleri runtime'da doğrulanır; hedef event aileleri normalize edilir; unknown girdiler güvenli biçimde korunur; completed snapshot deltaların yetkili son halidir; redaction canonical checksum'dan önce uygulanır. On golden fixture dahil repo doğrulamasında 31 test geçmiştir.
 

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 3
+export const CURRENT_SCHEMA_VERSION = 4
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -112,6 +112,16 @@ export const CREATE_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS approvals_scope_status_idx
     ON approvals(tenant_id, workspace_id, status, requested_at);
+
+  CREATE TABLE IF NOT EXISTS artifacts (
+    artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL, turn_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    kind TEXT NOT NULL, byte_length INTEGER NOT NULL CHECK(byte_length >= 0),
+    sha256 TEXT, chunk_count INTEGER NOT NULL CHECK(chunk_count >= 0), finalized INTEGER NOT NULL,
+    metadata_json TEXT NOT NULL, created_at TEXT NOT NULL, finalized_at TEXT,
+    FOREIGN KEY (tenant_id, workspace_id, session_id) REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
+  CREATE INDEX IF NOT EXISTS artifacts_scope_idx ON artifacts(tenant_id, workspace_id, session_id, turn_id, item_id);
 `
 
 interface TableInfoRow {

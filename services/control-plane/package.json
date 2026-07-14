@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@persistent-codex/artifact-storage": "workspace:*",
     "@fastify/cors": "^11.3.0",
     "@fastify/websocket": "^11.3.0",
     "@persistent-codex/control-plane-contracts": "workspace:*",

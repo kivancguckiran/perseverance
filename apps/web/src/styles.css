@@ -197,6 +197,30 @@ h2 {
   border-radius: 12px;
   background: #0d1714;
 }
+.timeline-card pre {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.artifact-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  color: #88a197;
+  font-size: 0.75rem;
+}
+.artifact-actions button {
+  color: #70d7ae;
+  border: 0;
+  padding: 0;
+  background: none;
+  text-decoration: underline;
+}
+.virtual-timeline {
+  min-width: 0;
+}
 
 .timeline-card.event-agent-message-completed,
 .timeline-card.event-agent-message-delta {

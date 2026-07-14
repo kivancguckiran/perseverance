@@ -454,7 +454,7 @@ Bir iş paketi ancak şu koşullarda tamamlandı sayılır:
 
 ## 14. Güncel sonraki adım
 
-Aktif iş paketi WP7'dir: büyük command output ingest hattı bounded tutulacak, tam
+Aktif iş paketi WP7'dir (kabul bekliyor): büyük command output ingest hattı bounded tutulacak, tam
 redakte çıktı artifact storage'a spill edilecek ve uzun timeline backpressure ile
 sanallaştırma kullanacaktır.
 

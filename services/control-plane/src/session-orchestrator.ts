@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type {
+  ArtifactStorage,
+  ArtifactScope,
+} from '@persistent-codex/artifact-storage'
 import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
 import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import {
@@ -80,6 +84,7 @@ export interface SessionOrchestratorOptions {
   onDeliveryError?: WorkspaceRuntimeRegistryOptions['onDeliveryError']
   approvalPolicy?: ThreadStartParams['approvalPolicy']
   onRecoveryError?: (input: StoreScope & { code: string }) => void
+  artifactStorage?: ArtifactStorage
 }
 
 function threadIdOf(message: Record<string, unknown>): string | undefined {
@@ -173,6 +178,11 @@ export class SessionOrchestrator {
   readonly #sourceVersion: string
   readonly #approvalPolicy: ThreadStartParams['approvalPolicy'] | undefined
   readonly #onRecoveryError: SessionOrchestratorOptions['onRecoveryError']
+  readonly #artifactStorage: ArtifactStorage | undefined
+  readonly #commandArtifacts = new Map<
+    string,
+    { artifactId: string; scope: ArtifactScope }
+  >()
   readonly #registry: WorkspaceRuntimeRegistry
   readonly #threadScopes = new Map<string, StoreScope>()
   readonly #adapters = new Map<string, CodexEventAdapter>()
@@ -193,6 +203,7 @@ export class SessionOrchestrator {
     this.#sourceVersion = options.sourceVersion ?? '0.144.2'
     this.#approvalPolicy = options.approvalPolicy
     this.#onRecoveryError = options.onRecoveryError
+    this.#artifactStorage = options.artifactStorage
     this.#registry = new WorkspaceRuntimeRegistry({
       ...(options.runtimeClientFactory
         ? { clientFactory: options.runtimeClientFactory }
@@ -494,6 +505,7 @@ export class SessionOrchestrator {
   ): void {
     const adapter = this.#adapterFor(scope)
     const adapted = adapter.adapt(envelope)
+    this.#spillCommandOutput(adapted)
     if (this.#store.hasEquivalentTimelineEvent(scope, adapted.event)) return
     this.#store.ingest({
       ...scope,
@@ -947,6 +959,7 @@ export class SessionOrchestrator {
     if (!scope) return
     const adapter = this.#adapterFor(scope)
     const adapted = adapter.adapt(message)
+    this.#spillCommandOutput(adapted)
     const approvalPayload =
       adapted.event.type === 'approval.requested'
         ? adapted.event.payload
@@ -1053,6 +1066,84 @@ export class SessionOrchestrator {
       ) {
         this.#activeTurns.delete(activeTurnKey)
       }
+    }
+  }
+
+  #spillCommandOutput(adapted: ReturnType<CodexEventAdapter['adapt']>): void {
+    const event = adapted.event
+    if (!this.#artifactStorage || !event.codexTurnId || !event.codexItemId)
+      return
+    const key = JSON.stringify([
+      event.tenantId,
+      event.workspaceId,
+      event.sessionId,
+      event.codexTurnId,
+      event.codexItemId,
+    ])
+    const scope: ArtifactScope = {
+      tenantId: event.tenantId,
+      workspaceId: event.workspaceId,
+      sessionId: event.sessionId,
+      turnId: event.codexTurnId,
+      itemId: event.codexItemId,
+    }
+    if (event.type === 'command.output.delta') {
+      let record = this.#commandArtifacts.get(key)
+      if (!record) {
+        const created = this.#artifactStorage.create(scope)
+        record = { artifactId: created.artifactId, scope }
+        this.#commandArtifacts.set(key, record)
+      }
+      const metadata = this.#artifactStorage.append({
+        artifactId: record.artifactId,
+        scope,
+        chunkIndex: event.payload.chunkIndex,
+        stream: event.payload.stream,
+        data: event.payload.text,
+      })
+      const range = metadata.ranges.at(-1)!
+      event.payload.artifact = {
+        artifactId: record.artifactId,
+        startByte: range.startByte,
+        endByte: range.endByte,
+        byteLength: range.byteLength,
+      }
+      const params = adapted.envelope.params as { delta?: unknown } | undefined
+      if (params && 'delta' in params) params.delta = event.payload.text
+      return
+    }
+    if (event.type === 'command.completed') {
+      let record = this.#commandArtifacts.get(key)
+      if (!record) {
+        const created = this.#artifactStorage.create(scope)
+        record = { artifactId: created.artifactId, scope }
+        this.#commandArtifacts.set(key, record)
+        if (event.payload.output.previewTail)
+          this.#artifactStorage.append({
+            artifactId: record.artifactId,
+            scope,
+            chunkIndex: 0,
+            stream: 'combined',
+            data: event.payload.output.previewTail,
+          })
+      }
+      const metadata = this.#artifactStorage.finalize(record.artifactId, scope)
+      event.payload.output = {
+        ...event.payload.output,
+        totalBytes: metadata.byteLength,
+        sha256: metadata.sha256,
+        artifact: {
+          artifactId: record.artifactId,
+          startByte: 0,
+          endByte: Math.max(0, metadata.byteLength - 1),
+          byteLength: metadata.byteLength,
+        },
+      }
+      const params = adapted.envelope.params as
+        { item?: { aggregatedOutput?: unknown } } | undefined
+      if (params?.item && 'aggregatedOutput' in params.item)
+        params.item.aggregatedOutput = event.payload.output.previewTail
+      this.#commandArtifacts.delete(key)
     }
   }
 

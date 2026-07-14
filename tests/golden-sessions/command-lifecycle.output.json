@@ -18,7 +18,11 @@
     "payload": {
       "commandId": "cmd_1",
       "stream": "combined",
-      "text": "partial output\n"
+      "chunkIndex": 0,
+      "byteLength": 15,
+      "text": "partial output\n",
+      "truncated": false,
+      "artifact": null
     }
   },
   {
@@ -30,7 +34,14 @@
       "command": "pnpm test",
       "cwd": "/workspace",
       "status": "completed",
-      "output": "authoritative output\n",
+      "output": {
+        "previewTail": "authoritative output\n",
+        "previewByteLength": 21,
+        "truncated": false,
+        "totalBytes": 21,
+        "artifact": null,
+        "sha256": null
+      },
       "exitCode": 0,
       "durationMs": 42
     }

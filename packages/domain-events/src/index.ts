@@ -41,6 +41,23 @@ const tokenUsageBreakdownSchema = z.object({
   outputTokens: z.number().nonnegative(),
   reasoningOutputTokens: z.number().nonnegative(),
 })
+export const artifactPointerSchema = z.object({
+  artifactId: z.string().min(1),
+  startByte: z.number().int().nonnegative(),
+  endByte: z.number().int().nonnegative(),
+  byteLength: z.number().int().nonnegative(),
+})
+export const commandOutputStateSchema = z.object({
+  previewTail: z.string(),
+  previewByteLength: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  totalBytes: z.number().int().nonnegative(),
+  artifact: artifactPointerSchema.nullable(),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
+})
 
 export const timelineEventSchema = z.discriminatedUnion('type', [
   eventSchema('turn.started', z.object({ status: z.string().min(1) })),
@@ -65,8 +82,12 @@ export const timelineEventSchema = z.discriminatedUnion('type', [
     'command.output.delta',
     z.object({
       commandId: z.string().min(1),
-      stream: z.literal('combined'),
-      text: z.string(),
+      stream: z.enum(['stdout', 'stderr', 'combined']),
+      chunkIndex: z.number().int().nonnegative(),
+      byteLength: z.number().int().nonnegative(),
+      text: z.string().max(65_536),
+      truncated: z.boolean(),
+      artifact: artifactPointerSchema.nullable(),
     }),
   ),
   eventSchema(
@@ -75,7 +96,7 @@ export const timelineEventSchema = z.discriminatedUnion('type', [
       command: z.string(),
       cwd: z.string(),
       status: z.string().min(1),
-      output: z.string().nullable(),
+      output: commandOutputStateSchema,
       exitCode: z.number().int().nullable(),
       durationMs: z.number().nonnegative().nullable(),
     }),

@@ -41,6 +41,27 @@ const scopeSchema = z.object({
   workspaceId: identifierSchema,
   sessionId: identifierSchema,
 })
+export const artifactMetadataSchema = scopeSchema.extend({
+  artifactId: identifierSchema,
+  turnId: identifierSchema,
+  itemId: identifierSchema,
+  kind: z.literal('command-output'),
+  byteLength: z.number().int().nonnegative(),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .nullable(),
+  chunkCount: z.number().int().nonnegative(),
+  finalized: z.boolean(),
+  downloadUrl: z.string().min(1),
+})
+export const resyncMessageSchema = scopeSchema.extend({
+  type: z.literal('resync'),
+  reason: z.enum(['slow_consumer', 'queue_overflow', 'sequence_gap']),
+  afterSequence: sequenceSchema,
+  highWaterSequence: sequenceSchema,
+  droppedEventCount: z.number().int().nonnegative(),
+})
 
 export const subscribeMessageSchema = scopeSchema.extend({
   type: z.literal('subscribe'),
@@ -118,6 +139,7 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
   ackMessageSchema,
   errorMessageSchema,
   approvalStateMessageSchema,
+  resyncMessageSchema,
 ])
 
 export const replayResponseSchema = z.object({
@@ -192,6 +214,7 @@ export type AckMessage = z.infer<typeof ackMessageSchema>
 export type ErrorMessage = z.infer<typeof errorMessageSchema>
 export type ClientMessage = z.infer<typeof clientMessageSchema>
 export type ServerMessage = z.infer<typeof serverMessageSchema>
+export type ArtifactMetadata = z.infer<typeof artifactMetadataSchema>
 export type ReplayResponse = z.infer<typeof replayResponseSchema>
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>
 export type SessionResponse = z.infer<typeof sessionResponseSchema>

@@ -10,6 +10,10 @@ import {
   parseTimelineEvent,
   type TimelineEvent,
 } from '@persistent-codex/domain-events'
+import {
+  appendBoundedTail,
+  DEFAULT_COMMAND_TAIL_BYTES,
+} from '@persistent-codex/artifact-storage'
 
 export interface EventAdapterContext {
   tenantId: string
@@ -214,6 +218,11 @@ function changesOf(
 export class CodexEventAdapter {
   readonly #context: EventAdapterContext
   readonly #redact: RedactionHook
+  readonly #tailBytes: number
+  readonly #commandChunks = new Map<
+    string,
+    { index: number; totalBytes: number; tail: string }
+  >()
   readonly #approvals = new Map<
     string,
     {
@@ -225,10 +234,11 @@ export class CodexEventAdapter {
 
   constructor(
     context: EventAdapterContext,
-    options: { redact?: RedactionHook } = {},
+    options: { redact?: RedactionHook; commandTailBytes?: number } = {},
   ) {
     this.#context = context
     this.#redact = options.redact ?? defaultRedactionHook
+    this.#tailBytes = options.commandTailBytes ?? DEFAULT_COMMAND_TAIL_BYTES
   }
 
   adapt(input: unknown): AdaptedCodexEnvelope {
@@ -333,17 +343,37 @@ export class CodexEventAdapter {
           },
           this.#itemIdentity(notification.params),
         )
-      case 'item/commandExecution/outputDelta':
+      case 'item/commandExecution/outputDelta': {
+        const state = this.#commandChunks.get(notification.params.itemId) ?? {
+          index: 0,
+          totalBytes: 0,
+          tail: '',
+        }
+        const text = String(
+          defaultRedactionHook({ text: notification.params.delta }).text,
+        )
+        const byteLength = Buffer.byteLength(text)
+        state.tail = appendBoundedTail(state.tail, text, this.#tailBytes)
+        state.totalBytes += byteLength
+        this.#commandChunks.set(notification.params.itemId, {
+          ...state,
+          index: state.index + 1,
+        })
         return this.#event(
           method,
           'command.output.delta',
           {
             commandId: notification.params.itemId,
             stream: 'combined',
-            text: notification.params.delta,
+            chunkIndex: state.index,
+            byteLength,
+            text: appendBoundedTail('', text, this.#tailBytes),
+            truncated: byteLength > this.#tailBytes,
+            artifact: null,
           },
           this.#itemIdentity(notification.params),
         )
+      }
       case 'turn/diff/updated':
         return this.#event(
           method,
@@ -471,7 +501,17 @@ export class CodexEventAdapter {
           )
         }
         break
-      case 'commandExecution':
+      case 'commandExecution': {
+        const state = this.#commandChunks.get(item.id)
+        const completedOutput = appendBoundedTail(
+          '',
+          redactCommand(String(item.aggregatedOutput ?? '')),
+          this.#tailBytes,
+        )
+        const totalBytes = Math.max(
+          state?.totalBytes ?? 0,
+          Buffer.byteLength(String(item.aggregatedOutput ?? '')),
+        )
         return this.#event(
           notification.method,
           completed ? 'command.completed' : 'command.proposed',
@@ -480,13 +520,23 @@ export class CodexEventAdapter {
                 command: item.command,
                 cwd: item.cwd,
                 status: item.status,
-                output: item.aggregatedOutput,
+                output: {
+                  previewTail: completedOutput || state?.tail || '',
+                  previewByteLength: Buffer.byteLength(
+                    completedOutput || state?.tail || '',
+                  ),
+                  truncated: totalBytes > this.#tailBytes,
+                  totalBytes,
+                  artifact: null,
+                  sha256: null,
+                },
                 exitCode: item.exitCode,
                 durationMs: item.durationMs,
               }
             : { command: item.command, cwd: item.cwd, status: item.status },
           identity,
         )
+      }
       case 'fileChange':
         return this.#event(
           notification.method,
@@ -658,6 +708,11 @@ export interface ReconciledItemSnapshot {
   text?: string
   output?: string
 }
+function redactCommand(value: string) {
+  return value
+    .replace(/\bBearer\s+\S+/gi, '[REDACTED]')
+    .replace(/\b(?:sk|sess)-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+}
 
 function itemKey(event: TimelineEvent): string | undefined {
   if (!event.codexThreadId || !event.codexTurnId || !event.codexItemId) {
@@ -672,6 +727,10 @@ function itemKey(event: TimelineEvent): string | undefined {
 
 export class TimelineReconciler {
   readonly #items = new Map<string, ReconciledItemSnapshot>()
+  readonly tailBytes: number
+  constructor(tailBytes = DEFAULT_COMMAND_TAIL_BYTES) {
+    this.tailBytes = tailBytes
+  }
 
   apply(event: TimelineEvent): ReconciledItemSnapshot | undefined {
     const key = itemKey(event)
@@ -702,7 +761,11 @@ export class TimelineReconciler {
         next = {
           ...base,
           completed: false,
-          output: `${previous?.output ?? ''}${event.payload.text}`,
+          output: appendBoundedTail(
+            previous?.output ?? '',
+            event.payload.text,
+            this.tailBytes,
+          ),
         }
         break
       case 'agent.message.completed':
@@ -713,7 +776,7 @@ export class TimelineReconciler {
         next = {
           ...base,
           completed: true,
-          output: event.payload.output ?? previous?.output ?? '',
+          output: event.payload.output.previewTail,
         }
         break
       case 'file.change.completed':

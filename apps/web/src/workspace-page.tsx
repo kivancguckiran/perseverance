@@ -12,6 +12,7 @@ import {
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 interface PlatformMeta {
@@ -65,6 +66,19 @@ interface TimelineCard {
   output?: string
   completed: boolean
 }
+const COMMAND_TAIL_BYTES = 64 * 1024
+const MAX_TIMELINE_EVENTS = 2_000
+function boundedTail(
+  current: string,
+  chunk: string,
+  limit = COMMAND_TAIL_BYTES,
+) {
+  const bytes = new TextEncoder().encode(current + chunk)
+  if (bytes.length <= limit) return current + chunk
+  let start = bytes.length - limit
+  while (start < bytes.length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start++
+  return new TextDecoder().decode(bytes.slice(start))
+}
 
 function itemKey(event: TimelineEvent): string | undefined {
   if (!event.codexThreadId || !event.codexTurnId || !event.codexItemId) {
@@ -88,14 +102,14 @@ function reconcile(events: TimelineEvent[]): TimelineCard[] {
     ) {
       next.text = `${previous?.text ?? ''}${event.payload.text}`
     } else if (event.type === 'command.output.delta') {
-      next.output = `${previous?.output ?? ''}${event.payload.text}`
+      next.output = boundedTail(previous?.output ?? '', event.payload.text)
     } else if (
       event.type === 'agent.message.completed' ||
       event.type === 'plan.completed'
     ) {
       next = { ...next, text: event.payload.text, completed: true }
     } else if (event.type === 'command.completed') {
-      const output = event.payload.output ?? previous?.output
+      const output = event.payload.output.previewTail || previous?.output
       next = {
         ...next,
         ...(output === undefined ? {} : { output }),
@@ -188,6 +202,23 @@ function detailOf(card: TimelineCard): string {
 
 function TimelineEntry({ card }: { card: TimelineCard }) {
   const approvalEvent = card.event.type === 'approval.requested'
+  const artifactId =
+    card.event.type === 'command.completed'
+      ? card.event.payload.output.artifact?.artifactId
+      : undefined
+  async function downloadArtifact(artifactId: string) {
+    const response = await fetch(
+      `${apiBaseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}`,
+      { headers: scopeHeaders },
+    )
+    if (!response.ok) throw await apiError(response)
+    const url = URL.createObjectURL(await response.blob())
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `command-output-${artifactId}.txt`
+    anchor.click()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
   return (
     <article
       className={`timeline-card event-${card.event.type.replaceAll('.', '-')} ${
@@ -199,6 +230,20 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
         <span>#{card.event.sequence}</span>
       </div>
       <pre>{detailOf(card)}</pre>
+      {card.event.type === 'command.completed' && artifactId ? (
+        <div className="artifact-actions">
+          <span>
+            {card.event.payload.output.truncated ? 'Kısaltıldı · ' : ''}
+            {card.event.payload.output.totalBytes.toLocaleString()} byte
+          </span>
+          <button
+            type="button"
+            onClick={() => void downloadArtifact(artifactId)}
+          >
+            Tam redakte çıktıyı aç/indir
+          </button>
+        </div>
+      ) : null}
     </article>
   )
 }
@@ -319,6 +364,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   )
   const [readOnly, setReadOnly] = useState(false)
   const lastSequence = useRef(0)
+  const timelineRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!sessionId) return
@@ -356,6 +402,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           if (next.has(event.eventId) || sequences.has(event.sequence)) continue
           next.set(event.eventId, event)
           sequences.add(event.sequence)
+        }
+        while (next.size > MAX_TIMELINE_EVENTS) {
+          const oldest = next.keys().next().value as string | undefined
+          if (!oldest) break
+          next.delete(oldest)
         }
         return next
       })
@@ -430,6 +481,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           )
         }
         if (parsed.data.type === 'error') setError(parsed.data.message)
+        if (parsed.data.type === 'resync') {
+          lastSequence.current = parsed.data.afterSequence
+          setRealtimeState('yeniden eşitleniyor')
+          socket?.close()
+        }
         if (parsed.data.type === 'approval') {
           const approval = parsed.data.approval
           setApprovals((current) =>
@@ -495,6 +551,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       reconcile([...events.values()].sort((a, b) => a.sequence - b.sequence)),
     [events],
   )
+  const virtualizer = useVirtualizer({
+    count: cards.length,
+    getScrollElement: () => timelineRef.current,
+    estimateSize: () => 150,
+    overscan: 8,
+  })
   const turnActive = useMemo(() => {
     let active = false
     for (const event of [...events.values()].sort(
@@ -703,7 +765,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             </span>
           </div>
 
-          <div className="timeline-stream" aria-live="polite">
+          <div className="timeline-stream" aria-live="polite" ref={timelineRef}>
             {[...approvals.values()]
               .filter((approval) => approval.sessionId === session?.sessionId)
               .map((approval) => (
@@ -721,7 +783,29 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 />
               ))}
             {cards.length ? (
-              cards.map((card) => <TimelineEntry key={card.key} card={card} />)
+              <div
+                className="virtual-timeline"
+                style={{
+                  height: virtualizer.getTotalSize(),
+                  position: 'relative',
+                }}
+              >
+                {virtualizer.getVirtualItems().map((row) => (
+                  <div
+                    key={cards[row.index]!.key}
+                    ref={virtualizer.measureElement}
+                    data-index={row.index}
+                    style={{
+                      position: 'absolute',
+                      width: '100%',
+                      transform: `translateY(${row.start}px)`,
+                      paddingBottom: 12,
+                    }}
+                  >
+                    <TimelineEntry card={cards[row.index]!} />
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="timeline-empty">
                 <div className="terminal-mark" aria-hidden="true">
