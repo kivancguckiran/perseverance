@@ -1,4 +1,11 @@
-import { existsSync, lstatSync, mkdirSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,6 +44,23 @@ describe('isolated real-smoke CODEX_HOME', () => {
       isolated.cleanup()
       expect(existsSync(isolatedPath)).toBe(false)
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('can exclude personal config hooks from real canary homes', () => {
+    const sourceHome = mkdtempSync(join(tmpdir(), 'codex-source-'))
+    writeFileSync(join(sourceHome, 'auth.json'), '{}')
+    writeFileSync(join(sourceHome, 'config.toml'), 'notify = ["helper"]')
+    const isolated = createIsolatedCodexHome({
+      sourceHome,
+      includeConfig: false,
+    })
+    try {
+      expect(isolated.linkedFiles).toEqual(['auth.json'])
+      expect(existsSync(join(isolated.path, 'config.toml'))).toBe(false)
+    } finally {
+      isolated.cleanup()
+      rmSync(sourceHome, { recursive: true, force: true })
     }
   })
 })

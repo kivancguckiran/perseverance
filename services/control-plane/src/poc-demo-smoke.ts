@@ -41,6 +41,7 @@ const isolatedHome = createIsolatedCodexHome({
     process.env.CODEX_HOME ??
     join(homedir(), '.codex'),
   temporaryRoot: root,
+  includeConfig: false,
 })
 mkdirSync(workspaceCwd)
 writeFileSync(
@@ -126,12 +127,7 @@ const build = () =>
   buildControlPlane({
     eventStore: store,
     workspaceCwd,
-    ...(scenario === 'approval'
-      ? { runtimeClientFactory: () => runtime }
-      : {
-          codexHomeRoot,
-          codexProvisioningSource: isolatedHome.sourceHome,
-        }),
+    runtimeClientFactory: () => runtime,
     approvalPolicy: 'on-request',
   })
 let app = await build()
