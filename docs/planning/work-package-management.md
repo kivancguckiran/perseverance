@@ -56,8 +56,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
 | WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
 | WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
-| WP6 — Resume, reconnect ve recovery          | Aktif      | Kalıcı Codex home, thread resume, reconnect ve açık recovery davranışı tamamlanacak                         |
-| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Bekliyor   | —                                                                                                           |
+| WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
+| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Aktif      | Bounded output tail, artifact spill, backpressure ve timeline sanallaştırma tamamlanacak                    |
 | WP8 — Golden senaryolar ve PoC demosu        | Bekliyor   | —                                                                                                           |
 
 ## WP1 nihai denetim sonucu
@@ -319,3 +319,57 @@ etmeden bu component'i kullanıyor. `pnpm verify` kapsamına gerçek Vite HTTP s
 error yokluğunu doğrulayan regresyon smoke'u eklendi.
 
 Bu kayıt WP6'yı tamamlandı yapmaz; nihai karar yönetici yeniden denetimindedir.
+
+## WP6 üçüncü düzeltme yeniden denetimi — route param düzeltmesi gerekli
+
+Karar: **Eksik**
+
+Doğrulananlar:
+
+- `86b5fa4` commit'i mevcut ve çalışma ağacı denetim başlangıcında temizdi.
+- Ortak `WorkspacePage`, route modülleri dışına taşındı; `/` ve
+  `/sessions/:sessionId` route'ları artık birbirini import etmiyor.
+- `pnpm verify` içindeki format, typecheck, 6 test dosyasında 78 test ve production
+  build adımları geçti. Localhost bind izniyle ayrıca çalıştırılan gerçek Vite HTTP
+  smoke'u her iki route için HTTP 200 ve beklenen SSR gövdesini doğruladı.
+
+Kalan kabul engeli:
+
+- Session route TanStack Router'ın `$sessionId` parametresini ortak component'e
+  aktarmıyor. `WorkspacePage` session kimliğini hâlâ mount sonrasında
+  `window.location.pathname` regex'iyle çıkarıyor. Önceki düzeltme prompt'unda açıkça
+  istenen route-param/prop sınırı ve `window` path parsing yasağı karşılanmadı.
+- Mevcut SSR smoke yalnız HTML/status kontrol ediyor; session parametresinin doğru
+  session detail isteğine aktarıldığını kanıtlamıyor. Parametre aktarımı component veya
+  browser/integration testiyle regresyon kapsamına alınmalıdır.
+
+WP6 aktif kalır; WP7'ye geçilemez.
+
+## WP6 nihai yeniden denetim sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- `86b5fa4` ana uygulama commit'i ile `45e73ef` route-param düzeltme commit'i mevcut.
+- Server-owned persistent Codex home, auth/config provisioning, schema v2→v3 migration,
+  durable recovery alanları ve transient/terminal recovery ayrımı uygulanmış.
+- Gerçek iki-instance restart smoke aynı Codex thread'ini resume etti; sequence ilerledi,
+  tekrar resume authoritative snapshot'ı duplicate etmedi ve geçici kaynaklar temizlendi.
+- Runtime generation recovery, crash-window idempotency, snapshot reconciliation/dedupe,
+  steer, interrupt, approval expiry ve tenant/session isolation testleri mevcut.
+- Session route `$sessionId` değerini `Route.useParams()` ile alıp ortak
+  `WorkspacePage` component'ine prop olarak aktarıyor. URL parsing ve route-to-route
+  import bulunmuyor; session oluşturma TanStack navigation kullanıyor.
+- `pnpm verify` kapsamındaki format, typecheck, 7 test dosyasında 81 test ve production
+  build geçti. Localhost izniyle gerçek Vite HTTP smoke'u `/` ile
+  `/sessions/:sessionId` için HTTP 200 doğruladı.
+- Bağımsız browser reload denetiminde `route-param-test`, tam olarak scoped session
+  detail isteğine aktarıldı. Desktop ve 390×844 görünümünde console warning/error,
+  Vite overlay veya yatay taşma oluşmadı.
+- Denetim için başlatılan web/control-plane süreçleri ve browser tab'ları kapatıldı.
+
+Uygulama commit'leri: `86b5fa4` (`feat: add session resume and recovery`) ve
+`45e73ef` (`fix: use TanStack session route params`).
+
+Aktif iş paketi WP7'dir.

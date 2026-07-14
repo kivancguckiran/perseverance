@@ -293,9 +293,9 @@ Kabul kriterleri:
 
 ### WP6 — Resume, reconnect ve recovery
 
-Durum: Aktif
+Durum: Tamamlandı
 
-Uygulama notu: Persistent tenant/workspace Codex home, schema v3 recovery modeli, `thread/read` → `thread/resume`, crash sonrası `outcome_unknown`, session detail/resume ve generated steer/interrupt uçları ile `/sessions/:sessionId` route’u uygulama adayına eklendi. Yönetici kabulü ve gerçek restart/browser kanıtı beklenmektedir; WP6 tamamlandı sayılmaz.
+Uygulama notu: Persistent tenant/workspace Codex home, schema v3 recovery modeli, `thread/read` → `thread/resume`, crash sonrası `outcome_unknown`, session detail/resume ve generated steer/interrupt uçları ile `/sessions/:sessionId` route’u doğrulandı. Gerçek iki-instance restart smoke aynı thread, monotonic sequence ve snapshot dedupe davranışını; browser denetimi route reload ile responsive recovery yüzeyini kanıtladı.
 
 İşler:
 
@@ -314,7 +314,7 @@ Kabul kriterleri:
 
 ### WP7 — Büyük çıktı ve timeline dayanıklılığı
 
-Durum: Başlanmadı
+Durum: Aktif
 
 İşler:
 
@@ -454,6 +454,9 @@ Bir iş paketi ancak şu koşullarda tamamlandı sayılır:
 
 ## 14. Güncel sonraki adım
 
-Aktif iş paketi WP6'dır: browser ve control-plane reconnect, kalıcı Codex thread binding, app-server restart sonrası `thread/read`/`thread/resume` ve açık recovery durumları tamamlanacaktır.
+Aktif iş paketi WP7'dir: büyük command output ingest hattı bounded tutulacak, tam
+redakte çıktı artifact storage'a spill edilecek ve uzun timeline backpressure ile
+sanallaştırma kullanacaktır.
 
-WP6 kabul edilmeden WP7 veya sonraki iş paketleri aktif edilemez. Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.
+WP7 kabul edilmeden WP8 aktif edilemez. Güncel denetim
+`docs/planning/work-package-management.md` içinde tutulur.

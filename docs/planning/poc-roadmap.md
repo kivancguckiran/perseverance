@@ -22,7 +22,8 @@ PoC'nin kabul edilmiş teknoloji yığını ve repository sınırları için `do
 | P3 Session ve replay       | Tamamlandı | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
 | P4 Thread, turn ve web     | Tamamlandı | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
 | P5 Approval                | Tamamlandı | Durable state machine, concurrent karar, gerçek control-plane smoke ve responsive approval UI doğrulandı                                                   |
-| P6 Resume ve arıza         | Aktif      | Thread persistence, reconnect ve app-server restart recovery uygulanacak                                                                                   |
+| P6 Resume ve arıza         | Tamamlandı | Persistent home, aynı-thread restart/resume, recovery modeli ve adreslenebilir session route doğrulandı                                                    |
+| P7 Büyük çıktı             | Aktif      | Bounded live tail, redakte artifact spill, backpressure ve timeline sanallaştırma uygulanacak                                                              |
 
 WP2 adapter teslimatı tamamlandı: generated Codex sözleşmeleri runtime'da doğrulanır; hedef event aileleri normalize edilir; unknown girdiler güvenli biçimde korunur; completed snapshot deltaların yetkili son halidir; redaction canonical checksum'dan önce uygulanır. On golden fixture dahil repo doğrulamasında 31 test geçmiştir.
 
@@ -32,9 +33,9 @@ WP4 düzeltmesi kabul edildi: runtime-instance kimliği yeni control-plane regis
 
 WP4 tamamlandı.
 
-WP5 kabul edildi: atomik durable approval, optimistic-lock/idempotent karar, generated command/file mapping, runtime lifecycle expiry, WebSocket reconciliation ve responsive approval kartı 65 testle doğrulandı. Gerçek control-plane smoke karar öncesi sıfır, karar sonrası tek upstream response ve terminal turn kanıtladı; browser denetiminde pending→resolved akışı desktop ve mobilde tamamlandı. Aktif iş paketi WP6 resume ve arıza senaryolarıdır.
+WP5 kabul edildi: atomik durable approval, optimistic-lock/idempotent karar, generated command/file mapping, runtime lifecycle expiry, WebSocket reconciliation ve responsive approval kartı 65 testle doğrulandı. Gerçek control-plane smoke karar öncesi sıfır, karar sonrası tek upstream response ve terminal turn kanıtladı; browser denetiminde pending→resolved akışı desktop ve mobilde tamamlandı.
 
-WP6 uygulama adayı: server-owned persistent home, durable recovery alanları, scoped session detail/resume, generated steer/interrupt ve adreslenebilir browser session route’u eklendi. WP6 yönetici kabulü yapılmadı; gerçek restart smoke ve bağımsız browser kanıtı kabul öncesi ayrıca denetlenmelidir.
+WP6 kabul edildi: server-owned persistent home, durable recovery alanları, scoped session detail/resume, generated steer/interrupt ve adreslenebilir browser session route'u tamamlandı. Gerçek iki-instance smoke aynı thread resume, monotonic sequence ve snapshot dedupe davranışını; browser reload denetimi TanStack route param aktarımı ile responsive görünümü doğruladı. Aktif iş paketi WP7 büyük çıktı ve timeline dayanıklılığıdır.
 
 ## Uygulama sırası
 
@@ -97,9 +98,19 @@ Kabul: Küçük ekran ve masaüstünde üç golden görev semantik olarak aynı 
 - Kalıcı `CODEX_HOME`.
 - Process restart sonrası `thread/read` + `thread/resume`.
 - Açık `THREAD_NOT_RESUMABLE` recovery durumu.
-- Büyük command output için bounded live tail ve artifact spill prototipi.
 
-Kabul: Browser restart ve app-server restart senaryoları test edilir; 100 MB çıktı UI belleğini sınırsız büyütmez.
+Kabul: Browser restart ve app-server restart senaryoları test edilir; aynı thread
+sequence gap veya duplicate authoritative snapshot olmadan sürdürülür.
+
+### P7. Büyük çıktı ve timeline dayanıklılığı
+
+- Command output chunk index ve bounded live tail.
+- Redaction sonrası artifact spill prototipi.
+- Realtime/UI backpressure ve completed snapshot reconciliation.
+- Uzun timeline sanallaştırma.
+
+Kabul: 100 MB çıktı UI belleğini sınırsız büyütmez; son N KB canlı görünür ve tam
+redakte çıktı tenant/workspace scoped artifact olarak erişilebilir.
 
 ## Faz 0 dışında
 
