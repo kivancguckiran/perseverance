@@ -63,6 +63,246 @@ describe('bounded realtime sender', () => {
   })
 })
 
+describe('WP9 auth readiness and recovery', () => {
+  it('blocks session creation before thread/start when account setup is required', async () => {
+    class LoggedOutClient extends FakeRuntimeClient {
+      override async request<TResult>(
+        method: string,
+        params: unknown,
+      ): Promise<TResult> {
+        if (method === 'account/read') {
+          this.requests.push(method)
+          return { account: null, requiresOpenaiAuth: true } as TResult
+        }
+        return super.request(method, params)
+      }
+    }
+    const client = new LoggedOutClient()
+    const instance = await buildControlPlane({
+      runtimeClientFactory: () => client,
+    })
+    try {
+      const [readiness, concurrent] = await Promise.all([
+        instance.inject({ method: 'GET', url: '/readyz', headers }),
+        instance.inject({ method: 'GET', url: '/readyz', headers }),
+      ])
+      expect(readiness.statusCode).toBe(503)
+      expect(concurrent.statusCode).toBe(503)
+      expect(readiness.json()).toMatchObject({
+        status: 'setup_required',
+        recovery: { code: 'AUTH_REQUIRED', instruction: 'codex login' },
+      })
+      const created = await instance.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers,
+        payload: {},
+      })
+      expect(created.statusCode).toBe(401)
+      expect(client.requests).not.toContain('thread/start')
+      expect(
+        client.requests.filter((method) => method === 'account/read'),
+      ).toHaveLength(2)
+    } finally {
+      await instance.close()
+    }
+  })
+
+  it('coalesces repeated 401 disconnects while retaining scoped raw evidence', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp9-auth-'))
+    const eventStore = new SqliteEventStore(join(directory, 'events.sqlite'))
+    const client = new FakeRuntimeClient()
+    const sessionId = 'ses_auth_recovery'
+    const instance = await buildControlPlane({
+      eventStore,
+      artifactRoot: join(directory, 'artifacts'),
+      codexHomeRoot: join(directory, 'homes'),
+      sessionIdFactory: () => sessionId,
+      runtimeClientFactory: () => client,
+    })
+    try {
+      const created = await instance.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers,
+        payload: {},
+      })
+      expect(created.statusCode).toBe(201)
+      const notification = {
+        method: 'error',
+        params: {
+          threadId: client.fixture.threadId,
+          turnId: client.fixture.turnId,
+          willRetry: true,
+          error: {
+            message: 'Reconnecting 1/5 with secret Bearer fixture-token',
+            additionalDetails: 'private home /Users/example/.codex',
+            codexErrorInfo: {
+              responseStreamDisconnected: { httpStatusCode: 401 },
+            },
+          },
+        },
+      }
+      client.emitNotification(notification)
+      client.emitNotification({
+        ...notification,
+        params: {
+          ...notification.params,
+          error: { ...notification.params.error, message: 'Reconnecting 2/5' },
+        },
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const detail = await instance.inject({
+        method: 'GET',
+        url: `/v1/sessions/${sessionId}`,
+        headers,
+      })
+      expect(detail.json()).toMatchObject({
+        codexThreadId: client.fixture.threadId,
+        status: 'recovering',
+        recoveryErrorCode: 'RECOVERY_AUTH_REQUIRED',
+      })
+      const events = eventStore.replaySessionEvents(
+        { ...scope, sessionId },
+        0,
+        100,
+      ).events
+      const errors = events.filter((event) => event.type === 'error.reported')
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toMatchObject({
+        payload: {
+          message:
+            'Codex authentication is required. Run codex login, then retry.',
+          willRetry: false,
+          codexErrorInfo: 'unauthorized',
+        },
+      })
+      expect(eventStore.getRecordCounts({ ...scope, sessionId })).toMatchObject(
+        { rawEvents: 2, events: 1 },
+      )
+      expect(JSON.stringify(events)).not.toMatch(/fixture-token|Users\/example/)
+      const evidence = new DatabaseSync(join(directory, 'events.sqlite'))
+      const raw = evidence
+        .prepare('SELECT inline_json FROM raw_events WHERE session_id = ?')
+        .all(sessionId)
+      evidence.close()
+      expect(JSON.stringify(raw)).not.toMatch(/fixture-token|Users\/example/)
+    } finally {
+      await instance.close()
+      eventStore.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps non-auth reconnects visible and resumes the same session after auth retry', async () => {
+    class MutableAuthClient extends FakeRuntimeClient {
+      accountReady = true
+      override async request<TResult>(
+        method: string,
+        params: unknown,
+      ): Promise<TResult> {
+        if (method === 'account/read')
+          return {
+            account: this.accountReady ? { type: 'chatgpt' } : null,
+            requiresOpenaiAuth: true,
+          } as TResult
+        return super.request(method, params)
+      }
+    }
+    const directory = mkdtempSync(join(tmpdir(), 'wp9-retry-'))
+    const eventStore = new SqliteEventStore(join(directory, 'events.sqlite'))
+    const client = new MutableAuthClient()
+    const sessionId = 'ses_retry_same'
+    const instance = await buildControlPlane({
+      eventStore,
+      artifactRoot: join(directory, 'artifacts'),
+      codexHomeRoot: join(directory, 'homes'),
+      sessionIdFactory: () => sessionId,
+      runtimeClientFactory: () => client,
+    })
+    const error = (status: number) => ({
+      method: 'error',
+      params: {
+        threadId: client.fixture.threadId,
+        turnId: client.fixture.turnId,
+        willRetry: true,
+        error: {
+          message: `network ${status}`,
+          additionalDetails: null,
+          codexErrorInfo: {
+            responseStreamDisconnected: { httpStatusCode: status },
+          },
+        },
+      },
+    })
+    try {
+      expect(
+        (
+          await instance.inject({
+            method: 'POST',
+            url: '/v1/sessions',
+            headers,
+            payload: {},
+          })
+        ).statusCode,
+      ).toBe(201)
+      client.emitNotification(error(502))
+      client.emitNotification(error(502))
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      expect(
+        eventStore
+          .replaySessionEvents({ ...scope, sessionId }, 0, 100)
+          .events.filter((event) => event.type === 'error.reported'),
+      ).toHaveLength(2)
+      expect(eventStore.getSession({ ...scope, sessionId }).status).toBe(
+        'active',
+      )
+      client.accountReady = false
+      const blockedTurn = await instance.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/turns`,
+        headers: { ...headers, 'idempotency-key': 'blocked-auth-turn' },
+        payload: { prompt: 'must not reach upstream' },
+      })
+      expect(blockedTurn.statusCode).toBe(401)
+      expect(client.turnStartCalls).toBe(0)
+      client.emitNotification(error(401))
+      await new Promise((resolve) => setTimeout(resolve, 15))
+      expect(
+        (
+          await instance.inject({ method: 'GET', url: '/readyz', headers })
+        ).json().status,
+      ).toBe('setup_required')
+      client.accountReady = true
+      expect(
+        (
+          await instance.inject({
+            method: 'GET',
+            url: '/readyz',
+            headers: { ...headers, 'x-readiness-retry': '1' },
+          })
+        ).json().status,
+      ).toBe('ready')
+      const resumed = await instance.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/resume`,
+        headers: { ...headers, 'idempotency-key': 'auth-retry-resume' },
+        payload: {},
+      })
+      expect(resumed.statusCode).toBe(200)
+      expect(resumed.json()).toMatchObject({
+        sessionId,
+        codexThreadId: client.fixture.threadId,
+        status: 'active',
+      })
+    } finally {
+      await instance.close()
+      eventStore.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
 function event(eventId: string): TimelineEvent {
   return {
     eventId,
@@ -250,6 +490,12 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
 
   async request<TResult>(method: string, params: unknown): Promise<TResult> {
     this.requests.push(method)
+    if (method === 'account/read') {
+      return {
+        account: { type: 'chatgpt' },
+        requiresOpenaiAuth: true,
+      } as TResult
+    }
     if (method === 'thread/start') {
       if (this.failThreadStart) throw new Error('fixture thread failure')
       return { thread: { id: this.fixture.threadId } } as TResult
@@ -1335,7 +1581,7 @@ describe('WP4 session, turn and live event flow', () => {
       status: 'active',
     })
     expect(client.initializeCalls).toBe(1)
-    expect(client.requests).toEqual(['thread/start'])
+    expect(client.requests).toEqual(['account/read', 'thread/start'])
     expect(
       current.getSession({
         tenantId: 'ten_live',
@@ -1455,7 +1701,12 @@ describe('WP4 session, turn and live event flow', () => {
       events: 6,
       workspaceSequence: 6,
     })
-    expect(client.requests).toEqual(['thread/start', 'turn/start'])
+    expect(client.requests).toEqual([
+      'account/read',
+      'thread/start',
+      'account/read',
+      'turn/start',
+    ])
     expect(delivered[2]).toMatchObject({
       type: 'agent.message.completed',
       payload: { text: 'Yetkili final' },

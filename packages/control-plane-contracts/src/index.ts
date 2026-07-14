@@ -3,6 +3,36 @@ import { z } from 'zod'
 
 const identifierSchema = z.string().min(1)
 const sequenceSchema = z.number().int().nonnegative()
+export const readinessStatusSchema = z.enum([
+  'checking',
+  'ready',
+  'setup_required',
+  'degraded',
+])
+export const readinessCheckSchema = z.object({
+  name: z.enum([
+    'codex',
+    'workspace',
+    'database',
+    'artifacts',
+    'codexHome',
+    'provisioning',
+    'auth',
+  ]),
+  status: z.enum(['ready', 'failed']),
+  code: z.string().min(1).nullable(),
+})
+export const readinessResponseSchema = z.object({
+  status: readinessStatusSchema,
+  checkedAt: z.iso.datetime(),
+  checks: z.array(readinessCheckSchema),
+  recovery: z.object({
+    code: z.literal('AUTH_REQUIRED').nullable(),
+    instruction: z.literal('codex login').nullable(),
+    retryable: z.boolean(),
+    readOnlyAvailable: z.boolean(),
+  }),
+})
 export const sessionStatusSchema = z.enum([
   'starting',
   'active',
@@ -234,3 +264,5 @@ export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 export type ApprovalDecisionRequest = z.infer<
   typeof approvalDecisionRequestSchema
 >
+export type ReadinessStatus = z.infer<typeof readinessStatusSchema>
+export type ReadinessResponse = z.infer<typeof readinessResponseSchema>

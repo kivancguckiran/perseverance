@@ -7,9 +7,11 @@ import {
   sessionResponseSchema,
   turnAcceptedResponseSchema,
   turnActionResponseSchema,
+  readinessResponseSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
+  type ReadinessResponse,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
@@ -38,6 +40,17 @@ async function readPlatformMeta(): Promise<PlatformMeta> {
   const response = await fetch(`${apiBaseUrl}/v1/meta`)
   if (!response.ok) throw new Error('Control plane yanıt vermedi')
   return response.json() as Promise<PlatformMeta>
+}
+
+async function readReadiness(retry = false): Promise<ReadinessResponse> {
+  const response = await fetch(`${apiBaseUrl}/readyz`, {
+    headers: {
+      ...scopeHeaders,
+      ...(retry ? { 'x-readiness-retry': '1' } : {}),
+    },
+  })
+  const body = readinessResponseSchema.parse(await response.json())
+  return body
 }
 
 async function apiError(response: Response): Promise<Error> {
@@ -403,6 +416,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryKey: ['platform-meta'],
     queryFn: readPlatformMeta,
   })
+  const readiness = useQuery({
+    queryKey: ['readiness'],
+    queryFn: () => readReadiness(),
+    refetchInterval: (query) =>
+      query.state.data?.status === 'ready' ? false : 5_000,
+  })
+  const authReady = readiness.data?.status === 'ready'
   const [session, setSession] = useState<SessionResponse>()
   const [events, setEvents] = useState<Map<string, TimelineEvent>>(new Map())
   const [sessionPending, setSessionPending] = useState(false)
@@ -706,7 +726,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   async function submitTurn(event: React.FormEvent) {
     event.preventDefault()
     const trimmed = prompt.trim()
-    if (!session || !trimmed || turnPending || turnActive) return
+    if (!session || !trimmed || turnPending || turnActive || !authReady) return
     setTurnPending(true)
     setError(undefined)
     try {
@@ -762,7 +782,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           <button
             className="session-button"
             type="button"
-            disabled={sessionPending}
+            disabled={sessionPending || !authReady}
             onClick={() => void createSession()}
           >
             {sessionPending
@@ -794,6 +814,39 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         </aside>
 
         <section className="timeline-panel" aria-labelledby="timeline-title">
+          <section
+            className={`auth-readiness auth-${readiness.data?.status ?? 'checking'}`}
+            aria-live="polite"
+          >
+            <div>
+              <strong>
+                {readiness.isPending
+                  ? 'Codex auth kontrol ediliyor…'
+                  : readiness.data?.status === 'ready'
+                    ? 'Codex auth hazır'
+                    : readiness.data?.status === 'setup_required'
+                      ? 'Codex login gerekli'
+                      : 'Codex readiness bozulmuş'}
+              </strong>
+              {readiness.data?.status === 'setup_required' ? (
+                <p>
+                  Terminalde <code>codex login</code> çalıştırın. API key
+                  girmeyin; ardından yeniden deneyin.
+                </p>
+              ) : null}
+            </div>
+            {readiness.data?.status !== 'ready' ? (
+              <button
+                type="button"
+                disabled={readiness.isFetching}
+                onClick={() => void readiness.refetch()}
+              >
+                {readiness.isFetching
+                  ? 'Kontrol ediliyor…'
+                  : 'Readiness yeniden dene'}
+              </button>
+            ) : null}
+          </section>
           <div className="timeline-heading">
             <div>
               <p className="section-label">Canlı görev</p>
@@ -946,7 +999,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 onChange={(event) => setPrompt(event.target.value)}
                 placeholder="Kısa bir cevap ver…"
                 rows={2}
-                disabled={!session || turnPending || readOnly}
+                disabled={!session || turnPending || readOnly || !authReady}
               />
               <button
                 type="submit"
@@ -955,7 +1008,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   !prompt.trim() ||
                   turnPending ||
                   turnActive ||
-                  readOnly
+                  readOnly ||
+                  !authReady
                 }
               >
                 {turnPending ? 'Gönderiliyor…' : 'Gönder'}

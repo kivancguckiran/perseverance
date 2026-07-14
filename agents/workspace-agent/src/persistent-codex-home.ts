@@ -7,6 +7,7 @@ import {
   readlinkSync,
   realpathSync,
   symlinkSync,
+  unlinkSync,
 } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 
@@ -58,7 +59,15 @@ export class PersistentCodexHomeManager {
     if (!this.#provisioningSource) return
     for (const filename of ['auth.json', 'config.toml'] as const) {
       const source = join(this.#provisioningSource, filename)
-      if (!existsSync(source)) continue
+      const target = join(home, filename)
+      if (!existsSync(source)) {
+        if (existsSync(target)) {
+          if (!lstatSync(target).isSymbolicLink())
+            throw new CodexHomePathError(`Provisioned ${filename} was replaced`)
+          unlinkSync(target)
+        }
+        continue
+      }
       const sourceStat = lstatSync(source)
       if (!sourceStat.isFile() && !sourceStat.isSymbolicLink())
         throw new CodexHomePathError(
@@ -75,7 +84,6 @@ export class PersistentCodexHomeManager {
         throw new CodexHomePathError(
           `Provisioning source ${filename} escaped its root`,
         )
-      const target = join(home, filename)
       if (existsSync(target)) {
         const targetStat = lstatSync(target)
         if (

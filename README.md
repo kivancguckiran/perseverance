@@ -51,8 +51,21 @@ Gereksinimler: Node.js 24, pnpm 9.15.3 ve Codex CLI 0.144.2.
 pnpm install
 pnpm generate:codex-protocol
 pnpm verify
-pnpm dev
+pnpm alpha:dev
 ```
+
+`pnpm alpha:dev` lokal alfa için tek desteklenen başlangıç komutudur. Kalıcı runtime
+yollarını `.runtime/alpha` altında oluşturur ve web ile control-plane'i birlikte
+başlatır. `CODEX_PROVISIONING_SOURCE` verilirse yalnız o kaynak kullanılır; verilmezse
+yalnız bu lokal komut `CODEX_HOME`, ardından `~/.codex` varsayılanını dener. Kalıcı
+home'a yalnız `auth.json` ve `config.toml` read-only symlink edilir; session, history,
+log ve plugin state'i bağlanmaz. Production başlangıcında örtülü host credential
+erişimi yoktur.
+
+Auth hazır değilse `/readyz` `setup_required` ve `codex login` yönergesi döndürür;
+session/turn upstream'e gönderilmez. `/healthz` yalnız liveness'tır. Ayrıntılı recovery
+için [alfa auth troubleshooting rehberine](docs/operations/alpha-auth-troubleshooting.md)
+bakın.
 
 Tamamlanan Faz 0'ın üç gerçek golden görevi ve dört arıza senaryosunu redakte kanıtla
 çalıştıran birleşik smoke komutları şunlardır:
@@ -71,6 +84,7 @@ WP9'dur: alfa başlatma ve auth bootstrap.
 - Web: `http://localhost:3000`
 - Control plane: `http://127.0.0.1:3100`
 - Health: `http://127.0.0.1:3100/healthz`
+- Readiness: `http://127.0.0.1:3100/readyz` (scope header'ları zorunlu)
 
 Gerçek session → `thread/start` → `turn/start` → final agent message akışı, dosya değiştirmeyen kısa bir prompt ile opt-in çalıştırılabilir:
 

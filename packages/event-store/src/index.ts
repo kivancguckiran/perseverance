@@ -62,6 +62,11 @@ export interface IngestEventInput extends StoreScope {
   approval?: NewApprovalInput
 }
 
+export interface IngestRawOnlyInput extends StoreScope {
+  ingestKey: string
+  raw: RawEventInput
+}
+
 export type ApprovalDecision =
   'accept' | 'accept_for_session' | 'decline' | 'cancel'
 export type ApprovalStatus =
@@ -540,6 +545,41 @@ export class SqliteEventStore {
       )
     if (Number(result.changes) !== 1) throw new StoreNotFoundError()
     return this.getSession(scope)
+  }
+
+  ingestRawOnly(input: IngestRawOnlyInput): void {
+    assertScope(input)
+    assertIdentifier(input.ingestKey, 'ingestKey')
+    this.getSession(input)
+    const hasInlineEnvelope = input.raw.envelope !== undefined
+    const hasArtifactPointer = input.raw.artifactPointer !== undefined
+    if (hasInlineEnvelope === hasArtifactPointer)
+      throw new StoreError(
+        'INVALID_RAW_STORAGE',
+        'Raw event must use either inline JSON or an artifact pointer',
+      )
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO raw_events (
+        tenant_id, workspace_id, session_id, ingest_key, checksum,
+        inline_json, artifact_pointer, source_method, source_version,
+        source_metadata_json, received_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.ingestKey,
+        input.raw.checksum,
+        hasInlineEnvelope ? JSON.stringify(input.raw.envelope) : null,
+        input.raw.artifactPointer ?? null,
+        input.raw.sourceMethod,
+        input.raw.sourceVersion,
+        JSON.stringify(input.raw.sourceMetadata ?? {}),
+        input.raw.receivedAt,
+        this.#timestamp(),
+      )
   }
 
   ingest(input: IngestEventInput): IngestEventResult {

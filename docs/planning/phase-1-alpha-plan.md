@@ -44,12 +44,12 @@ Faz 1 ancak aşağıdaki koşullar birlikte sağlandığında tamamlanır:
 
 ## 4. İş paketi özeti
 
-| Paket | Durum    | Hedef                                                                |
-| ----- | -------- | -------------------------------------------------------------------- |
-| WP9   | Aktif    | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
-| WP10  | Bekliyor | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
-| WP11  | Bekliyor | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
-| WP12  | Bekliyor | Tek kiracılı alfa hardening, runbook ve release kabulü               |
+| Paket | Durum                      | Hedef                                                                |
+| ----- | -------------------------- | -------------------------------------------------------------------- |
+| WP9   | Uygulandı / kabul bekliyor | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
+| WP10  | Bekliyor                   | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
+| WP11  | Bekliyor                   | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
+| WP12  | Bekliyor                   | Tek kiracılı alfa hardening, runbook ve release kabulü               |
 
 ## 5. WP9 — Alfa başlatma ve auth bootstrap
 

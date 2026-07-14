@@ -21,6 +21,7 @@ import {
   sessionResponseSchema,
   turnActionResponseSchema,
   replayResponseSchema,
+  readinessResponseSchema,
   serverMessageSchema,
   type ServerMessage,
   type SubscribeMessage,
@@ -70,6 +71,17 @@ export interface ControlPlaneOptions {
   codexHomeRoot?: string
   codexProvisioningSource?: string
   artifactRoot?: string
+  preflightChecks?: Array<{
+    name:
+      | 'codex'
+      | 'workspace'
+      | 'database'
+      | 'artifacts'
+      | 'codexHome'
+      | 'provisioning'
+    status: 'ready' | 'failed'
+    code: string | null
+  }>
 }
 
 interface SubscriptionState extends StoreScope {
@@ -350,6 +362,45 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   })
 
   app.get('/healthz', async () => ({ status: 'ok' }))
+  app.get('/readyz', async (request, reply) => {
+    const scope = workspaceScope(request.headers)
+    if (!scope)
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    const preflight = options.preflightChecks ?? []
+    if (
+      preflight.some(
+        (check) =>
+          check.status === 'failed' && check.code !== 'AUTH_CONFIG_MISSING',
+      )
+    ) {
+      return reply.code(503).send(
+        readinessResponseSchema.parse({
+          status: 'degraded',
+          checkedAt: new Date().toISOString(),
+          checks: preflight,
+          recovery: {
+            code: null,
+            instruction: null,
+            retryable: true,
+            readOnlyAvailable: true,
+          },
+        }),
+      )
+    }
+    const readiness = await orchestrator.checkReadiness(
+      scope,
+      request.headers['x-readiness-retry'] === '1',
+    )
+    return reply.code(readiness.status === 'ready' ? 200 : 503).send(
+      readinessResponseSchema.parse({
+        ...readiness,
+        checks: [...preflight, ...readiness.checks],
+      }),
+    )
+  })
   app.get('/v1/meta', async () => ({
     service: 'persistent-codex-control-plane',
     phase: 'poc',

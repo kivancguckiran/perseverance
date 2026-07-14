@@ -75,6 +75,7 @@ const sensitiveKey =
   /(?:authorization|api[-_]?key|access[-_]?token|bearer|password|secret)/i
 const bearerValue = /\bbearer\s+\S+/i
 const credentialValue = /\b(?:sk|sess)-[A-Za-z0-9_-]{8,}\b/
+const userHomePath = /(?:\/Users|\/home)\/[^/\s]+/g
 const redacted = '[REDACTED]'
 
 function isRecord(value: unknown): value is RawCodexEnvelope {
@@ -89,6 +90,7 @@ function redactValue(value: unknown, key?: string): unknown {
   ) {
     return redacted
   }
+  if (typeof value === 'string') return value.replace(userHomePath, '[HOME]')
   if (Array.isArray(value)) return value.map((item) => redactValue(item))
   if (!isRecord(value)) return value
   return Object.fromEntries(

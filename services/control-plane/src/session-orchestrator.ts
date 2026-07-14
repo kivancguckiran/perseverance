@@ -7,9 +7,11 @@ import type {
 import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
 import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import {
+  readinessResponseSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
   type SessionResponse,
+  type ReadinessResponse,
   type TurnAcceptedResponse,
 } from '@persistent-codex/control-plane-contracts'
 import {
@@ -102,6 +104,19 @@ function threadIdOf(message: Record<string, unknown>): string | undefined {
   return undefined
 }
 
+function isUnauthorizedDisconnect(message: Record<string, unknown>): boolean {
+  if (message.method !== 'error') return false
+  const params = message.params as Record<string, unknown> | undefined
+  const error = params?.error as Record<string, unknown> | undefined
+  const info = error?.codexErrorInfo as Record<string, unknown> | undefined
+  const disconnected = info?.responseStreamDisconnected as
+    Record<string, unknown> | undefined
+  return (
+    disconnected?.httpStatusCode === 401 ||
+    error?.codexErrorInfo === 'unauthorized'
+  )
+}
+
 function requestHash(prompt: string): string {
   return createHash('sha256').update(JSON.stringify({ prompt })).digest('hex')
 }
@@ -190,6 +205,8 @@ export class SessionOrchestrator {
   readonly #turnsInFlight = new Map<string, Promise<TurnAcceptedResponse>>()
   readonly #resumesInFlight = new Map<string, Promise<SessionResponse>>()
   readonly #actionsInFlight = new Map<string, Promise<unknown>>()
+  readonly #authFailures = new Set<string>()
+  readonly #readinessInFlight = new Map<string, Promise<ReadinessResponse>>()
   readonly #activeTurns = new Map<
     string,
     { sessionId: string; turnId?: string }
@@ -274,10 +291,104 @@ export class SessionOrchestrator {
     return this.#registry
   }
 
+  async checkReadiness(
+    input: { tenantId: string; workspaceId: string },
+    refreshToken = false,
+  ): Promise<ReadinessResponse> {
+    const key = JSON.stringify([input.tenantId, input.workspaceId])
+    const current = this.#readinessInFlight.get(key)
+    if (current) return current
+    const operation = this.#checkReadiness(input, refreshToken)
+    this.#readinessInFlight.set(key, operation)
+    try {
+      return await operation
+    } finally {
+      if (this.#readinessInFlight.get(key) === operation)
+        this.#readinessInFlight.delete(key)
+    }
+  }
+
+  async #checkReadiness(
+    input: { tenantId: string; workspaceId: string },
+    refreshToken: boolean,
+  ): Promise<ReadinessResponse> {
+    const cwd =
+      typeof this.#workspaceCwd === 'function'
+        ? this.#workspaceCwd(input)
+        : this.#workspaceCwd
+    try {
+      const runtime = await this.#registry.getOrInitialize({
+        ...input,
+        cwd,
+        codexHome: this.#codexHome(input),
+      })
+      const response = await runtime.client.request<codexV2.GetAccountResponse>(
+        'account/read',
+        { refreshToken } satisfies codexV2.GetAccountParams,
+      )
+      const ready = response.account !== null || !response.requiresOpenaiAuth
+      if (ready) {
+        const prefix = JSON.stringify([
+          input.tenantId,
+          input.workspaceId,
+        ]).slice(0, -1)
+        for (const key of this.#authFailures)
+          if (key.startsWith(prefix)) this.#authFailures.delete(key)
+      }
+      return readinessResponseSchema.parse({
+        status: ready ? 'ready' : 'setup_required',
+        checkedAt: new Date().toISOString(),
+        checks: [
+          {
+            name: 'auth',
+            status: ready ? 'ready' : 'failed',
+            code: ready ? null : 'AUTH_REQUIRED',
+          },
+        ],
+        recovery: {
+          code: ready ? null : 'AUTH_REQUIRED',
+          instruction: ready ? null : 'codex login',
+          retryable: !ready,
+          readOnlyAvailable: true,
+        },
+      })
+    } catch {
+      return readinessResponseSchema.parse({
+        status: 'degraded',
+        checkedAt: new Date().toISOString(),
+        checks: [{ name: 'auth', status: 'failed', code: 'AUTH_CHECK_FAILED' }],
+        recovery: {
+          code: null,
+          instruction: null,
+          retryable: true,
+          readOnlyAvailable: true,
+        },
+      })
+    }
+  }
+
+  async requireAuthReady(input: {
+    tenantId: string
+    workspaceId: string
+  }): Promise<void> {
+    const readiness = await this.checkReadiness(input)
+    if (readiness.status !== 'ready')
+      throw new OrchestrationError(
+        readiness.status === 'setup_required'
+          ? 'AUTH_REQUIRED'
+          : 'READINESS_DEGRADED',
+        readiness.status === 'setup_required'
+          ? 'Run codex login, then retry readiness'
+          : 'Codex readiness check failed',
+        readiness.status === 'setup_required' ? 401 : 503,
+      )
+  }
+
   async createSession(input: {
     tenantId: string
     workspaceId: string
   }): Promise<SessionResponse> {
+    await this.requireAuthReady(input)
     const scope: StoreScope = {
       ...input,
       sessionId: this.#sessionIdFactory(),
@@ -764,6 +875,7 @@ export class SessionOrchestrator {
     prompt: string,
     idempotencyKey: string,
   ): Promise<TurnAcceptedResponse> {
+    await this.requireAuthReady(scope)
     const session = this.#store.getSession(scope)
     if (session.status !== 'active' || !session.codexThreadId) {
       throw new OrchestrationError(
@@ -985,6 +1097,45 @@ export class SessionOrchestrator {
       this.#store.findIngestedEvent(scope, delivery.ingestKey, adapted.checksum)
     )
       return
+    if (isUnauthorizedDisconnect(message)) {
+      const authKey = JSON.stringify([
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        codexThreadId,
+      ])
+      this.#store.updateSessionRecovery(scope, {
+        status: 'recovering',
+        recoveryErrorCode: 'RECOVERY_AUTH_REQUIRED',
+        runtimeGeneration: runtime.client.processGeneration,
+      })
+      if (this.#authFailures.has(authKey)) {
+        this.#store.ingestRawOnly({
+          ...scope,
+          ingestKey: delivery.ingestKey,
+          raw: {
+            envelope: adapted.envelope,
+            checksum: adapted.checksum,
+            sourceMethod: adapted.event.sourceMethod,
+            sourceVersion: this.#sourceVersion,
+            sourceMetadata: {
+              authRecoveryCoalesced: true,
+              processGeneration: delivery.processGeneration,
+            },
+            receivedAt: adapted.event.receivedAt,
+          },
+        })
+        return
+      }
+      this.#authFailures.add(authKey)
+      if (adapted.event.type === 'error.reported') {
+        adapted.event.payload.message =
+          'Codex authentication is required. Run codex login, then retry.'
+        adapted.event.payload.additionalDetails = null
+        adapted.event.payload.codexErrorInfo = 'unauthorized'
+        adapted.event.payload.willRetry = false
+      }
+    }
     this.#spillCommandOutput(adapted, delivery.ingestKey)
     const approvalPayload =
       adapted.event.type === 'approval.requested'

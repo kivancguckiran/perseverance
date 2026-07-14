@@ -75,4 +75,19 @@ describe('PersistentCodexHomeManager', () => {
       expect(JSON.stringify({ home })).not.toContain('fixture-secret')
     }
   })
+
+  it('removes stale server-owned allowlist symlinks when source auth disappears', () => {
+    const root = mkdtempSync(join(tmpdir(), 'codex-homes-'))
+    const source = mkdtempSync(join(tmpdir(), 'codex-provision-'))
+    roots.push(root, source)
+    writeFileSync(join(source, 'auth.json'), 'fixture-secret', { mode: 0o600 })
+    const homes = new PersistentCodexHomeManager(root, {
+      provisioningSource: source,
+    })
+    const home = homes.homeFor('tenant', 'workspace')
+    expect(existsSync(join(home, 'auth.json'))).toBe(true)
+    rmSync(join(source, 'auth.json'))
+    homes.homeFor('tenant', 'workspace')
+    expect(existsSync(join(home, 'auth.json'))).toBe(false)
+  })
 })

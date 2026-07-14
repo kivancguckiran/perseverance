@@ -9,6 +9,14 @@ export {
   PersistentCodexHomeManager,
   CodexHomePathError,
 } from './persistent-codex-home'
+export {
+  AlphaPreflightError,
+  PINNED_CODEX_VERSION,
+  runAlphaPreflight,
+  validateProvisioningSource,
+  type AlphaConfig,
+  type PreflightCheck,
+} from './alpha-preflight'
 
 export type JsonRpcId = number | string
 

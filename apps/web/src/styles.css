@@ -406,6 +406,34 @@ h2 {
   color: #f3a6a6;
   font-size: 0.78rem;
 }
+.auth-readiness {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid #315245;
+  border-radius: 14px;
+  background: #10201b;
+}
+.auth-readiness p {
+  margin: 6px 0 0;
+  color: #aebdb7;
+  line-height: 1.5;
+}
+.auth-readiness code {
+  overflow-wrap: anywhere;
+  color: #bdebd8;
+}
+.auth-readiness button {
+  flex: 0 0 auto;
+}
+.auth-setup_required,
+.auth-degraded {
+  border-color: #835a3d;
+  background: #241b15;
+}
 
 @media (max-width: 760px) {
   .workspace-shell {
@@ -443,5 +471,9 @@ h2 {
   .approval-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+  .auth-readiness {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
