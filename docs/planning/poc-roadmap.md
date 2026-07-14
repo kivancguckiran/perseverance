@@ -21,7 +21,7 @@ PoC'nin kabul edilmiş teknoloji yığını ve repository sınırları için `do
 | P2 Normalize event adapter | Tamamlandı | Tüm hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve on golden fixture doğrulandı                                              |
 | P3 Session ve replay       | Tamamlandı | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
 | P4 Thread, turn ve web     | Tamamlandı | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
-| P5 Approval                | Sıradaki   | WP4 tamamlandı; durable approval state machine sıradaki pakettir, henüz uygulanmamıştır                                                                    |
+| P5 Approval                | Aktif      | Durable pending/decision state machine, optimistic locking, upstream response reconciliation ve sticky approval UI tamamlanacak                            |
 | P6 Resume ve arıza         | Başlanmadı | Thread persistence ve crash recovery sonraki dilim                                                                                                         |
 
 WP2 adapter teslimatı tamamlandı: generated Codex sözleşmeleri runtime'da doğrulanır; hedef event aileleri normalize edilir; unknown girdiler güvenli biçimde korunur; completed snapshot deltaların yetkili son halidir; redaction canonical checksum'dan önce uygulanır. On golden fixture dahil repo doğrulamasında 31 test geçmiştir.
@@ -30,7 +30,7 @@ WP3 kabul edildi: atomik ingest, durable session/event kayıtları, scoped repla
 
 WP4 düzeltmesi kabul edildi: runtime-instance kimliği yeni control-plane registry'sinde yenilenir, store aynı key'in farklı session/checksum kullanımını `INGEST_KEY_CONFLICT` ile atomik olarak reddeder ve delivery hataları callback/log üzerinden görünür kalırken queue devam eder. File-backed regresyon testi iki instance'ta 12 benzersiz sequence ve iki authoritative final event'i doğruladı. Gerçek restart/browser denetiminde ilk session 10–42, ikinci session 43–80 sequence aralığında kaldı; ikinci session'ın son deltası `.` iken completed snapshot ve final kart tam metni gösterdi. Runtime/orchestration kararları `docs/architecture/adr-0004-live-thread-turn-orchestration.md` içinde kayıtlıdır.
 
-WP4 tamamlandı. WP5 sıradaki pakettir; bu teslimatta WP5 implementasyonu başlatılmadı.
+WP4 tamamlandı. Aktif iş paketi WP5 durable approval state machine'dir; WP5 kabul edilmeden sonraki pakete geçilmez.
 
 ## Uygulama sırası
 

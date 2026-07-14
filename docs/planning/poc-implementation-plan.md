@@ -268,7 +268,7 @@ Bağımsız kabul denetiminde bulunan ve giderilen kök neden:
 
 ### WP5 — Approval state machine
 
-Durum: Sıradaki
+Durum: Aktif
 
 İşler:
 
@@ -446,6 +446,6 @@ Bir iş paketi ancak şu koşullarda tamamlandı sayılır:
 
 ## 14. Güncel sonraki adım
 
-Aktif iş paketi WP4'tür: Workspace Agent registry, gerçek `thread/start` ve `turn/start` akışı, notification→adapter→durable ingest→realtime hattı ve minimal TanStack web timeline tamamlanacaktır.
+Aktif iş paketi WP5'tir: server-initiated command/file approval istekleri durable pending kayda dönüştürülecek; optimistic locking ve idempotency ile tek karar uygulanacak; upstream response/reconciliation ve mobil uyumlu approval UI tamamlanacaktır.
 
-WP4 kabul edilmeden WP5 veya sonraki iş paketleri aktif edilemez. Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.
+WP5 kabul edilmeden WP6 veya sonraki iş paketleri aktif edilemez. Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.

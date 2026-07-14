@@ -54,8 +54,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
 | WP2 — Normalize event adapter                | Tamamlandı | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
 | WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
-| WP4 — Gerçek thread ve turn akışı            | Aktif      | Düzeltme gerekli: restart sonrası ingest-key çakışması event kaybı üretiyor                                 |
-| WP5 — Approval state machine                 | Bekliyor   | —                                                                                                           |
+| WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
+| WP5 — Approval state machine                 | Aktif      | Durable pending/decision state machine, optimistic locking, upstream response ve approval UI tamamlanacak   |
 | WP6 — Resume, reconnect ve recovery          | Bekliyor   | —                                                                                                           |
 | WP7 — Büyük çıktı ve timeline dayanıklılığı  | Bekliyor   | —                                                                                                           |
 | WP8 — Golden senaryolar ve PoC demosu        | Bekliyor   | —                                                                                                           |
@@ -129,9 +129,9 @@ Doğrulama kanıtı:
 - Vitest: 4 test dosyası, 46 test başarılı.
 - Bütün workspace package typecheck'leri ve TanStack Start client/SSR production build başarılı.
 
-Aktif iş paketi WP4'tür.
+WP4 ilk kabul denetiminde düzeltmeye gönderilmiştir.
 
-## WP4 kabul denetimi — düzeltme gerekli
+## WP4 ilk kabul denetimi — düzeltme gerekli (kapatıldı)
 
 Karar: **Eksik**
 
@@ -155,4 +155,30 @@ Kanıt:
 - Yeni session event listesi yalnız `agent.message.delta: "AM"`, token usage, unknown status ve `turn.completed` içerdi; authoritative `agent.message.completed` yoktu.
 - Browser console ve error overlay temiz olmasına rağmen timeline final içeriği eksikti.
 
-WP4 tamamlanmadan WP5 aktif edilemez ve commit oluşturulmaz.
+Bu bulgular aşağıdaki nihai yeniden denetimde kapatılmıştır.
+
+## WP4 nihai yeniden denetim sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Her registry runtime'ı injectable factory/default `randomUUID` ile benzersiz `runtimeInstanceId` alıyor; child-process generation değişse de runtime kimliği sabit, yeni control-plane instance'ında farklı.
+- `ingestKey`; tenant, workspace, runtime instance, process generation ve receive ordinal alanlarını içeriyor.
+- Aynı ingest key yalnız aynı session ve checksum için duplicate kabul ediliyor; farklı session/checksum atomik `INGEST_KEY_CONFLICT` üretiyor ve sequence/row oluşturmuyor.
+- Delivery handler hatası callback ve structured control-plane log'una aktarılıyor; queue sonraki mesajlarla devam ediyor.
+- File-backed regression testi aynı DB üzerinde iki control-plane instance'ı, 12 unique/monotonic sequence ve iki authoritative final event'i doğruluyor.
+- Bağımsız gerçek restart/browser audit'inde ilk session sequence 1–27, ikinci session 28–55 aralığında kaldı; runtime UUID'leri farklıydı.
+- SQLite'da ilk final `BIRINCI_TAM_MESAJ` sequence 24, restart sonrası ikinci final `IKINCI_RESTART_TAM_MESAJ` sequence 52 olarak `agent.message.completed` kaydedildi.
+- Browser ikinci authoritative finali ve `turn.completed` olayını gösterdi; console warning/error ve Vite overlay yoktu.
+- 390×844 görünümünde yatay taşma veya error overlay oluşmadı.
+
+Doğrulama kanıtı:
+
+- `pnpm verify`: başarılı.
+- Vitest: 4 test dosyası, 56 test başarılı.
+- Bütün package typecheck'leri ve TanStack Start client/SSR production build başarılı.
+- `pnpm --filter @persistent-codex/workspace-agent smoke:real-flow`: gerçek Codex final mesajı `TAMAM`.
+- Uygulama commit'i: `81b6881` (`feat: complete persistent Codex workspace through WP4`).
+
+Aktif iş paketi WP5'tir.
