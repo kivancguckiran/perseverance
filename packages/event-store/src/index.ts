@@ -12,6 +12,19 @@ export interface StoreScope {
   workspaceId: string
   sessionId: string
 }
+export interface ArtifactRecord extends StoreScope {
+  artifactId: string
+  turnId: string
+  itemId: string
+  kind: 'command-output'
+  byteLength: number
+  sha256: string | null
+  chunkCount: number
+  finalized: boolean
+  status: 'writing' | 'finalized' | 'recovery_required'
+  createdAt: string
+  finalizedAt: string | null
+}
 
 export interface SessionRecord extends StoreScope {
   codexThreadId: string | null
@@ -328,6 +341,84 @@ export class SqliteEventStore {
     return this.getSession(input)
   }
 
+  upsertArtifact(input: ArtifactRecord): ArtifactRecord {
+    assertScope(input)
+    this.#database
+      .prepare(
+        `INSERT INTO artifacts (artifact_id,tenant_id,workspace_id,session_id,turn_id,item_id,kind,byte_length,sha256,chunk_count,finalized,status,metadata_json,created_at,finalized_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET byte_length=excluded.byte_length,sha256=excluded.sha256,chunk_count=excluded.chunk_count,finalized=excluded.finalized,status=excluded.status,metadata_json=excluded.metadata_json,finalized_at=excluded.finalized_at WHERE artifacts.tenant_id=excluded.tenant_id AND artifacts.workspace_id=excluded.workspace_id`,
+      )
+      .run(
+        input.artifactId,
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.turnId,
+        input.itemId,
+        input.kind,
+        input.byteLength,
+        input.sha256,
+        input.chunkCount,
+        input.finalized ? 1 : 0,
+        input.status,
+        JSON.stringify({ rangesPersisted: false }),
+        input.createdAt,
+        input.finalizedAt,
+      )
+    return this.getArtifact(input, input.artifactId)
+  }
+  getArtifact(
+    scope: Pick<StoreScope, 'tenantId' | 'workspaceId'>,
+    artifactId: string,
+  ): ArtifactRecord {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM artifacts WHERE tenant_id=? AND workspace_id=? AND artifact_id=?`,
+      )
+      .get(scope.tenantId, scope.workspaceId, artifactId) as any
+    if (!row) throw new StoreError('ARTIFACT_NOT_FOUND', 'Artifact not found')
+    return {
+      artifactId: row.artifact_id,
+      tenantId: row.tenant_id,
+      workspaceId: row.workspace_id,
+      sessionId: row.session_id,
+      turnId: row.turn_id,
+      itemId: row.item_id,
+      kind: row.kind,
+      byteLength: row.byte_length,
+      sha256: row.sha256,
+      chunkCount: row.chunk_count,
+      finalized: Boolean(row.finalized),
+      status: row.status,
+      createdAt: row.created_at,
+      finalizedAt: row.finalized_at,
+    }
+  }
+  listRecoverableArtifacts() {
+    const rows = this.#database
+      .prepare(
+        `SELECT artifact_id,tenant_id,workspace_id FROM artifacts WHERE status!='finalized'`,
+      )
+      .all() as any[]
+    return rows.map((row) =>
+      this.getArtifact(
+        { tenantId: row.tenant_id, workspaceId: row.workspace_id },
+        row.artifact_id,
+      ),
+    )
+  }
+  listArtifacts(
+    scope: Pick<StoreScope, 'tenantId' | 'workspaceId'>,
+  ): ArtifactRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT artifact_id FROM artifacts WHERE tenant_id=? AND workspace_id=? ORDER BY created_at`,
+      )
+      .all(scope.tenantId, scope.workspaceId) as unknown as Array<{
+      artifact_id: string
+    }>
+    return rows.map((row) => this.getArtifact(scope, row.artifact_id))
+  }
+
   getSession(scope: StoreScope): SessionRecord {
     assertScope(scope)
     const row = this.#database
@@ -638,6 +729,27 @@ export class SqliteEventStore {
       for (const listener of this.#approvalListeners) listener(approval)
     }
     return { event: committedEvent, duplicate: false }
+  }
+
+  findIngestedEvent(
+    scope: StoreScope,
+    ingestKey: string,
+    checksum: string,
+  ): TimelineEvent | undefined {
+    assertScope(scope)
+    const row = this.#database
+      .prepare(
+        `SELECT events.payload_json, raw_events.session_id, raw_events.checksum FROM raw_events JOIN events ON events.raw_event_id=raw_events.raw_event_id WHERE raw_events.tenant_id=? AND raw_events.workspace_id=? AND raw_events.ingest_key=?`,
+      )
+      .get(scope.tenantId, scope.workspaceId, ingestKey) as unknown as
+      DuplicateEventRow | undefined
+    if (!row) return undefined
+    if (row.session_id !== scope.sessionId || row.checksum !== checksum)
+      throw new StoreConflictError(
+        'INGEST_KEY_CONFLICT',
+        'Ingest key is already bound to a different session or checksum',
+      )
+    return parseTimelineEvent(JSON.parse(row.payload_json))
   }
 
   replaySessionEvents(

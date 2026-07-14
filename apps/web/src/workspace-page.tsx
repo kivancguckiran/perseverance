@@ -3,6 +3,7 @@ import {
   serverMessageSchema,
   approvalListResponseSchema,
   approvalSchema,
+  artifactDownloadTokenSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
   turnActionResponseSchema,
@@ -68,7 +69,7 @@ interface TimelineCard {
 }
 const COMMAND_TAIL_BYTES = 64 * 1024
 const MAX_TIMELINE_EVENTS = 2_000
-function boundedTail(
+export function boundedTail(
   current: string,
   chunk: string,
   limit = COMMAND_TAIL_BYTES,
@@ -78,6 +79,60 @@ function boundedTail(
   let start = bytes.length - limit
   while (start < bytes.length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start++
   return new TextDecoder().decode(bytes.slice(start))
+}
+export function coalesceTimelineEvents(
+  current: Map<string, TimelineEvent>,
+  incoming: TimelineEvent[],
+) {
+  const next = new Map(current)
+  const sequences = new Set([...current.values()].map((e) => e.sequence))
+  for (const event of incoming) {
+    if (next.has(event.eventId) || sequences.has(event.sequence)) continue
+    const item = itemKey(event)
+    if (
+      item &&
+      (event.type === 'command.output.delta' ||
+        event.type === 'command.completed')
+    ) {
+      let previousKey: string | undefined
+      let previous: TimelineEvent | undefined
+      for (const [key, candidate] of next) {
+        if (
+          itemKey(candidate) === item &&
+          (candidate.type === 'command.output.delta' ||
+            candidate.type === 'command.completed')
+        ) {
+          previousKey = key
+          previous = candidate
+          break
+        }
+      }
+      if (previous?.type === 'command.completed') continue
+      if (previousKey) next.delete(previousKey)
+      if (
+        event.type === 'command.output.delta' &&
+        previous?.type === 'command.output.delta'
+      ) {
+        const text = boundedTail(previous.payload.text, event.payload.text)
+        next.set(event.eventId, {
+          ...event,
+          payload: {
+            ...event.payload,
+            text,
+            byteLength: new TextEncoder().encode(text).length,
+            truncated: true,
+          },
+        })
+      } else next.set(event.eventId, event)
+    } else next.set(event.eventId, event)
+    sequences.add(event.sequence)
+  }
+  while (next.size > MAX_TIMELINE_EVENTS) {
+    const oldest = next.keys().next().value as string | undefined
+    if (!oldest) break
+    next.delete(oldest)
+  }
+  return next
 }
 
 function itemKey(event: TimelineEvent): string | undefined {
@@ -208,16 +263,14 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
       : undefined
   async function downloadArtifact(artifactId: string) {
     const response = await fetch(
-      `${apiBaseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}`,
-      { headers: scopeHeaders },
+      `${apiBaseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}/download-token`,
+      { method: 'POST', headers: scopeHeaders },
     )
     if (!response.ok) throw await apiError(response)
-    const url = URL.createObjectURL(await response.blob())
+    const token = artifactDownloadTokenSchema.parse(await response.json())
     const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `command-output-${artifactId}.txt`
+    anchor.href = new URL(token.downloadUrl, apiBaseUrl).toString()
     anchor.click()
-    setTimeout(() => URL.revokeObjectURL(url), 0)
   }
   return (
     <article
@@ -394,21 +447,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         ...incoming.map((event) => event.sequence),
       )
       setEvents((current) => {
-        const next = new Map(current)
-        const sequences = new Set(
-          [...current.values()].map((event) => event.sequence),
-        )
-        for (const event of incoming) {
-          if (next.has(event.eventId) || sequences.has(event.sequence)) continue
-          next.set(event.eventId, event)
-          sequences.add(event.sequence)
-        }
-        while (next.size > MAX_TIMELINE_EVENTS) {
-          const oldest = next.keys().next().value as string | undefined
-          if (!oldest) break
-          next.delete(oldest)
-        }
-        return next
+        return coalesceTimelineEvents(current, incoming)
       })
     }
     void Promise.all(
@@ -763,9 +802,34 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <span className="sequence-label">
               sequence {String(lastSequence.current).padStart(4, '0')}
             </span>
+            {cards.length > 20 ? (
+              <button
+                className="timeline-end-button"
+                type="button"
+                onClick={() => {
+                  virtualizer.scrollToOffset(virtualizer.getTotalSize(), {
+                    align: 'end',
+                  })
+                  requestAnimationFrame(() =>
+                    timelineRef.current?.scrollTo({
+                      top: timelineRef.current.scrollHeight,
+                      behavior: 'auto',
+                    }),
+                  )
+                }}
+              >
+                Sona git
+              </button>
+            ) : null}
           </div>
 
-          <div className="timeline-stream" aria-live="polite" ref={timelineRef}>
+          <div
+            className="timeline-stream"
+            aria-live="polite"
+            aria-label="Timeline olayları"
+            tabIndex={0}
+            ref={timelineRef}
+          >
             {[...approvals.values()]
               .filter((approval) => approval.sessionId === session?.sessionId)
               .map((approval) => (

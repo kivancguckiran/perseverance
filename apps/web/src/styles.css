@@ -48,6 +48,14 @@ button:not(:disabled) {
   display: flex;
   align-items: center;
 }
+.timeline-end-button {
+  margin-left: 12px;
+  border: 1px solid #315245;
+  border-radius: 8px;
+  color: #bdebd8;
+  background: #142a22;
+  padding: 7px 10px;
+}
 
 .topbar {
   justify-content: space-between;
@@ -185,7 +193,8 @@ h2 {
   min-height: 0;
   margin-top: 24px;
   padding-right: 4px;
-  flex: 1;
+  height: min(70vh, 760px);
+  flex: 0 1 auto;
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;

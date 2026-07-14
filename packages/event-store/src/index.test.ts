@@ -311,6 +311,41 @@ describe('SqliteEventStore atomic ingest', () => {
 })
 
 describe('SqliteEventStore replay and durability', () => {
+  it('persists scoped artifact metadata across reopen', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'artifact-db-'))
+    const path = join(directory, 'events.sqlite')
+    const artifactScope = {
+      tenantId: 'ten_a',
+      workspaceId: 'wsp_a',
+      sessionId: 'ses_a',
+    }
+    let store = new SqliteEventStore(path)
+    store.createSession(artifactScope)
+    store.upsertArtifact({
+      ...artifactScope,
+      artifactId: 'art_a',
+      turnId: 'turn_a',
+      itemId: 'item_a',
+      kind: 'command-output',
+      byteLength: 12,
+      sha256: null,
+      chunkCount: 1,
+      finalized: false,
+      status: 'writing',
+      createdAt: '2026-07-14T00:00:00.000Z',
+      finalizedAt: null,
+    })
+    store.close()
+    store = new SqliteEventStore(path)
+    expect(
+      store.getArtifact({ tenantId: 'ten_a', workspaceId: 'wsp_a' }, 'art_a'),
+    ).toMatchObject({ status: 'writing', byteLength: 12 })
+    expect(() =>
+      store.getArtifact({ tenantId: 'ten_b', workspaceId: 'wsp_a' }, 'art_a'),
+    ).toThrow('Artifact not found')
+    store.close()
+    rmSync(directory, { recursive: true, force: true })
+  })
   it('returns ordered, limited, complete replay pages', () => {
     withStore((store) => {
       for (let index = 1; index <= 5; index += 1) {

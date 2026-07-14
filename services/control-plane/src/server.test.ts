@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify'
+import { createHash } from 'node:crypto'
+import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import { afterEach, describe, expect, it } from 'vitest'
 import type {
   ProcessHealth,
@@ -15,7 +17,11 @@ import {
   SqliteEventStore,
   type StoreScope,
 } from '@persistent-codex/event-store'
-import { buildControlPlane, type ControlPlaneOptions } from './server'
+import {
+  BoundedRealtimeSender,
+  buildControlPlane,
+  type ControlPlaneOptions,
+} from './server'
 
 const scope: StoreScope = {
   tenantId: 'ten_test',
@@ -26,6 +32,36 @@ const headers = {
   'x-tenant-id': scope.tenantId,
   'x-workspace-id': scope.workspaceId,
 }
+describe('bounded realtime sender', () => {
+  it('bounds a slow socket and emits one typed resync', async () => {
+    const sent: string[] = []
+    const socket = {
+      bufferedAmount: 10_000,
+      send: (data: string) => sent.push(data),
+    }
+    const sender = new BoundedRealtimeSender(socket, 4, 1024)
+    sender.updateCursor({ ...scope, afterSequence: 7, highWaterSequence: 12 })
+    for (let index = 0; index < 20; index++)
+      sender.enqueue({
+        type: 'event',
+        ...scope,
+        event: { ...event(`slow_${index}`), sequence: index + 8 },
+      })
+    expect(sender.counters.events).toBeLessThanOrEqual(4)
+    expect(sender.counters.bytes).toBeLessThanOrEqual(1024)
+    socket.bufferedAmount = 0
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    const messages = sent.map((value) =>
+      serverMessageSchema.parse(JSON.parse(value)),
+    )
+    expect(
+      messages.filter((message) => message.type === 'resync'),
+    ).toHaveLength(1)
+    expect(messages.find((message) => message.type === 'resync')).toMatchObject(
+      { reason: 'queue_overflow', afterSequence: 7, highWaterSequence: 12 },
+    )
+  })
+})
 
 function event(eventId: string): TimelineEvent {
   return {
@@ -43,6 +79,71 @@ function event(eventId: string): TimelineEvent {
     payload: { text: eventId },
   }
 }
+
+describe('artifact API', () => {
+  it('serves scoped metadata, ranges and opaque download grants', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'artifact-api-'))
+    const store = new SqliteEventStore(join(directory, 'events.sqlite'))
+    store.createSession(scope)
+    const storage = new LocalArtifactStorage(join(directory, 'artifacts'))
+    const artifactScope = { ...scope, turnId: 'turn_a', itemId: 'item_a' }
+    const created = storage.create(artifactScope)
+    storage.append({
+      artifactId: created.artifactId,
+      scope: artifactScope,
+      chunkIndex: 0,
+      stream: 'combined',
+      data: 'hello secret sk-ABCDEFGHIJK done',
+    })
+    const final = storage.finalize(created.artifactId, artifactScope)
+    store.upsertArtifact({ ...final })
+    const app = await buildControlPlane({
+      eventStore: store,
+      artifactRoot: join(directory, 'artifacts'),
+    })
+    try {
+      const metadata = await app.inject({
+        method: 'GET',
+        url: `/v1/artifacts/${created.artifactId}?metadata=1`,
+        headers,
+      })
+      expect(metadata.statusCode).toBe(200)
+      expect(metadata.json()).not.toHaveProperty('path')
+      const range = await app.inject({
+        method: 'GET',
+        url: `/v1/artifacts/${created.artifactId}`,
+        headers: { ...headers, range: 'bytes=0-4' },
+      })
+      expect(range.statusCode).toBe(206)
+      expect(range.body).toBe('hello')
+      expect(range.headers['content-range']).toBe(
+        `bytes 0-4/${final.byteLength}`,
+      )
+      const denied = await app.inject({
+        method: 'GET',
+        url: `/v1/artifacts/${created.artifactId}`,
+        headers: { ...headers, 'x-tenant-id': 'other' },
+      })
+      expect(denied.statusCode).toBe(404)
+      const grant = await app.inject({
+        method: 'POST',
+        url: `/v1/artifacts/${created.artifactId}/download-token`,
+        headers,
+      })
+      expect(grant.statusCode).toBe(200)
+      const download = await app.inject({
+        method: 'GET',
+        url: grant.json().downloadUrl,
+      })
+      expect(download.statusCode).toBe(200)
+      expect(download.body).not.toContain('ABCDEFGHIJK')
+      expect(download.headers['content-disposition']).toContain('attachment')
+    } finally {
+      await app.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
 
 function ingest(store: SqliteEventStore, key: string): TimelineEvent {
   return store.ingest({
@@ -1054,6 +1155,172 @@ describe('WP4 session, turn and live event flow', () => {
     })
     return { current, response }
   }
+
+  it('streams a controlled 100 MiB command through adapter, SQLite and artifact metadata', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp7-e2e-'))
+    const client = new FakeRuntimeClient()
+    const current = await setup({
+      workspaceCwd: '/workspace',
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_live',
+      artifactRoot: join(directory, 'artifacts'),
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers: liveHeaders,
+      payload: {},
+    })
+    const hash = createHash('sha256')
+    const sourceBytes = 1024 * 1024
+    for (let index = 0; index < 100; index++) {
+      const chunk =
+        `${String(index).padStart(4, '0')}:`.padEnd(sourceBytes - 1, 'x') + '\n'
+      hash.update(chunk)
+      client.emitNotification({
+        method: 'item/commandExecution/outputDelta',
+        params: {
+          threadId: 'thr_live',
+          turnId: 'turn_big',
+          itemId: 'cmd_big',
+          delta: chunk,
+        },
+      })
+    }
+    client.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thr_live',
+        turnId: 'turn_big',
+        item: {
+          type: 'commandExecution',
+          id: 'cmd_big',
+          command: 'big-output',
+          cwd: '/workspace',
+          processId: 'proc_big',
+          source: 'agent',
+          commandActions: [],
+          status: 'completed',
+          aggregatedOutput: '',
+          exitCode: 0,
+          durationMs: 1,
+        },
+        completedAtMs: 1,
+      },
+    })
+    let artifact
+    for (let attempt = 0; attempt < 1200; attempt++) {
+      artifact = current.listArtifacts({
+        tenantId: 'ten_live',
+        workspaceId: 'wsp_live',
+      })[0]
+      if (artifact?.finalized) break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    if (!artifact?.finalized)
+      throw new Error(
+        JSON.stringify({
+          artifact,
+          eventTypes: current
+            .replaySessionEvents(
+              {
+                tenantId: 'ten_live',
+                workspaceId: 'wsp_live',
+                sessionId: 'ses_live',
+              },
+              0,
+              500,
+            )
+            .events.map((event) => event.type),
+        }),
+      )
+    expect(artifact).toMatchObject({
+      finalized: true,
+      status: 'finalized',
+      byteLength: 100 * sourceBytes,
+      sha256: hash.digest('hex'),
+    })
+    const events = current.replaySessionEvents(
+      { tenantId: 'ten_live', workspaceId: 'wsp_live', sessionId: 'ses_live' },
+      0,
+      500,
+    ).events
+    expect(
+      Math.max(
+        ...events.map((event) => Buffer.byteLength(JSON.stringify(event))),
+      ),
+    ).toBeLessThan(70 * 1024)
+    expect(events.at(-1)).toMatchObject({
+      type: 'command.completed',
+      payload: {
+        output: {
+          totalBytes: 100 * sourceBytes,
+          artifact: { artifactId: artifact!.artifactId },
+        },
+      },
+    })
+    rmSync(directory, { recursive: true, force: true })
+  }, 30_000)
+  it('spills a completed-only 100 MiB snapshot without persisting it inline', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp7-completed-'))
+    const client = new FakeRuntimeClient()
+    const current = await setup({
+      workspaceCwd: '/workspace',
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_live',
+      artifactRoot: join(directory, 'artifacts'),
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers: liveHeaders,
+      payload: {},
+    })
+    const snapshot = 'y'.repeat(100 * 1024 * 1024)
+    const expected = createHash('sha256').update(snapshot).digest('hex')
+    client.emitNotification({
+      method: 'item/completed',
+      params: {
+        threadId: 'thr_live',
+        turnId: 'turn_snapshot',
+        item: {
+          type: 'commandExecution',
+          id: 'cmd_snapshot',
+          command: 'snapshot',
+          cwd: '/workspace',
+          processId: 'proc_snapshot',
+          source: 'agent',
+          commandActions: [],
+          status: 'completed',
+          aggregatedOutput: snapshot,
+          exitCode: 0,
+          durationMs: 1,
+        },
+        completedAtMs: 1,
+      },
+    })
+    let artifact
+    for (let attempt = 0; attempt < 1200; attempt++) {
+      artifact = current.listArtifacts({
+        tenantId: 'ten_live',
+        workspaceId: 'wsp_live',
+      })[0]
+      if (artifact?.finalized) break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(artifact).toMatchObject({
+      byteLength: 100 * 1024 * 1024,
+      sha256: expected,
+      finalized: true,
+    })
+    const replay = current.replaySessionEvents(
+      { tenantId: 'ten_live', workspaceId: 'wsp_live', sessionId: 'ses_live' },
+      0,
+      10,
+    ).events
+    expect(Buffer.byteLength(JSON.stringify(replay[0]))).toBeLessThan(70 * 1024)
+    rmSync(directory, { recursive: true, force: true })
+  }, 30_000)
 
   it('binds a created session to thread/start and records failures explicitly', async () => {
     const client = new FakeRuntimeClient()

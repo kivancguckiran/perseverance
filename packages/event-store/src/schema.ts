@@ -117,7 +117,7 @@ export const CREATE_SCHEMA_SQL = `
     artifact_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
     session_id TEXT NOT NULL, turn_id TEXT NOT NULL, item_id TEXT NOT NULL,
     kind TEXT NOT NULL, byte_length INTEGER NOT NULL CHECK(byte_length >= 0),
-    sha256 TEXT, chunk_count INTEGER NOT NULL CHECK(chunk_count >= 0), finalized INTEGER NOT NULL,
+    sha256 TEXT, chunk_count INTEGER NOT NULL CHECK(chunk_count >= 0), finalized INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'writing',
     metadata_json TEXT NOT NULL, created_at TEXT NOT NULL, finalized_at TEXT,
     FOREIGN KEY (tenant_id, workspace_id, session_id) REFERENCES sessions(tenant_id, workspace_id, session_id)
   );
@@ -170,6 +170,13 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
     if (!hasColumn(database, 'sessions', 'runtime_generation'))
       database.exec(
         `ALTER TABLE sessions ADD COLUMN runtime_generation INTEGER`,
+      )
+    if (
+      tableExists(database, 'artifacts') &&
+      !hasColumn(database, 'artifacts', 'status')
+    )
+      database.exec(
+        `ALTER TABLE artifacts ADD COLUMN status TEXT NOT NULL DEFAULT 'writing'`,
       )
 
     if (hasLegacyEvents) {

@@ -12,6 +12,7 @@ const app = await buildControlPlane({
   databasePath: process.env.EVENT_DATABASE_PATH ?? '.runtime/events.sqlite',
   workspaceCwd: process.env.WORKSPACE_CWD ?? process.cwd(),
   codexHomeRoot: process.env.CODEX_HOME_ROOT ?? '.runtime/codex-homes',
+  artifactRoot: process.env.ARTIFACT_ROOT ?? '.runtime/artifacts',
   ...((process.env.CODEX_PROVISIONING_SOURCE ?? process.env.CODEX_HOME)
     ? {
         codexProvisioningSource:

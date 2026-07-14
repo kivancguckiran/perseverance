@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type {
+  ArtifactMetadata,
   ArtifactStorage,
   ArtifactScope,
 } from '@persistent-codex/artifact-storage'
@@ -193,6 +194,25 @@ export class SessionOrchestrator {
     string,
     { sessionId: string; turnId?: string }
   >()
+
+  #persistArtifact(metadata: ArtifactMetadata): void {
+    this.#store.upsertArtifact({
+      artifactId: metadata.artifactId,
+      tenantId: metadata.tenantId,
+      workspaceId: metadata.workspaceId,
+      sessionId: metadata.sessionId,
+      turnId: metadata.turnId,
+      itemId: metadata.itemId,
+      kind: metadata.kind,
+      byteLength: metadata.byteLength,
+      sha256: metadata.sha256,
+      chunkCount: metadata.chunkCount,
+      finalized: metadata.finalized,
+      status: metadata.status,
+      createdAt: metadata.createdAt,
+      finalizedAt: metadata.finalizedAt,
+    })
+  }
 
   constructor(options: SessionOrchestratorOptions) {
     this.#store = options.store
@@ -505,8 +525,10 @@ export class SessionOrchestrator {
   ): void {
     const adapter = this.#adapterFor(scope)
     const adapted = adapter.adapt(envelope)
-    this.#spillCommandOutput(adapted)
+    if (this.#store.findIngestedEvent(scope, ingestKey, adapted.checksum))
+      return
     if (this.#store.hasEquivalentTimelineEvent(scope, adapted.event)) return
+    this.#spillCommandOutput(adapted, ingestKey)
     this.#store.ingest({
       ...scope,
       ingestKey,
@@ -959,7 +981,11 @@ export class SessionOrchestrator {
     if (!scope) return
     const adapter = this.#adapterFor(scope)
     const adapted = adapter.adapt(message)
-    this.#spillCommandOutput(adapted)
+    if (
+      this.#store.findIngestedEvent(scope, delivery.ingestKey, adapted.checksum)
+    )
+      return
+    this.#spillCommandOutput(adapted, delivery.ingestKey)
     const approvalPayload =
       adapted.event.type === 'approval.requested'
         ? adapted.event.payload
@@ -1069,7 +1095,10 @@ export class SessionOrchestrator {
     }
   }
 
-  #spillCommandOutput(adapted: ReturnType<CodexEventAdapter['adapt']>): void {
+  #spillCommandOutput(
+    adapted: ReturnType<CodexEventAdapter['adapt']>,
+    sourceKey: string,
+  ): void {
     const event = adapted.event
     if (!this.#artifactStorage || !event.codexTurnId || !event.codexItemId)
       return
@@ -1087,10 +1116,11 @@ export class SessionOrchestrator {
       turnId: event.codexTurnId,
       itemId: event.codexItemId,
     }
-    if (event.type === 'command.output.delta') {
+    if (event.type === 'command.output.delta' && adapted.spill) {
       let record = this.#commandArtifacts.get(key)
       if (!record) {
         const created = this.#artifactStorage.create(scope)
+        this.#persistArtifact(created)
         record = { artifactId: created.artifactId, scope }
         this.#commandArtifacts.set(key, record)
       }
@@ -1099,9 +1129,12 @@ export class SessionOrchestrator {
         scope,
         chunkIndex: event.payload.chunkIndex,
         stream: event.payload.stream,
-        data: event.payload.text,
+        data: adapted.spill.data,
+        sourceKey,
       })
-      const range = metadata.ranges.at(-1)!
+      this.#persistArtifact(metadata)
+      const range = metadata.ranges.at(-1)
+      if (!range) return
       event.payload.artifact = {
         artifactId: record.artifactId,
         startByte: range.startByte,
@@ -1116,18 +1149,23 @@ export class SessionOrchestrator {
       let record = this.#commandArtifacts.get(key)
       if (!record) {
         const created = this.#artifactStorage.create(scope)
+        this.#persistArtifact(created)
         record = { artifactId: created.artifactId, scope }
         this.#commandArtifacts.set(key, record)
-        if (event.payload.output.previewTail)
-          this.#artifactStorage.append({
-            artifactId: record.artifactId,
-            scope,
-            chunkIndex: 0,
-            stream: 'combined',
-            data: event.payload.output.previewTail,
-          })
+        if (adapted.spill?.data)
+          this.#persistArtifact(
+            this.#artifactStorage.append({
+              artifactId: record.artifactId,
+              scope,
+              chunkIndex: 0,
+              stream: 'combined',
+              data: adapted.spill.data,
+              sourceKey,
+            }),
+          )
       }
       const metadata = this.#artifactStorage.finalize(record.artifactId, scope)
+      this.#persistArtifact(metadata)
       event.payload.output = {
         ...event.payload.output,
         totalBytes: metadata.byteLength,

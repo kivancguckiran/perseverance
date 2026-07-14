@@ -81,6 +81,26 @@ describe('golden Codex sessions', () => {
 })
 
 describe('runtime validation and raw ingest', () => {
+  it('keeps full command output only in transient spill while bounding persisted envelopes', () => {
+    const adapter = new CodexEventAdapter(context())
+    const full = 'x'.repeat(1024 * 1024)
+    const result = adapter.adapt({
+      method: 'item/commandExecution/outputDelta',
+      params: {
+        threadId: 'thr_1',
+        turnId: 'turn_1',
+        itemId: 'cmd_large',
+        delta: full,
+      },
+    })
+    expect(result.spill?.data).toBe(full)
+    expect(
+      Buffer.byteLength(String((result.envelope.params as any).delta)),
+    ).toBeLessThanOrEqual(64 * 1024)
+    expect(Buffer.byteLength(JSON.stringify(result.event))).toBeLessThan(
+      70 * 1024,
+    )
+  })
   it('rejects malformed JSON-RPC envelopes explicitly', () => {
     const adapter = new CodexEventAdapter(context())
     expect(() => adapter.adapt([])).toThrow(CodexEnvelopeValidationError)

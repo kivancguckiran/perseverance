@@ -53,7 +53,12 @@ export const artifactMetadataSchema = scopeSchema.extend({
     .nullable(),
   chunkCount: z.number().int().nonnegative(),
   finalized: z.boolean(),
+  status: z.enum(['writing', 'finalized', 'recovery_required']),
   downloadUrl: z.string().min(1),
+})
+export const artifactDownloadTokenSchema = z.object({
+  downloadUrl: z.string().min(1),
+  expiresAt: z.iso.datetime(),
 })
 export const resyncMessageSchema = scopeSchema.extend({
   type: z.literal('resync'),
@@ -215,6 +220,7 @@ export type ErrorMessage = z.infer<typeof errorMessageSchema>
 export type ClientMessage = z.infer<typeof clientMessageSchema>
 export type ServerMessage = z.infer<typeof serverMessageSchema>
 export type ArtifactMetadata = z.infer<typeof artifactMetadataSchema>
+export type ArtifactDownloadToken = z.infer<typeof artifactDownloadTokenSchema>
 export type ReplayResponse = z.infer<typeof replayResponseSchema>
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>
 export type SessionResponse = z.infer<typeof sessionResponseSchema>

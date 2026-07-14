@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -28,7 +34,7 @@ afterEach(() => {
 })
 
 describe('LocalArtifactStorage', () => {
-  it('streams 100 MiB with bounded chunks, redaction, byte count and checksum', () => {
+  it('streams 100 MiB with bounded chunks, redaction, byte count and checksum', async () => {
     const store = storage()
     const created = store.create(scope)
     const chunkBytes = 64 * 1024
@@ -38,7 +44,7 @@ describe('LocalArtifactStorage', () => {
     let maxChunk = 0
     let tail = ''
     for (let index = 0; index < count; index++) {
-      const marker = index === 777 ? 'Bearer ultra-secret-token ' : ''
+      const marker = index === 777 ? 'Bearer ultra-secret-token\n' : ''
       const raw = (marker + `${index.toString().padStart(6, '0')}:`).padEnd(
         chunkBytes,
         'x',
@@ -69,14 +75,27 @@ describe('LocalArtifactStorage', () => {
     expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(64 * 1024)
     expect(final.byteLength).toBe(expectedBytes)
     expect(final.sha256).toBe(hash.digest('hex'))
-    expect(final.chunkCount).toBe(count)
-    const downloaded = store.read(created.artifactId, {
+    expect(final.ranges.every((range) => range.byteLength <= chunkBytes)).toBe(
+      true,
+    )
+    const downloadedHash = createHash('sha256')
+    let downloadedBytes = 0
+    let scanCarry = ''
+    let leaked = false
+    for await (const chunk of store.openReadStream(created.artifactId, {
       tenantId: 'ten_a',
       workspaceId: 'wsp_a',
-    })
-    expect(
-      Buffer.from(downloaded).includes(Buffer.from('ultra-secret-token')),
-    ).toBe(false)
+    })) {
+      const bytes = Buffer.from(chunk)
+      downloadedHash.update(bytes)
+      downloadedBytes += bytes.length
+      const scan = scanCarry + bytes.toString()
+      leaked ||= scan.includes('ultra-secret-token')
+      scanCarry = scan.slice(-64)
+    }
+    expect(leaked).toBe(false)
+    expect(downloadedBytes).toBe(final.byteLength)
+    expect(downloadedHash.digest('hex')).toBe(final.sha256)
   }, 30_000)
   it('enforces ordering, tenant isolation, traversal and symlink rejection', () => {
     const store = storage()
@@ -96,6 +115,15 @@ describe('LocalArtifactStorage', () => {
     expect(() => store.create({ ...scope, tenantId: '..' })).toThrow(
       'INVALID_ARTIFACT_SCOPE',
     )
+    expect(() => store.create({ ...scope, tenantId: '/proc' })).toThrow(
+      'INVALID_ARTIFACT_SCOPE',
+    )
+    const tenantRoot = join(roots.at(-1)!, 'ten_a', 'wsp_a')
+    mkdirSync(tenantRoot, { recursive: true })
+    symlinkSync(tmpdir(), join(tenantRoot, 'escape'))
+    expect(() =>
+      store.metadata('missing', { tenantId: 'ten_a', workspaceId: 'wsp_a' }),
+    ).toThrow('ARTIFACT_SYMLINK_REJECTED')
   })
   it('reopens finalized artifacts and cleans orphan temp files', () => {
     const store = storage()
@@ -114,5 +142,62 @@ describe('LocalArtifactStorage', () => {
         workspaceId: 'wsp_a',
       }).finalized,
     ).toBe(true)
+    const orphan = join(roots.at(-1)!, 'orphan.tmp')
+    writeFileSync(orphan, 'orphan')
+    expect(store.cleanupOrphans(-1)).toBe(1)
+  })
+  it('marks half-written artifacts recovery-required after reopen', () => {
+    const store = storage()
+    const a = store.create(scope)
+    store.append({
+      artifactId: a.artifactId,
+      scope,
+      chunkIndex: 0,
+      stream: 'combined',
+      data: 'partial secret sk-ABCDEFGHIJK',
+    })
+    const reopened = new LocalArtifactStorage(roots.at(-1)!)
+    expect(
+      reopened.metadata(a.artifactId, {
+        tenantId: 'ten_a',
+        workspaceId: 'wsp_a',
+      }).status,
+    ).toBe('recovery_required')
+    expect(() => reopened.finalize(a.artifactId, scope)).toThrow(
+      'ARTIFACT_RECOVERY_REQUIRED',
+    )
+  })
+  it('redacts credentials split across source chunk boundaries', async () => {
+    const store = storage()
+    const a = store.create(scope)
+    const pieces = [
+      'before Bear',
+      'er split-token-123 ',
+      'sk-ABC',
+      'DEFGHIJK and sess-1234',
+      '567890 structured {"api_key":"top',
+      'secret"} after',
+    ]
+    pieces.forEach((data, index) =>
+      store.append({
+        artifactId: a.artifactId,
+        scope,
+        chunkIndex: index,
+        stream: 'combined',
+        data,
+      }),
+    )
+    const final = store.finalize(a.artifactId, scope)
+    let text = ''
+    for await (const chunk of store.openReadStream(a.artifactId, {
+      tenantId: 'ten_a',
+      workspaceId: 'wsp_a',
+    }))
+      text += Buffer.from(chunk).toString()
+    expect(text).toContain('before ')
+    expect(text).toContain(' after')
+    expect(text).not.toMatch(/split-token|ABCDEFGHIJK|1234567890|topsecret/)
+    expect(text.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(4)
+    expect(final.byteLength).toBe(Buffer.byteLength(text))
   })
 })

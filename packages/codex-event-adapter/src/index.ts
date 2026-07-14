@@ -13,6 +13,7 @@ import {
 import {
   appendBoundedTail,
   DEFAULT_COMMAND_TAIL_BYTES,
+  StreamingRedactor,
 } from '@persistent-codex/artifact-storage'
 
 export interface EventAdapterContext {
@@ -35,6 +36,13 @@ export interface RawIngestResult {
 
 export interface AdaptedCodexEnvelope extends RawIngestResult {
   event: TimelineEvent
+  spill?: {
+    kind: 'command-output'
+    data: string
+    stream: 'combined'
+    sourceChunkIndex: number
+    completedSnapshot: boolean
+  }
 }
 
 interface JsonSchemaUnion {
@@ -223,6 +231,7 @@ export class CodexEventAdapter {
     string,
     { index: number; totalBytes: number; tail: string }
   >()
+  readonly #previewRedactors = new Map<string, StreamingRedactor>()
   readonly #approvals = new Map<
     string,
     {
@@ -242,7 +251,8 @@ export class CodexEventAdapter {
   }
 
   adapt(input: unknown): AdaptedCodexEnvelope {
-    const raw = ingestRawCodexEnvelope(input, this.#redact)
+    const prepared = this.#prepareCommandOutput(input)
+    const raw = ingestRawCodexEnvelope(prepared.envelope, this.#redact)
     const kind = envelopeKind(raw.envelope)
     const known = validateKnownEnvelope(raw.envelope, kind)
     const event = known
@@ -256,7 +266,75 @@ export class CodexEventAdapter {
           params: raw.envelope.params,
         })
 
-    return { ...raw, event }
+    return {
+      ...raw,
+      event,
+      ...(prepared.spill ? { spill: prepared.spill } : {}),
+    }
+  }
+
+  #prepareCommandOutput(input: unknown): {
+    envelope: unknown
+    spill?: AdaptedCodexEnvelope['spill']
+  } {
+    if (!isRecord(input) || !isRecord(input.params)) return { envelope: input }
+    if (
+      input.method === 'item/commandExecution/outputDelta' &&
+      typeof input.params.delta === 'string' &&
+      typeof input.params.itemId === 'string'
+    ) {
+      const itemId = input.params.itemId
+      const redactor =
+        this.#previewRedactors.get(itemId) ?? new StreamingRedactor()
+      this.#previewRedactors.set(itemId, redactor)
+      const safe = appendBoundedTail(
+        '',
+        redactor.push(input.params.delta),
+        this.#tailBytes,
+      )
+      return {
+        envelope: { ...input, params: { ...input.params, delta: safe } },
+        spill: {
+          kind: 'command-output',
+          data: input.params.delta,
+          stream: 'combined',
+          sourceChunkIndex: this.#commandChunks.get(itemId)?.index ?? 0,
+          completedSnapshot: false,
+        },
+      }
+    }
+    if (
+      input.method === 'item/completed' &&
+      isRecord(input.params.item) &&
+      input.params.item.type === 'commandExecution' &&
+      typeof input.params.item.aggregatedOutput === 'string'
+    ) {
+      const itemId = String(input.params.item.id)
+      const redactor = new StreamingRedactor()
+      const safe = appendBoundedTail(
+        '',
+        redactor.push(input.params.item.aggregatedOutput, true),
+        this.#tailBytes,
+      )
+      this.#previewRedactors.delete(itemId)
+      return {
+        envelope: {
+          ...input,
+          params: {
+            ...input.params,
+            item: { ...input.params.item, aggregatedOutput: safe },
+          },
+        },
+        spill: {
+          kind: 'command-output',
+          data: input.params.item.aggregatedOutput,
+          stream: 'combined',
+          sourceChunkIndex: this.#commandChunks.get(itemId)?.index ?? 0,
+          completedSnapshot: true,
+        },
+      }
+    }
+    return { envelope: input }
   }
 
   #event(

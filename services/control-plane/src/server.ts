@@ -1,6 +1,10 @@
 import { setImmediate as waitForImmediate } from 'node:timers/promises'
 import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
-import { artifactMetadataSchema } from '@persistent-codex/control-plane-contracts'
+import {
+  artifactDownloadTokenSchema,
+  artifactMetadataSchema,
+} from '@persistent-codex/control-plane-contracts'
+import { randomBytes } from 'node:crypto'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import {
@@ -45,6 +49,7 @@ import {
 
 interface RealtimeSocket {
   send(data: string): void
+  bufferedAmount?: number
 }
 
 export interface ControlPlaneOptions {
@@ -125,8 +130,118 @@ function parseLimit(value: string | undefined): number | undefined {
   return Number.isSafeInteger(parsed) && parsed <= 500 ? parsed : undefined
 }
 
+export class BoundedRealtimeSender {
+  readonly #queue: { data: string; authoritative: boolean }[] = []
+  #bytes = 0
+  #scheduled = false
+  #resyncQueued = false
+  readonly socket: RealtimeSocket
+  readonly maxEvents: number
+  readonly maxBytes: number
+  cursor:
+    | {
+        tenantId: string
+        workspaceId: string
+        sessionId: string
+        afterSequence: number
+        highWaterSequence: number
+      }
+    | undefined
+  constructor(
+    socket: RealtimeSocket,
+    maxEvents = REALTIME_MAX_QUEUE_EVENTS,
+    maxBytes = REALTIME_MAX_QUEUE_BYTES,
+  ) {
+    this.socket = socket
+    this.maxEvents = maxEvents
+    this.maxBytes = maxBytes
+  }
+  get counters() {
+    return {
+      events: this.#queue.length,
+      bytes: this.#bytes,
+      resyncQueued: this.#resyncQueued,
+    }
+  }
+  updateCursor(value: NonNullable<BoundedRealtimeSender['cursor']>) {
+    this.cursor = value
+  }
+  enqueue(message: ServerMessage) {
+    const data = JSON.stringify(serverMessageSchema.parse(message))
+    const authoritative =
+      message.type !== 'event' || isAuthoritative(message.event)
+    if (
+      this.#queue.length >= this.maxEvents ||
+      this.#bytes + Buffer.byteLength(data) > this.maxBytes
+    ) {
+      if (!authoritative) return this.#queueResync('queue_overflow')
+      const disposable = this.#queue.findIndex((v) => !v.authoritative)
+      if (disposable >= 0) {
+        const [removed] = this.#queue.splice(disposable, 1)
+        this.#bytes -= Buffer.byteLength(removed!.data)
+      } else return this.#queueResync('slow_consumer')
+    }
+    this.#queue.push({ data, authoritative })
+    this.#bytes += Buffer.byteLength(data)
+    this.#flush()
+  }
+  #queueResync(reason: 'slow_consumer' | 'queue_overflow') {
+    if (this.#resyncQueued || !this.cursor) return
+    this.#queue.length = 0
+    this.#bytes = 0
+    this.#resyncQueued = true
+    const data = JSON.stringify(
+      serverMessageSchema.parse({
+        type: 'resync',
+        tenantId: this.cursor.tenantId,
+        workspaceId: this.cursor.workspaceId,
+        sessionId: this.cursor.sessionId,
+        reason,
+        afterSequence: this.cursor.afterSequence,
+        highWaterSequence: this.cursor.highWaterSequence,
+        droppedEventCount: 1,
+      }),
+    )
+    this.#queue.push({ data, authoritative: true })
+    this.#bytes = Buffer.byteLength(data)
+    this.#flush()
+  }
+  #flush() {
+    if ((this.socket.bufferedAmount ?? 0) > this.maxBytes) {
+      if (!this.#scheduled) {
+        this.#scheduled = true
+        setTimeout(() => {
+          this.#scheduled = false
+          this.#flush()
+        }, 5)
+      }
+      return
+    }
+    while (
+      this.#queue.length &&
+      (this.socket.bufferedAmount ?? 0) < this.maxBytes
+    ) {
+      const next = this.#queue.shift()!
+      this.#bytes -= Buffer.byteLength(next.data)
+      this.socket.send(next.data)
+      if (this.#resyncQueued) {
+        this.#resyncQueued = false
+        break
+      }
+    }
+  }
+}
+const senders = new WeakMap<object, BoundedRealtimeSender>()
+function senderFor(socket: RealtimeSocket) {
+  let sender = senders.get(socket as object)
+  if (!sender) {
+    sender = new BoundedRealtimeSender(socket)
+    senders.set(socket as object, sender)
+  }
+  return sender
+}
 function send(socket: RealtimeSocket, message: ServerMessage): void {
-  socket.send(JSON.stringify(serverMessageSchema.parse(message)))
+  senderFor(socket).enqueue(message)
 }
 
 function sendError(
@@ -152,6 +267,31 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const artifacts = new LocalArtifactStorage(
     options.artifactRoot ?? '.runtime/artifacts',
   )
+  const downloadTokens = new Map<
+    string,
+    {
+      artifactId: string
+      tenantId: string
+      workspaceId: string
+      expiresAt: number
+    }
+  >()
+  for (const durable of store.listRecoverableArtifacts()) {
+    try {
+      const local = artifacts.metadata(durable.artifactId, durable)
+      store.upsertArtifact({
+        ...durable,
+        byteLength: local.byteLength,
+        sha256: local.sha256,
+        chunkCount: local.chunkCount,
+        finalized: local.finalized,
+        status: local.status,
+        finalizedAt: local.finalizedAt,
+      })
+    } catch {
+      store.upsertArtifact({ ...durable, status: 'recovery_required' })
+    }
+  }
   const codexHomes = new PersistentCodexHomeManager(
     options.codexHomeRoot ?? '.runtime/codex-homes',
     options.codexProvisioningSource
@@ -228,7 +368,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         message: 'x-tenant-id and x-workspace-id headers are required',
       })
     try {
-      const metadata = artifacts.metadata(request.params.artifactId, scope)
+      const metadata = store.getArtifact(scope, request.params.artifactId)
       if (request.query.metadata === '1')
         return artifactMetadataSchema.parse({
           ...metadata,
@@ -245,7 +385,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           return reply.code(416).send()
         selected = { start, end }
       }
-      const body = artifacts.read(request.params.artifactId, scope, selected)
+      const body = artifacts.openReadStream(
+        request.params.artifactId,
+        scope,
+        selected,
+      )
       reply
         .header('content-type', 'text/plain; charset=utf-8')
         .header(
@@ -261,13 +405,69 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             'content-range',
             `bytes ${selected.start}-${selected.end}/${metadata.byteLength}`,
           )
-      return reply.send(Buffer.from(body))
+      return reply.send(body)
     } catch {
       return reply
         .code(404)
         .send({ code: 'ARTIFACT_NOT_FOUND', message: 'Artifact not found' })
     }
   })
+
+  app.post<{ Params: { artifactId: string } }>(
+    '/v1/artifacts/:artifactId/download-token',
+    async (request, reply) => {
+      const scope = workspaceScope(request.headers)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        store.getArtifact(scope, request.params.artifactId)
+        const token = randomBytes(32).toString('base64url')
+        const expiresAt = Date.now() + 60_000
+        downloadTokens.set(token, {
+          ...scope,
+          artifactId: request.params.artifactId,
+          expiresAt,
+        })
+        return artifactDownloadTokenSchema.parse({
+          downloadUrl: `/v1/artifact-downloads/${token}`,
+          expiresAt: new Date(expiresAt).toISOString(),
+        })
+      } catch {
+        return reply
+          .code(404)
+          .send({ code: 'ARTIFACT_NOT_FOUND', message: 'Artifact not found' })
+      }
+    },
+  )
+  app.get<{ Params: { token: string } }>(
+    '/v1/artifact-downloads/:token',
+    async (request, reply) => {
+      const grant = downloadTokens.get(request.params.token)
+      downloadTokens.delete(request.params.token)
+      if (!grant || grant.expiresAt < Date.now())
+        return reply
+          .code(404)
+          .send({ code: 'DOWNLOAD_NOT_FOUND', message: 'Download not found' })
+      try {
+        const metadata = store.getArtifact(grant, grant.artifactId)
+        reply
+          .header('content-type', 'text/plain; charset=utf-8')
+          .header(
+            'content-disposition',
+            `attachment; filename="command-output-${grant.artifactId}.txt"`,
+          )
+          .header('cache-control', 'private, no-store')
+        return reply.send(artifacts.openReadStream(grant.artifactId, grant))
+      } catch {
+        return reply
+          .code(404)
+          .send({ code: 'ARTIFACT_NOT_FOUND', message: 'Artifact not found' })
+      }
+    },
+  )
 
   app.get<{ Querystring: { status?: string } }>(
     '/v1/approvals',
@@ -676,6 +876,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
 
   app.get('/v1/realtime', { websocket: true }, (socket) => {
     let subscription: SubscriptionState | undefined
+    const outbound = senderFor(socket)
 
     const unsubscribe = store.onCommitted((event) => {
       const current = subscription
@@ -789,6 +990,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         bufferBytes: 0,
         droppedEventCount: 0,
       }
+      outbound.updateCursor({
+        ...scope,
+        afterSequence: message.afterSequence,
+        highWaterSequence,
+      })
 
       let cursor = message.afterSequence
       let hasMore = true
@@ -903,6 +1109,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         return
       }
       current.ackSequence = ack.sequence
+      outbound.updateCursor({
+        ...current,
+        afterSequence: ack.sequence,
+        highWaterSequence: store.getHighWaterSequence(current),
+      })
       send(socket, ack)
     })
   })
