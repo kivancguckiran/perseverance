@@ -18,6 +18,8 @@ export const readinessCheckSchema = z.object({
     'codexHome',
     'provisioning',
     'auth',
+    'appServer',
+    'disk',
   ]),
   status: z.enum(['ready', 'failed']),
   code: z.string().min(1).nullable(),
@@ -219,6 +221,61 @@ export const sessionListResponseSchema = z.object({
   nextCursor: z.string().min(1).nullable(),
 })
 
+export const auditActorSchema = z.enum(['user', 'system', 'runtime'])
+export const auditActionSchema = z.enum([
+  'session.created',
+  'session.lifecycle_changed',
+  'turn.started',
+  'turn.completed',
+  'turn.failed',
+  'approval.requested',
+  'approval.decided',
+  'auth.state_changed',
+  'runtime.restarted',
+  'runtime.crash_loop',
+  'recovery.started',
+  'recovery.completed',
+  'recovery.failed',
+  'turn.steered',
+  'turn.interrupted',
+  'git.snapshot_refreshed',
+  'artifact.accessed',
+])
+export const auditOutcomeSchema = z.enum(['requested', 'success', 'failure'])
+export const auditRecordSchema = scopeSchema.extend({
+  auditId: z.number().int().positive(),
+  actor: auditActorSchema,
+  action: auditActionSchema,
+  outcome: auditOutcomeSchema,
+  correlationId: z.string().min(1).nullable(),
+  requestId: z.string().min(1).nullable(),
+  traceId: z.string().min(1).nullable(),
+  metadata: z.record(
+    z.string(),
+    z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  ),
+  occurredAt: z.iso.datetime(),
+})
+export const auditListResponseSchema = z.object({
+  records: z.array(auditRecordSchema),
+  nextCursor: z.string().min(1).nullable(),
+  staleAfter: z.iso.datetime(),
+})
+
+export const metricSeriesSchema = z.object({
+  name: identifierSchema,
+  kind: z.enum(['counter', 'histogram', 'gauge']),
+  labels: z.record(z.string(), z.string()),
+  value: z.number().finite(),
+  count: z.number().int().nonnegative().optional(),
+  sum: z.number().finite().optional(),
+  buckets: z.record(z.string(), z.number().int().nonnegative()).optional(),
+})
+export const metricsResponseSchema = z.object({
+  generatedAt: z.iso.datetime(),
+  series: z.array(metricSeriesSchema).max(500),
+})
+
 export const gitChangeSchema = z.object({
   path: z.string(),
   previousPath: z.string().nullable(),
@@ -338,3 +395,6 @@ export type ApprovalDecisionRequest = z.infer<
 >
 export type ReadinessStatus = z.infer<typeof readinessStatusSchema>
 export type ReadinessResponse = z.infer<typeof readinessResponseSchema>
+export type AuditRecord = z.infer<typeof auditRecordSchema>
+export type AuditListResponse = z.infer<typeof auditListResponseSchema>
+export type MetricsResponse = z.infer<typeof metricsResponseSchema>

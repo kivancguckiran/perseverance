@@ -173,6 +173,65 @@ describe('WP10 session navigation and Git API', () => {
   }, 30_000)
 })
 
+describe('WP11 health, readiness, metrics, and audit API', () => {
+  it('keeps liveness dependency-free and reports deterministic dependency recovery', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp11-health-'))
+    const checks = [
+      {
+        name: 'database' as const,
+        status: 'failed' as 'ready' | 'failed',
+        code: 'DATABASE_UNAVAILABLE' as string | null,
+      },
+    ]
+    const instance = await buildControlPlane({
+      databasePath: join(directory, 'events.sqlite'),
+      artifactRoot: join(directory, 'artifacts'),
+      codexHomeRoot: join(directory, 'homes'),
+      runtimeClientFactory: () => new FakeRuntimeClient(),
+      preflightChecks: checks,
+      now: () => new Date('2026-07-15T09:00:00.000Z'),
+    })
+    try {
+      expect(
+        (await instance.inject({ method: 'GET', url: '/healthz' })).json(),
+      ).toEqual({ status: 'ok' })
+      const failed = await instance.inject({
+        method: 'GET',
+        url: '/readyz',
+        headers,
+      })
+      expect(failed.statusCode).toBe(503)
+      expect(failed.json().checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'database', status: 'failed' }),
+          expect.objectContaining({ name: 'appServer', status: 'failed' }),
+        ]),
+      )
+      checks[0]!.status = 'ready'
+      checks[0]!.code = null
+      const recovered = await instance.inject({
+        method: 'GET',
+        url: '/readyz',
+        headers,
+      })
+      expect(recovered.statusCode).toBe(200)
+      expect(recovered.json()).toMatchObject({ status: 'ready' })
+      const metrics = (
+        await instance.inject({ method: 'GET', url: '/metrics' })
+      ).json()
+      expect(metrics.generatedAt).toBe('2026-07-15T09:00:00.000Z')
+      expect(
+        JSON.stringify(
+          metrics.series.map((item: { labels: unknown }) => item.labels),
+        ),
+      ).not.toMatch(/ten_test|wsp_test|sessionId|prompt|path|credential/)
+    } finally {
+      await instance.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('WP9 auth readiness and recovery', () => {
   it('blocks session creation before thread/start when account setup is required', async () => {
     class LoggedOutClient extends FakeRuntimeClient {
@@ -1248,6 +1307,16 @@ describe('durable approval API', () => {
       'APPROVAL_ALREADY_RESOLVED',
     )
     expect(client.responses).toHaveLength(1)
+    const durableApproval = store!.getApproval(scope, approval!.approvalId)
+    expect(
+      store!
+        .listAudit({ ...scope, sessionId: durableApproval.sessionId })
+        .records.filter(
+          (record) =>
+            record.action === 'approval.decided' &&
+            record.outcome === 'success',
+        ),
+    ).toHaveLength(1)
   })
 
   it('blocks stale runtime/generation and expires approvals on health failure and turn completion', async () => {

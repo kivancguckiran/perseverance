@@ -93,6 +93,25 @@ export interface SessionOrchestratorOptions {
   onDeliveryError?: WorkspaceRuntimeRegistryOptions['onDeliveryError']
   approvalPolicy?: ThreadStartParams['approvalPolicy']
   onRecoveryError?: (input: StoreScope & { code: string }) => void
+  onRuntimeHealth?: (
+    input: Pick<WorkspaceRuntimeIdentity, 'tenantId' | 'workspaceId'> & {
+      state:
+        | 'stopped'
+        | 'starting'
+        | 'initializing'
+        | 'ready'
+        | 'restarting'
+        | 'failed'
+      restartAttempt: number
+      processGeneration: number
+    },
+  ) => void
+  onAuthTransition?: (input: {
+    tenantId: string
+    workspaceId: string
+    fromState: string
+    toState: string
+  }) => void
   artifactStorage?: ArtifactStorage
 }
 
@@ -201,6 +220,9 @@ export class SessionOrchestrator {
   readonly #approvalPolicy: ThreadStartParams['approvalPolicy'] | undefined
   readonly #onRecoveryError: SessionOrchestratorOptions['onRecoveryError']
   readonly #artifactStorage: ArtifactStorage | undefined
+  readonly #onRuntimeHealth: SessionOrchestratorOptions['onRuntimeHealth']
+  readonly #onAuthTransition: SessionOrchestratorOptions['onAuthTransition']
+  readonly #authStates = new Map<string, string>()
   readonly #gitReaders = new Map<string, GitSnapshotReader>()
   readonly #commandArtifacts = new Map<
     string,
@@ -248,6 +270,8 @@ export class SessionOrchestrator {
     this.#approvalPolicy = options.approvalPolicy
     this.#onRecoveryError = options.onRecoveryError
     this.#artifactStorage = options.artifactStorage
+    this.#onRuntimeHealth = options.onRuntimeHealth
+    this.#onAuthTransition = options.onAuthTransition
     this.#registry = new WorkspaceRuntimeRegistry({
       ...(options.runtimeClientFactory
         ? { clientFactory: options.runtimeClientFactory }
@@ -261,6 +285,13 @@ export class SessionOrchestrator {
       onMessage: (runtime, message, delivery) =>
         this.#ingestRuntimeMessage(runtime, message, delivery),
       onHealthChange: (runtime, health) => {
+        this.#onRuntimeHealth?.({
+          tenantId: runtime.tenantId,
+          workspaceId: runtime.workspaceId,
+          state: health.state,
+          restartAttempt: health.restartAttempt,
+          processGeneration: runtime.client.processGeneration,
+        })
         if (health.state === 'ready') {
           this.#store.expireRuntimeApprovals({
             ...runtime,
@@ -334,6 +365,17 @@ export class SessionOrchestrator {
         { refreshToken } satisfies codexV2.GetAccountParams,
       )
       const ready = response.account !== null || !response.requiresOpenaiAuth
+      const authKey = JSON.stringify([input.tenantId, input.workspaceId])
+      const nextAuthState = ready ? 'ready' : 'required'
+      const previousAuthState = this.#authStates.get(authKey) ?? 'unknown'
+      if (previousAuthState !== nextAuthState) {
+        this.#authStates.set(authKey, nextAuthState)
+        this.#onAuthTransition?.({
+          ...input,
+          fromState: previousAuthState,
+          toState: nextAuthState,
+        })
+      }
       if (ready) {
         const prefix = JSON.stringify([
           input.tenantId,
@@ -360,6 +402,16 @@ export class SessionOrchestrator {
         },
       })
     } catch {
+      const authKey = JSON.stringify([input.tenantId, input.workspaceId])
+      const previousAuthState = this.#authStates.get(authKey) ?? 'unknown'
+      if (previousAuthState !== 'failed') {
+        this.#authStates.set(authKey, 'failed')
+        this.#onAuthTransition?.({
+          ...input,
+          fromState: previousAuthState,
+          toState: 'failed',
+        })
+      }
       return readinessResponseSchema.parse({
         status: 'degraded',
         checkedAt: new Date().toISOString(),
@@ -401,6 +453,14 @@ export class SessionOrchestrator {
       sessionId: this.#sessionIdFactory(),
     }
     this.#store.createSession({ ...scope, status: 'starting' })
+    this.#store.appendAudit({
+      ...scope,
+      actor: 'system',
+      action: 'session.created',
+      outcome: 'success',
+      idempotencyKey: `session:${scope.sessionId}:created`,
+      metadata: { toState: 'starting' },
+    })
     const cwd =
       typeof this.#workspaceCwd === 'function'
         ? this.#workspaceCwd(input)
@@ -428,10 +488,30 @@ export class SessionOrchestrator {
         status: 'active',
         runtimeGeneration: runtime.client.processGeneration,
       })
+      this.#store.appendAudit({
+        ...scope,
+        actor: 'system',
+        action: 'session.lifecycle_changed',
+        outcome: 'success',
+        idempotencyKey: `session:${scope.sessionId}:active`,
+        metadata: { fromState: 'starting', toState: 'active' },
+      })
       this.#threadScopes.set(this.#threadKey(input, codexThreadId), scope)
       return this.getSession(scope)
     } catch (error) {
       this.#store.updateSessionStatus(scope, 'failed')
+      this.#store.appendAudit({
+        ...scope,
+        actor: 'system',
+        action: 'session.lifecycle_changed',
+        outcome: 'failure',
+        idempotencyKey: `session:${scope.sessionId}:failed`,
+        metadata: {
+          fromState: 'starting',
+          toState: 'failed',
+          reasonCode: 'SESSION_START_FAILED',
+        },
+      })
       throw new OrchestrationError(
         'SESSION_START_FAILED',
         error instanceof Error ? error.message : String(error),
@@ -644,6 +724,14 @@ export class SessionOrchestrator {
     key: string,
   ): Promise<SessionResponse> {
     this.#store.updateSessionRecovery(scope, { status: 'recovering' })
+    this.#store.appendAudit({
+      ...scope,
+      actor: 'system',
+      action: 'recovery.started',
+      outcome: 'requested',
+      idempotencyKey: `recovery:${key}:started`,
+      metadata: { operation: 'resume' },
+    })
     try {
       const cwd =
         typeof this.#workspaceCwd === 'function'
@@ -689,6 +777,14 @@ export class SessionOrchestrator {
         resumed: true,
       })
       const response = this.getSession(record)
+      this.#store.appendAudit({
+        ...scope,
+        actor: 'system',
+        action: 'recovery.completed',
+        outcome: 'success',
+        idempotencyKey: `recovery:${key}:completed`,
+        metadata: { toState: 'active' },
+      })
       this.#store.completeIdempotencyKey({
         ...scope,
         scope: keyScope,
@@ -709,6 +805,17 @@ export class SessionOrchestrator {
         key,
         status: 'failed',
         response: failure,
+      })
+      this.#store.appendAudit({
+        ...scope,
+        actor: 'system',
+        action: 'recovery.failed',
+        outcome: 'failure',
+        idempotencyKey: `recovery:${key}:failed`,
+        metadata: {
+          recoveryCode: failure.code,
+          toState: failure.permanent ? 'recovery_required' : 'recovering',
+        },
       })
       throw new OrchestrationError(
         failure.code,
@@ -1187,6 +1294,14 @@ export class SessionOrchestrator {
         codexTurnId: upstream.turn.id,
         idempotencyKey,
       })
+      this.#store.appendAudit({
+        ...scope,
+        actor: 'system',
+        action: 'turn.started',
+        outcome: 'success',
+        idempotencyKey: `turn:${upstream.turn.id}:started`,
+        metadata: { status: 'accepted' },
+      })
       if (before)
         this.#store.bindGitSnapshotTurn(
           scope,
@@ -1208,6 +1323,14 @@ export class SessionOrchestrator {
     } catch (error) {
       this.#activeTurns.delete(this.#activeTurnKey(scope))
       const failure = errorPayload(error)
+      this.#store.appendAudit({
+        ...scope,
+        actor: 'system',
+        action: 'turn.failed',
+        outcome: 'failure',
+        idempotencyKey: `turn:${idempotencyKey}:failed`,
+        metadata: { reasonCode: failure.code, turnOutcome: 'start_failed' },
+      })
       this.#store.completeIdempotencyKey({
         ...scope,
         scope: keyScope,

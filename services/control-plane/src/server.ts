@@ -3,6 +3,7 @@ import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import {
   artifactDownloadTokenSchema,
   artifactMetadataSchema,
+  auditListResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
 import { randomBytes } from 'node:crypto'
 import cors from '@fastify/cors'
@@ -25,6 +26,7 @@ import {
   sessionListResponseSchema,
   gitSnapshotSchema,
   gitSnapshotListResponseSchema,
+  metricsResponseSchema,
   serverMessageSchema,
   type ServerMessage,
   type SubscribeMessage,
@@ -50,6 +52,7 @@ import {
   OrchestrationError,
   SessionOrchestrator,
 } from './session-orchestrator'
+import { BoundedMetricRecorder, metricRoute } from './metrics'
 
 interface RealtimeSocket {
   send(data: string): void
@@ -85,6 +88,8 @@ export interface ControlPlaneOptions {
     status: 'ready' | 'failed'
     code: string | null
   }>
+  metricRecorder?: BoundedMetricRecorder
+  now?: () => Date
 }
 
 interface SubscriptionState extends StoreScope {
@@ -165,6 +170,29 @@ function decodeSessionCursor(value: string | undefined) {
 
 function encodeSessionCursor(value: { updatedAt: string; sessionId: string }) {
   return Buffer.from(JSON.stringify(value)).toString('base64url')
+}
+
+function safeCorrelation(value: string | undefined): string | null {
+  return value && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : null
+}
+
+function auditContext(request: {
+  id: string
+  headers: Record<string, string | string[] | undefined>
+}) {
+  const traceparent = headerValue(request.headers.traceparent)
+  const traceId = traceparent?.match(
+    /^00-([a-f0-9]{32})-[a-f0-9]{16}-[a-f0-9]{2}$/,
+  )?.[1]
+  return {
+    correlationId: safeCorrelation(
+      headerValue(request.headers['x-correlation-id']),
+    ),
+    requestId:
+      safeCorrelation(headerValue(request.headers['x-request-id'])) ??
+      safeCorrelation(request.id),
+    traceId: traceId ?? null,
+  }
 }
 
 export class BoundedRealtimeSender {
@@ -299,6 +327,9 @@ function sameScope(left: StoreScope, right: StoreScope): boolean {
 
 export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const app = Fastify({ logger: options.logger ?? false })
+  const now = options.now ?? (() => new Date())
+  const metrics = options.metricRecorder ?? new BoundedMetricRecorder({ now })
+  const turnStartedAt = new Map<string, number>()
   const store = options.eventStore ?? new SqliteEventStore(options.databasePath)
   const ownsStore = options.eventStore === undefined
   const artifacts = new LocalArtifactStorage(
@@ -366,6 +397,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       )
     },
     onRecoveryError: (failure) => {
+      store.appendAudit({
+        ...failure,
+        actor: 'system',
+        action: 'recovery.failed',
+        outcome: 'failure',
+        idempotencyKey: `auto-recovery:${failure.sessionId}:${failure.code}`,
+        metadata: { recoveryCode: failure.code },
+      })
       app.log.warn(
         {
           tenantId: failure.tenantId,
@@ -376,10 +415,164 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         'automatic session recovery failed',
       )
     },
+    onRuntimeHealth: (health) => {
+      if (health.state === 'restarting') {
+        store.appendAudit({
+          ...health,
+          sessionId: null,
+          actor: 'runtime',
+          action: 'runtime.restarted',
+          outcome: 'requested',
+          idempotencyKey: `runtime:${health.processGeneration}:${health.restartAttempt}:restarting`,
+          metadata: {
+            runtimeState: health.state,
+            processGeneration: health.processGeneration,
+          },
+        })
+      }
+      if (health.state === 'ready' && health.restartAttempt > 0) {
+        store.appendAudit({
+          ...health,
+          sessionId: null,
+          actor: 'runtime',
+          action: 'runtime.restarted',
+          outcome: 'success',
+          idempotencyKey: `runtime:${health.processGeneration}:${health.restartAttempt}:ready`,
+          metadata: {
+            runtimeState: health.state,
+            processGeneration: health.processGeneration,
+          },
+        })
+        metrics.record('app_server_restarts_total', 1, { outcome: 'ready' })
+      }
+      if (health.state === 'failed') {
+        store.appendAudit({
+          ...health,
+          sessionId: null,
+          actor: 'runtime',
+          action: 'runtime.crash_loop',
+          outcome: 'failure',
+          idempotencyKey: `runtime:${health.processGeneration}:${health.restartAttempt}:failed`,
+          metadata: {
+            runtimeState: health.state,
+            processGeneration: health.processGeneration,
+          },
+        })
+        metrics.record('app_server_restarts_total', 1, {
+          outcome: 'crash_loop',
+        })
+      }
+      if (['ready', 'restarting', 'failed', 'stopped'].includes(health.state))
+        metrics.record('runtime_health', health.state === 'ready' ? 1 : 0, {
+          state: health.state as 'ready' | 'restarting' | 'failed' | 'stopped',
+        })
+    },
+    onAuthTransition: (auth) => {
+      store.appendAudit({
+        ...auth,
+        sessionId: null,
+        actor: 'system',
+        action: 'auth.state_changed',
+        outcome:
+          auth.toState === 'failed' || auth.toState === 'required'
+            ? 'failure'
+            : 'success',
+        idempotencyKey: `auth:${auth.fromState}:${auth.toState}:${now().toISOString()}`,
+        metadata: {
+          fromState: auth.fromState,
+          toState: auth.toState,
+          authState: auth.toState,
+        },
+      })
+    },
   })
 
   await app.register(cors, { origin: true })
   await app.register(websocket)
+
+  app.addHook('onRequest', async (request) => {
+    ;(request as typeof request & { wp11StartedAt?: number }).wp11StartedAt =
+      performance.now()
+  })
+  app.addHook('onResponse', async (request, reply) => {
+    const started =
+      (request as typeof request & { wp11StartedAt?: number }).wp11StartedAt ??
+      performance.now()
+    const route = metricRoute(request.url.split('?')[0]!)
+    const method =
+      request.method === 'GET' || request.method === 'POST'
+        ? request.method
+        : 'OTHER'
+    const status =
+      reply.statusCode >= 500 ? '5xx' : reply.statusCode >= 400 ? '4xx' : '2xx'
+    metrics.record('api_request_latency_ms', performance.now() - started, {
+      route,
+      method,
+      status,
+    })
+    if (status !== '2xx')
+      metrics.record('api_errors_total', 1, { route, code: status })
+  })
+
+  store.onCommitted((event) => {
+    if (event.type === 'approval.requested')
+      store.appendAudit({
+        ...event,
+        actor: 'runtime',
+        action: 'approval.requested',
+        outcome: 'requested',
+        idempotencyKey: `event:${event.eventId}`,
+        requestId: String(event.payload.requestId),
+        metadata: { approvalKind: event.payload.approvalKind },
+      })
+    if (event.type === 'turn.completed') {
+      const failed = !['completed', 'success'].includes(event.payload.status)
+      store.appendAudit({
+        ...event,
+        actor: 'runtime',
+        action: failed ? 'turn.failed' : 'turn.completed',
+        outcome: failed ? 'failure' : 'success',
+        idempotencyKey: `turn:${event.codexTurnId ?? event.eventId}:completed`,
+        metadata: { turnOutcome: event.payload.status },
+      })
+      if (event.codexTurnId) {
+        const key = JSON.stringify([
+          event.tenantId,
+          event.workspaceId,
+          event.codexTurnId,
+        ])
+        const started = turnStartedAt.get(key)
+        if (started !== undefined) {
+          metrics.record(
+            'turn_duration_ms',
+            Math.max(0, now().getTime() - started),
+            { outcome: failed ? 'failed' : 'completed' },
+          )
+          turnStartedAt.delete(key)
+        }
+      }
+    }
+    if (event.type === 'token.usage.updated') {
+      metrics.record('turn_token_usage_total', event.payload.last.inputTokens, {
+        kind: 'input',
+      })
+      metrics.record(
+        'turn_token_usage_total',
+        event.payload.last.outputTokens,
+        { kind: 'output' },
+      )
+      metrics.record(
+        'turn_token_usage_total',
+        event.payload.last.cachedInputTokens,
+        { kind: 'cached' },
+      )
+      metrics.record(
+        'turn_token_usage_total',
+        event.payload.last.reasoningOutputTokens,
+        { kind: 'reasoning' },
+      )
+    }
+  })
 
   app.addHook('onClose', async () => {
     await orchestrator.close()
@@ -387,6 +580,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   })
 
   app.get('/healthz', async () => ({ status: 'ok' }))
+  app.get('/metrics', async () =>
+    metricsResponseSchema.parse(metrics.snapshot()),
+  )
   app.get('/readyz', async (request, reply) => {
     const scope = workspaceScope(request.headers)
     if (!scope)
@@ -395,6 +591,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         message: 'x-tenant-id and x-workspace-id headers are required',
       })
     const preflight = options.preflightChecks ?? []
+    const preflightNames = new Set(preflight.map((check) => check.name))
+    const baseChecks = (['database', 'artifacts', 'workspace'] as const)
+      .filter((name) => !preflightNames.has(name))
+      .map((name) => ({ name, status: 'ready' as const, code: null }))
     if (
       preflight.some(
         (check) =>
@@ -404,8 +604,21 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       return reply.code(503).send(
         readinessResponseSchema.parse({
           status: 'degraded',
-          checkedAt: new Date().toISOString(),
-          checks: preflight,
+          checkedAt: now().toISOString(),
+          checks: [
+            ...preflight,
+            ...baseChecks,
+            {
+              name: 'auth',
+              status: 'failed',
+              code: 'DEPENDENCY_CHECK_BLOCKED',
+            },
+            {
+              name: 'appServer',
+              status: 'failed',
+              code: 'DEPENDENCY_CHECK_BLOCKED',
+            },
+          ],
           recovery: {
             code: null,
             instruction: null,
@@ -419,10 +632,43 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       scope,
       request.headers['x-readiness-retry'] === '1',
     )
+    const requiredChecks = [
+      ...baseChecks,
+      {
+        name: 'appServer' as const,
+        status:
+          readiness.status === 'degraded'
+            ? ('failed' as const)
+            : ('ready' as const),
+        code: readiness.status === 'degraded' ? 'APP_SERVER_NOT_READY' : null,
+      },
+    ]
+    metrics.record('runtime_health', readiness.status === 'ready' ? 1 : 0, {
+      state: readiness.status === 'degraded' ? 'failed' : 'ready',
+    })
+    metrics.record(
+      'disk_health',
+      preflight.some(
+        (check) =>
+          ['database', 'artifacts'].includes(check.name) &&
+          check.status === 'failed',
+      )
+        ? 0
+        : 1,
+      {
+        state: preflight.some(
+          (check) =>
+            ['database', 'artifacts'].includes(check.name) &&
+            check.status === 'failed',
+        )
+          ? 'failed'
+          : 'ready',
+      },
+    )
     return reply.code(readiness.status === 'ready' ? 200 : 503).send(
       readinessResponseSchema.parse({
         ...readiness,
-        checks: [...preflight, ...readiness.checks],
+        checks: [...preflight, ...requiredChecks, ...readiness.checks],
       }),
     )
   })
@@ -432,6 +678,60 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     codexVersion: '0.144.2',
     transport: 'stdio-jsonl',
   }))
+
+  app.get<{
+    Params: { sessionId: string }
+    Querystring: { cursor?: string; limit?: string }
+  }>('/v1/sessions/:sessionId/audit', async (request, reply) => {
+    const scope = requestScope(request.headers, request.params.sessionId)
+    if (!scope)
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    const limit =
+      request.query.limit === undefined ? 25 : parseLimit(request.query.limit)
+    let cursor: number | undefined
+    if (request.query.cursor) {
+      try {
+        const decoded = Buffer.from(
+          request.query.cursor,
+          'base64url',
+        ).toString()
+        if (!/^[1-9]\d*$/.test(decoded)) throw new Error('invalid')
+        cursor = Number(decoded)
+      } catch {
+        return reply
+          .code(400)
+          .send({ code: 'INVALID_CURSOR', message: 'cursor is invalid' })
+      }
+    }
+    if (!limit || limit > 100)
+      return reply.code(400).send({
+        code: 'INVALID_LIMIT',
+        message: 'limit must be between 1 and 100',
+      })
+    try {
+      store.getSession(scope)
+      const page = store.listAudit(scope, {
+        ...(cursor === undefined ? {} : { cursor }),
+        limit,
+      })
+      return auditListResponseSchema.parse({
+        records: page.records,
+        nextCursor: page.nextCursor
+          ? Buffer.from(String(page.nextCursor)).toString('base64url')
+          : null,
+        staleAfter: new Date(now().getTime() + 30_000).toISOString(),
+      })
+    } catch (error) {
+      if (error instanceof StoreNotFoundError)
+        return reply
+          .code(404)
+          .send({ code: error.code, message: error.message })
+      throw error
+    }
+  })
 
   app.get<{
     Params: { artifactId: string }
@@ -445,6 +745,32 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
     try {
       const metadata = store.getArtifact(scope, request.params.artifactId)
+      store.appendAudit({
+        ...metadata,
+        actor: 'user',
+        action: 'artifact.accessed',
+        outcome: 'success',
+        idempotencyKey: `artifact:${request.id}`,
+        ...auditContext(request),
+        metadata: {
+          artifactKind: metadata.kind,
+          operation: request.query.metadata === '1' ? 'metadata' : 'download',
+          byteBucket:
+            metadata.byteLength < 65_536
+              ? 'small'
+              : metadata.byteLength < 1_048_576
+                ? 'medium'
+                : 'large',
+        },
+      })
+      metrics.record('artifacts_total', 1, {
+        kind: metadata.kind,
+        status: 'accessed',
+      })
+      metrics.record('artifact_bytes_total', metadata.byteLength, {
+        kind: metadata.kind,
+        status: 'accessed',
+      })
       if (request.query.metadata === '1')
         return artifactMetadataSchema.parse({
           ...metadata,
@@ -529,6 +855,24 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .send({ code: 'DOWNLOAD_NOT_FOUND', message: 'Download not found' })
       try {
         const metadata = store.getArtifact(grant, grant.artifactId)
+        store.appendAudit({
+          ...metadata,
+          actor: 'user',
+          action: 'artifact.accessed',
+          outcome: 'success',
+          idempotencyKey: `artifact-grant:${request.id}`,
+          requestId: safeCorrelation(request.id),
+          metadata: {
+            artifactKind: metadata.kind,
+            operation: 'download-grant',
+            byteBucket:
+              metadata.byteLength < 65_536
+                ? 'small'
+                : metadata.byteLength < 1_048_576
+                  ? 'medium'
+                  : 'large',
+          },
+        })
         reply
           .header('content-type', 'text/plain; charset=utf-8')
           .header(
@@ -642,6 +986,25 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           status: 'completed',
           response: safe,
         })
+        store.appendAudit({
+          tenantId: safe.tenantId,
+          workspaceId: safe.workspaceId,
+          sessionId: safe.sessionId,
+          actor: 'user',
+          action: 'approval.decided',
+          outcome: 'success',
+          idempotencyKey: `approval:${safe.approvalId}:${safe.version}`,
+          ...auditContext(request),
+          metadata: {
+            approvalKind: safe.kind,
+            decision: safe.selectedDecision,
+          },
+        })
+        metrics.record(
+          'approval_wait_ms',
+          Math.max(0, now().getTime() - Date.parse(safe.requestedAt)),
+          { outcome: safe.selectedDecision! },
+        )
         return safe
       } catch (error) {
         if (error instanceof StoreConflictError)
@@ -682,7 +1045,26 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       )
     }
     try {
-      return reply.code(201).send(await orchestrator.createSession(scope))
+      const created = await orchestrator.createSession(scope)
+      store.appendAudit({
+        ...created,
+        actor: 'user',
+        action: 'session.created',
+        outcome: 'success',
+        idempotencyKey: `session:${created.sessionId}:created`,
+        ...auditContext(request),
+        metadata: { toState: created.status },
+      })
+      store.appendAudit({
+        ...created,
+        actor: 'system',
+        action: 'session.lifecycle_changed',
+        outcome: 'success',
+        idempotencyKey: `session:${created.sessionId}:active`,
+        ...auditContext(request),
+        metadata: { fromState: 'starting', toState: created.status },
+      })
+      return reply.code(201).send(created)
     } catch (error) {
       const failure =
         error instanceof OrchestrationError
@@ -808,6 +1190,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           null,
           `refresh:${idempotencyKey}`,
         )
+        store.appendAudit({
+          ...scope,
+          actor: 'user',
+          action: 'git.snapshot_refreshed',
+          outcome: 'success',
+          idempotencyKey: `git-refresh:${idempotencyKey}`,
+          ...auditContext(request),
+          metadata: { phase: 'refresh', operation: 'snapshot' },
+        })
         return gitSnapshotSchema.parse({ ...snapshot, stale: false })
       } catch (error) {
         if (error instanceof StoreNotFoundError)
@@ -838,9 +1229,28 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Idempotency-Key header is required',
         })
       try {
-        return sessionResponseSchema.parse(
+        store.appendAudit({
+          ...scope,
+          actor: 'user',
+          action: 'recovery.started',
+          outcome: 'requested',
+          idempotencyKey: `recovery:${key}:started`,
+          ...auditContext(request),
+          metadata: { operation: 'resume' },
+        })
+        const resumed = sessionResponseSchema.parse(
           await orchestrator.resumeSession(scope, key),
         )
+        store.appendAudit({
+          ...scope,
+          actor: 'system',
+          action: 'recovery.completed',
+          outcome: 'success',
+          idempotencyKey: `recovery:${key}:completed`,
+          ...auditContext(request),
+          metadata: { toState: resumed.status },
+        })
+        return resumed
       } catch (error) {
         if (error instanceof StoreNotFoundError)
           return reply
@@ -881,7 +1291,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Idempotency-Key header is required',
         })
       try {
-        return turnActionResponseSchema.parse(
+        const steered = turnActionResponseSchema.parse(
           await orchestrator.steerTurn(
             scope,
             request.params.turnId,
@@ -890,6 +1300,16 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             idempotencyKey,
           ),
         )
+        store.appendAudit({
+          ...scope,
+          actor: 'user',
+          action: 'turn.steered',
+          outcome: 'success',
+          idempotencyKey: `steer:${idempotencyKey}`,
+          ...auditContext(request),
+          metadata: { operation: 'steer' },
+        })
+        return steered
       } catch (error) {
         if (error instanceof StoreNotFoundError)
           return reply
@@ -926,13 +1346,24 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Idempotency-Key header is required',
         })
       try {
-        return turnActionResponseSchema.parse(
+        const interrupted = turnActionResponseSchema.parse(
           await orchestrator.interruptTurn(
             scope,
             request.params.turnId,
             idempotencyKey,
           ),
         )
+        store.appendAudit({
+          ...scope,
+          actor: 'user',
+          action: 'turn.interrupted',
+          outcome: 'success',
+          idempotencyKey: `interrupt:${idempotencyKey}`,
+          ...auditContext(request),
+          metadata: { operation: 'interrupt' },
+        })
+        metrics.record('turn_duration_ms', 0, { outcome: 'interrupted' })
+        return interrupted
       } catch (error) {
         if (error instanceof StoreNotFoundError)
           return reply
@@ -973,15 +1404,20 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       }
       try {
-        return reply
-          .code(202)
-          .send(
-            await orchestrator.startTurn(
-              scope,
-              body.data.prompt,
-              idempotencyKey,
-            ),
-          )
+        const accepted = await orchestrator.startTurn(
+          scope,
+          body.data.prompt,
+          idempotencyKey,
+        )
+        turnStartedAt.set(
+          JSON.stringify([
+            scope.tenantId,
+            scope.workspaceId,
+            accepted.codexTurnId,
+          ]),
+          now().getTime(),
+        )
+        return reply.code(202).send(accepted)
       } catch (error) {
         if (error instanceof StoreNotFoundError) {
           return reply
@@ -1055,6 +1491,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   })
 
   app.get('/v1/realtime', { websocket: true }, (socket) => {
+    metrics.record('realtime_reconnects_total', 1, { reason: 'client' })
     let subscription: SubscriptionState | undefined
     const outbound = senderFor(socket)
 
@@ -1159,6 +1596,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         )
         return
       }
+      metrics.record(
+        'replay_lag_events',
+        highWaterSequence - message.afterSequence,
+        { state: 'replaying' },
+      )
 
       subscription = {
         ...scope,
@@ -1203,6 +1645,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       if (!current) return
       send(socket, { type: 'subscribed', ...scope, highWaterSequence })
       current.replaying = false
+      metrics.record('replay_lag_events', 0, { state: 'connected' })
 
       const buffered = [...current.buffer]
         .filter((event) => event.sequence > highWaterSequence)

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -11,6 +12,94 @@ export interface StoreScope {
   tenantId: string
   workspaceId: string
   sessionId: string
+}
+
+export const AUDIT_ACTIONS = [
+  'session.created',
+  'session.lifecycle_changed',
+  'turn.started',
+  'turn.completed',
+  'turn.failed',
+  'approval.requested',
+  'approval.decided',
+  'auth.state_changed',
+  'runtime.restarted',
+  'runtime.crash_loop',
+  'recovery.started',
+  'recovery.completed',
+  'recovery.failed',
+  'turn.steered',
+  'turn.interrupted',
+  'git.snapshot_refreshed',
+  'artifact.accessed',
+] as const
+export type AuditAction = (typeof AUDIT_ACTIONS)[number]
+export type AuditActor = 'user' | 'system' | 'runtime'
+export type AuditOutcome = 'requested' | 'success' | 'failure'
+export interface AuditRecord {
+  auditId: number
+  tenantId: string
+  workspaceId: string
+  sessionId: string | null
+  actor: AuditActor
+  action: AuditAction
+  outcome: AuditOutcome
+  correlationId: string | null
+  requestId: string | null
+  traceId: string | null
+  metadata: Record<string, string | number | boolean | null>
+  occurredAt: string
+}
+export interface AppendAuditInput {
+  tenantId: string
+  workspaceId: string
+  sessionId?: string | null
+  actor: AuditActor
+  action: AuditAction
+  outcome: AuditOutcome
+  idempotencyKey: string
+  correlationId?: string | null
+  requestId?: string | null
+  traceId?: string | null
+  metadata?: Record<string, string | number | boolean | null>
+  occurredAt?: string
+}
+export interface AuditPage {
+  records: AuditRecord[]
+  nextCursor: number | null
+}
+export interface AuditRetentionPolicy {
+  maxAgeMs: number
+  maxRecords: number
+  maxMetadataBytes: number
+}
+export const DEFAULT_AUDIT_RETENTION: AuditRetentionPolicy = {
+  maxAgeMs: 30 * 24 * 60 * 60 * 1_000,
+  maxRecords: 10_000,
+  maxMetadataBytes: 8 * 1024 * 1024,
+}
+const AUDIT_METADATA_KEYS = new Set([
+  'fromState',
+  'toState',
+  'turnOutcome',
+  'approvalKind',
+  'decision',
+  'authState',
+  'runtimeState',
+  'processGeneration',
+  'recoveryCode',
+  'operation',
+  'phase',
+  'artifactKind',
+  'byteBucket',
+  'status',
+  'reasonCode',
+])
+const SAFE_AUDIT_IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/
+const SENSITIVE_AUDIT_VALUE =
+  /(?:bearer\s|\b(?:sk|sess)-[A-Za-z0-9_-]+|\/(?:Users|home|proc|sys)\/|\.\.|[\r\n])/i
+function auditStorageKey(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }
 export interface ArtifactRecord extends StoreScope {
   artifactId: string
@@ -254,6 +343,20 @@ interface ApprovalRow {
   version: number
   upstream_response_status: ApprovalRecord['upstreamResponseStatus']
 }
+interface AuditRow {
+  audit_id: number
+  tenant_id: string
+  workspace_id: string
+  session_id: string | null
+  actor: AuditActor
+  action: AuditAction
+  outcome: AuditOutcome
+  correlation_id: string | null
+  request_id: string | null
+  trace_id: string | null
+  metadata_json: string
+  occurred_at: string
+}
 
 type CommitListener = (event: TimelineEvent) => void
 type ApprovalListener = (approval: ApprovalRecord) => void
@@ -324,16 +427,44 @@ function approvalFromRow(row: ApprovalRow): ApprovalRecord {
   }
 }
 
+function auditFromRow(row: AuditRow): AuditRecord {
+  return {
+    auditId: row.audit_id,
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    actor: row.actor,
+    action: row.action,
+    outcome: row.outcome,
+    correlationId: row.correlation_id,
+    requestId: row.request_id,
+    traceId: row.trace_id,
+    metadata: JSON.parse(row.metadata_json),
+    occurredAt: row.occurred_at,
+  }
+}
+
 export class SqliteEventStore {
   readonly #database: DatabaseSync
   readonly #listeners = new Set<CommitListener>()
   readonly #approvalListeners = new Set<ApprovalListener>()
   readonly #now: () => Date
+  readonly #auditRetention: AuditRetentionPolicy
   #closed = false
 
-  constructor(path = ':memory:', options: { now?: () => Date } = {}) {
+  constructor(
+    path = ':memory:',
+    options: {
+      now?: () => Date
+      auditRetention?: Partial<AuditRetentionPolicy>
+    } = {},
+  ) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
     this.#now = options.now ?? (() => new Date())
+    this.#auditRetention = {
+      ...DEFAULT_AUDIT_RETENTION,
+      ...options.auditRetention,
+    }
     this.#database = new DatabaseSync(path)
     this.#database.exec(`
       PRAGMA journal_mode = WAL;
@@ -359,6 +490,186 @@ export class SqliteEventStore {
 
   #timestamp(): string {
     return this.#now().toISOString()
+  }
+
+  appendAudit(input: AppendAuditInput): AuditRecord {
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      this.#insertAudit(input, timestamp)
+      this.#pruneAudit(timestamp)
+      const row = this.#findAudit(input)
+      if (!row)
+        throw new StoreError(
+          'AUDIT_RETENTION_CONFLICT',
+          'Audit record exceeds retention capacity',
+        )
+      this.#database.exec('COMMIT')
+      return auditFromRow(row)
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  #insertAudit(input: AppendAuditInput, timestamp: string): void {
+    assertIdentifier(input.tenantId, 'tenantId')
+    assertIdentifier(input.workspaceId, 'workspaceId')
+    assertIdentifier(input.idempotencyKey, 'idempotencyKey')
+    for (const [name, value] of [
+      ['correlationId', input.correlationId],
+      ['requestId', input.requestId],
+      ['traceId', input.traceId],
+    ] as const)
+      if (
+        value !== undefined &&
+        value !== null &&
+        (!SAFE_AUDIT_IDENTIFIER.test(value) ||
+          SENSITIVE_AUDIT_VALUE.test(value))
+      )
+        throw new StoreError(
+          'AUDIT_IDENTIFIER_REJECTED',
+          `${name} is not a safe audit identifier`,
+        )
+    const metadata = input.metadata ?? {}
+    for (const [key, value] of Object.entries(metadata)) {
+      if (!AUDIT_METADATA_KEYS.has(key))
+        throw new StoreError(
+          'AUDIT_METADATA_REJECTED',
+          `Audit metadata key is not allowed: ${key}`,
+        )
+      if (typeof value === 'string' && value.length > 128)
+        throw new StoreError(
+          'AUDIT_METADATA_REJECTED',
+          `Audit metadata value is too long: ${key}`,
+        )
+      if (typeof value === 'string' && SENSITIVE_AUDIT_VALUE.test(value))
+        throw new StoreError(
+          'AUDIT_METADATA_REJECTED',
+          `Audit metadata value is sensitive: ${key}`,
+        )
+    }
+    const metadataJson = JSON.stringify(metadata)
+    const metadataBytes = Buffer.byteLength(metadataJson)
+    if (metadataBytes > 2_048)
+      throw new StoreError(
+        'AUDIT_METADATA_REJECTED',
+        'Audit metadata exceeds 2048 bytes',
+      )
+    const occurredAt = input.occurredAt ?? timestamp
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO audit_records (
+          tenant_id, workspace_id, session_id, actor, action, outcome,
+          correlation_id, request_id, trace_id, idempotency_key,
+          metadata_json, metadata_bytes, occurred_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId ?? null,
+        input.actor,
+        input.action,
+        input.outcome,
+        input.correlationId ?? null,
+        input.requestId ?? null,
+        input.traceId ?? null,
+        auditStorageKey(input.idempotencyKey),
+        metadataJson,
+        metadataBytes,
+        occurredAt,
+        timestamp,
+      )
+  }
+
+  #findAudit(
+    input: Pick<
+      AppendAuditInput,
+      'tenantId' | 'workspaceId' | 'idempotencyKey'
+    >,
+  ): AuditRow | undefined {
+    return this.#database
+      .prepare(
+        `SELECT * FROM audit_records WHERE tenant_id=? AND workspace_id=? AND idempotency_key=?`,
+      )
+      .get(
+        input.tenantId,
+        input.workspaceId,
+        auditStorageKey(input.idempotencyKey),
+      ) as unknown as AuditRow | undefined
+  }
+
+  #pruneAudit(timestamp: string): void {
+    const cutoff = new Date(
+      new Date(timestamp).getTime() - this.#auditRetention.maxAgeMs,
+    ).toISOString()
+    this.#database
+      .prepare(`DELETE FROM audit_records WHERE created_at < ?`)
+      .run(cutoff)
+    this.#database
+      .prepare(
+        `DELETE FROM audit_records WHERE audit_id IN (
+        SELECT audit_id FROM audit_records ORDER BY audit_id DESC LIMIT -1 OFFSET ?
+      )`,
+      )
+      .run(this.#auditRetention.maxRecords)
+    const total = this.#database
+      .prepare(
+        `SELECT COALESCE(SUM(metadata_bytes),0) AS total FROM audit_records`,
+      )
+      .get() as { total: number }
+    if (total.total > this.#auditRetention.maxMetadataBytes) {
+      let remaining = total.total
+      const rows = this.#database
+        .prepare(
+          `SELECT audit_id, metadata_bytes FROM audit_records ORDER BY audit_id`,
+        )
+        .all() as unknown as Array<{ audit_id: number; metadata_bytes: number }>
+      for (const row of rows) {
+        if (remaining <= this.#auditRetention.maxMetadataBytes) break
+        this.#database
+          .prepare(`DELETE FROM audit_records WHERE audit_id=?`)
+          .run(row.audit_id)
+        remaining -= row.metadata_bytes
+      }
+    }
+  }
+
+  listAudit(
+    scope: StoreScope,
+    options: { cursor?: number; limit?: number } = {},
+  ): AuditPage {
+    assertScope(scope)
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 100)
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM audit_records
+       WHERE tenant_id=? AND workspace_id=? AND session_id=? AND audit_id < ?
+       ORDER BY audit_id DESC LIMIT ?`,
+      )
+      .all(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        options.cursor ?? Number.MAX_SAFE_INTEGER,
+        limit + 1,
+      ) as unknown as AuditRow[]
+    const hasMore = rows.length > limit
+    const page = rows.slice(0, limit)
+    return {
+      records: page.map(auditFromRow),
+      nextCursor: hasMore ? page.at(-1)!.audit_id : null,
+    }
+  }
+
+  getAuditStats(): { records: number; metadataBytes: number } {
+    const row = this.#database
+      .prepare(
+        `SELECT COUNT(*) AS records, COALESCE(SUM(metadata_bytes),0) AS metadataBytes FROM audit_records`,
+      )
+      .get() as { records: number; metadataBytes: number }
+    return row
   }
 
   createSession(input: CreateSessionInput): SessionRecord {
@@ -938,6 +1249,52 @@ export class SqliteEventStore {
             JSON.stringify(approval.availableDecisions),
             approval.requestedAt,
           )
+        this.#insertAudit(
+          {
+            ...input,
+            actor: 'runtime',
+            action: 'approval.requested',
+            outcome: 'requested',
+            idempotencyKey: `event:${committedEvent.eventId}`,
+            requestId: String(approval.requestId),
+            metadata: {
+              approvalKind:
+                approval.kind === 'command_execution' ? 'command' : 'file',
+            },
+            occurredAt: committedEvent.occurredAt,
+          },
+          timestamp,
+        )
+      }
+      if (committedEvent.type === 'turn.started')
+        this.#insertAudit(
+          {
+            ...input,
+            actor: 'runtime',
+            action: 'turn.started',
+            outcome: 'success',
+            idempotencyKey: `turn:${committedEvent.codexTurnId ?? committedEvent.eventId}:started`,
+            metadata: { status: committedEvent.payload.status },
+            occurredAt: committedEvent.occurredAt,
+          },
+          timestamp,
+        )
+      if (committedEvent.type === 'turn.completed') {
+        const failed = !['completed', 'success'].includes(
+          committedEvent.payload.status,
+        )
+        this.#insertAudit(
+          {
+            ...input,
+            actor: 'runtime',
+            action: failed ? 'turn.failed' : 'turn.completed',
+            outcome: failed ? 'failure' : 'success',
+            idempotencyKey: `turn:${committedEvent.codexTurnId ?? committedEvent.eventId}:completed`,
+            metadata: { turnOutcome: committedEvent.payload.status },
+            occurredAt: committedEvent.occurredAt,
+          },
+          timestamp,
+        )
       }
       this.#database.exec('COMMIT')
     } catch (error) {

@@ -11,11 +11,13 @@ import {
   sessionListResponseSchema,
   gitSnapshotListResponseSchema,
   gitSnapshotSchema,
+  auditListResponseSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
   type ReadinessResponse,
   type GitSnapshot,
+  type AuditRecord,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
@@ -94,6 +96,82 @@ async function readGitSnapshots(sessionId: string) {
   )
   if (!response.ok) throw await apiError(response)
   return gitSnapshotListResponseSchema.parse(await response.json())
+}
+
+async function readAudit(sessionId: string, cursor: string | null) {
+  const query = new URLSearchParams({ limit: '10' })
+  if (cursor) query.set('cursor', cursor)
+  const response = await fetch(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/audit?${query}`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return auditListResponseSchema.parse(await response.json())
+}
+
+function AuditPanel({
+  records,
+  pending,
+  fetchingMore,
+  hasMore,
+  stale,
+  error,
+  onMore,
+}: {
+  records: AuditRecord[]
+  pending: boolean
+  fetchingMore: boolean
+  hasMore: boolean
+  stale: boolean
+  error?: string
+  onMore(): void
+}) {
+  return (
+    <section
+      className="audit-panel"
+      aria-labelledby="audit-title"
+      aria-busy={pending}
+    >
+      <div className="audit-heading">
+        <div>
+          <p className="section-label">Durable audit</p>
+          <h2 id="audit-title">Session eylem zinciri</h2>
+        </div>
+        {stale ? <span className="audit-stale">stale</span> : null}
+      </div>
+      {pending ? <p className="audit-state">Audit yükleniyor…</p> : null}
+      {error ? (
+        <p className="form-error" role="alert">
+          Audit alınamadı: {error}
+        </p>
+      ) : null}
+      {!pending && !error && !records.length ? (
+        <p className="audit-state">Henüz audit kaydı yok.</p>
+      ) : null}
+      {records.length ? (
+        <ol className="audit-list">
+          {records.map((record) => (
+            <li key={record.auditId}>
+              <span className={`audit-outcome outcome-${record.outcome}`}>
+                {record.outcome}
+              </span>
+              <strong>{record.action}</strong>
+              <span>{record.actor}</span>
+              <time dateTime={record.occurredAt}>
+                {new Date(record.occurredAt).toLocaleString('tr-TR')}
+              </time>
+              <code>{record.correlationId ?? 'correlation yok'}</code>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {hasMore ? (
+        <button type="button" disabled={fetchingMore} onClick={onMore}>
+          {fetchingMore ? 'Yükleniyor…' : 'Daha eski audit kayıtları'}
+        </button>
+      ) : null}
+    </section>
+  )
 }
 
 async function downloadArtifact(artifactId: string) {
@@ -568,6 +646,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryKey: ['git-snapshots', sessionId],
     queryFn: () => readGitSnapshots(sessionId!),
     enabled: Boolean(sessionId),
+  })
+  const audit = useInfiniteQuery({
+    queryKey: ['session-audit', sessionId],
+    queryFn: ({ pageParam }) => readAudit(sessionId!, pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled: Boolean(sessionId),
+    staleTime: 30_000,
   })
   const [session, setSession] = useState<SessionResponse>()
   const [events, setEvents] = useState<Map<string, TimelineEvent>>(new Map())
@@ -1062,20 +1148,33 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             ) : null}
           </section>
           {session ? (
-            <GitPanel
-              {...(gitSnapshots.data?.snapshots[0]
-                ? { snapshot: gitSnapshots.data.snapshots[0] }
-                : {})}
-              pending={
-                gitRefreshPending ||
-                gitSnapshots.isPending ||
-                gitSnapshots.isFetching
-              }
-              {...(gitError || gitSnapshots.error
-                ? { error: gitError ?? gitSnapshots.error!.message }
-                : {})}
-              onRefresh={() => void refreshGit()}
-            />
+            <>
+              <AuditPanel
+                records={
+                  audit.data?.pages.flatMap((page) => page.records) ?? []
+                }
+                pending={audit.isPending}
+                fetchingMore={audit.isFetchingNextPage}
+                hasMore={Boolean(audit.hasNextPage)}
+                stale={audit.isStale}
+                {...(audit.error ? { error: audit.error.message } : {})}
+                onMore={() => void audit.fetchNextPage()}
+              />
+              <GitPanel
+                {...(gitSnapshots.data?.snapshots[0]
+                  ? { snapshot: gitSnapshots.data.snapshots[0] }
+                  : {})}
+                pending={
+                  gitRefreshPending ||
+                  gitSnapshots.isPending ||
+                  gitSnapshots.isFetching
+                }
+                {...(gitError || gitSnapshots.error
+                  ? { error: gitError ?? gitSnapshots.error!.message }
+                  : {})}
+                onRefresh={() => void refreshGit()}
+              />
+            </>
           ) : null}
           <div className="timeline-heading">
             <div>

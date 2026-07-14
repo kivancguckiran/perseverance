@@ -234,6 +234,90 @@ h2 {
   background: #0c1613;
 }
 
+.audit-panel {
+  min-width: 0;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid #294038;
+  border-radius: 14px;
+  background: #0c1613;
+}
+
+.audit-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.audit-stale,
+.audit-outcome {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #f2bf7c;
+  background: #2a2115;
+  font:
+    0.65rem ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.audit-list {
+  display: grid;
+  gap: 7px;
+  margin: 14px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.audit-list li {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(130px, 1fr) auto auto minmax(110px, auto);
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0;
+  border-bottom: 1px solid #1b2824;
+  color: #91a49c;
+  font-size: 0.7rem;
+}
+
+.audit-list strong,
+.audit-list code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-list strong {
+  color: #c8d6d1;
+}
+.audit-list code {
+  color: #70d7ae;
+}
+.audit-outcome.outcome-success {
+  color: #70d7ae;
+  background: #142a22;
+}
+.audit-outcome.outcome-failure {
+  color: #f3a6a6;
+  background: #2a1717;
+}
+.audit-state {
+  margin: 14px 0 0;
+  color: #8fa39b;
+  font-size: 0.76rem;
+}
+.audit-panel button {
+  padding: 8px 11px;
+  border: 1px solid #315245;
+  border-radius: 8px;
+  color: #bdebd8;
+  background: #142a22;
+}
+
 .git-panel-heading,
 .git-summary,
 .git-change-list li,
@@ -646,5 +730,12 @@ h2 {
   .git-panel-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+  .audit-list li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .audit-list time,
+  .audit-list code {
+    grid-column: 2 / -1;
   }
 }

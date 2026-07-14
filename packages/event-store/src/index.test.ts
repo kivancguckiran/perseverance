@@ -131,6 +131,11 @@ describe('SqliteEventStore atomic ingest', () => {
       })
       expect(store.ingest(input).duplicate).toBe(true)
       expect(store.listApprovals(scope, 'pending')).toHaveLength(1)
+      expect(
+        store
+          .listAudit(scope)
+          .records.filter((record) => record.action === 'approval.requested'),
+      ).toHaveLength(1)
       const winner = store.beginApprovalResolution({
         ...scope,
         approvalId: 'apr_1',
@@ -470,7 +475,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 5,
+        user_version: 6,
       })
       database.close()
     } finally {
@@ -625,6 +630,103 @@ describe('SqliteEventStore idempotency keys', () => {
     } finally {
       reopened.close()
       rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('WP11 durable audit', () => {
+  const audit = (key: string, overrides = {}) => ({
+    ...scope,
+    actor: 'system' as const,
+    action: 'session.lifecycle_changed' as const,
+    outcome: 'success' as const,
+    idempotencyKey: key,
+    metadata: { fromState: 'starting', toState: 'active' },
+    ...overrides,
+  })
+
+  it('is idempotent, scoped, cursor-paginated, and rejects unsafe metadata', () => {
+    withStore((store) => {
+      store.createSession({ ...scope, sessionId: 'ses_other' })
+      expect(store.appendAudit(audit('one')).auditId).toBe(
+        store.appendAudit(audit('one')).auditId,
+      )
+      store.appendAudit(audit('two'))
+      store.appendAudit(audit('hidden', { sessionId: 'ses_other' }))
+      const first = store.listAudit(scope, { limit: 1 })
+      expect(first.records).toHaveLength(1)
+      expect(first.nextCursor).not.toBeNull()
+      expect(
+        store.listAudit(scope, { cursor: first.nextCursor!, limit: 2 }).records,
+      ).toHaveLength(1)
+      expect(
+        store.listAudit({ ...scope, tenantId: 'ten_other' }).records,
+      ).toEqual([])
+      expect(() =>
+        store.appendAudit(
+          audit('secret', { metadata: { prompt: 'do not persist' } }),
+        ),
+      ).toThrowError(/not allowed/)
+      expect(() =>
+        store.appendAudit(
+          audit('sensitive', {
+            correlationId: 'Bearer fixture-secret',
+          }),
+        ),
+      ).toThrowError(/safe audit identifier/)
+      expect(() =>
+        store.appendAudit(
+          audit('path', {
+            metadata: { reasonCode: '/Users/example/.codex/auth.json' },
+          }),
+        ),
+      ).toThrowError(/sensitive/)
+      expect(JSON.stringify(store.listAudit(scope))).not.toContain(
+        'do not persist',
+      )
+    })
+  })
+
+  it('survives reopen and migrates schema v5 to v6', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'event-store-audit-'))
+    const path = join(directory, 'events.sqlite')
+    const first = new SqliteEventStore(path)
+    first.createSession(scope)
+    first.appendAudit(audit('durable'))
+    first.close()
+    const reopened = new SqliteEventStore(path)
+    try {
+      expect(reopened.listAudit(scope).records).toHaveLength(1)
+      const database = new DatabaseSync(path)
+      expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
+        user_version: 6,
+      })
+      database.close()
+    } finally {
+      reopened.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('enforces record and total metadata retention bounds with an injectable clock', () => {
+    let tick = 0
+    const store = new SqliteEventStore(':memory:', {
+      now: () => new Date(Date.UTC(2026, 6, 14, 0, 0, tick++)),
+      auditRetention: {
+        maxRecords: 2,
+        maxMetadataBytes: 100,
+        maxAgeMs: 60_000,
+      },
+    })
+    store.createSession(scope)
+    try {
+      store.appendAudit(audit('a'))
+      store.appendAudit(audit('b'))
+      store.appendAudit(audit('c'))
+      expect(store.getAuditStats().records).toBeLessThanOrEqual(2)
+      expect(store.getAuditStats().metadataBytes).toBeLessThanOrEqual(100)
+    } finally {
+      store.close()
     }
   })
 })

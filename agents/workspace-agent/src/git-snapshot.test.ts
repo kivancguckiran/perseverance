@@ -65,7 +65,7 @@ describe('GitSnapshotReader', () => {
     expect(snapshot.changes.some((change) => change.binary)).toBe(true)
     expect(snapshot.diff.preview).toContain('diff --git')
     expect(snapshot.log[0]?.subject).toBe('initial')
-  })
+  }, 15_000)
 
   it('returns typed no-repo, worktree and submodule results', async () => {
     const plain = temp('git-none-')

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 5
+export const CURRENT_SCHEMA_VERSION = 6
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -134,6 +134,31 @@ export const CREATE_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS git_snapshots_scope_idx
     ON git_snapshots(tenant_id, workspace_id, session_id, captured_at DESC);
+
+  CREATE TABLE IF NOT EXISTS audit_records (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    correlation_id TEXT,
+    request_id TEXT,
+    trace_id TEXT,
+    idempotency_key TEXT NOT NULL,
+    metadata_json TEXT NOT NULL CHECK(length(metadata_json) <= 2048),
+    metadata_bytes INTEGER NOT NULL CHECK(metadata_bytes >= 2 AND metadata_bytes <= 2048),
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(tenant_id, workspace_id, idempotency_key),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
+  CREATE INDEX IF NOT EXISTS audit_records_scope_cursor_idx
+    ON audit_records(tenant_id, workspace_id, session_id, audit_id DESC);
+  CREATE INDEX IF NOT EXISTS audit_records_retention_idx
+    ON audit_records(created_at, audit_id);
 `
 
 interface TableInfoRow {
