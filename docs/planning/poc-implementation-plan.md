@@ -127,7 +127,7 @@ docs/                                  Mimari kararlar ve planlar
 
 ### WP0 — Repository ve protokol temeli
 
-Durum: Düzeltme aktif
+Durum: Tamamlandı
 
 Çıktılar:
 
@@ -268,11 +268,11 @@ Bağımsız kabul denetiminde bulunan ve giderilen kök neden:
 
 ### WP5 — Approval state machine
 
-Durum: Aktif
+Durum: Tamamlandı
 
-Uygulama notu (kabul bekliyor): Approval kaydı raw+normalize ingest ile atomik yazılır; kararlar expected-version CAS ve Idempotency-Key ile korunur; response runtime instance/process generation'a bağlanır. REST, WebSocket ve responsive web kartı uygulanmıştır. Nihai kabul ayrı yönetim denetimine tabidir.
+Uygulama notu: Approval kaydı raw+normalize ingest ile atomik yazılır; kararlar expected-version CAS ve Idempotency-Key ile korunur; response runtime instance/process generation'a bağlanır. REST, WebSocket ve responsive web kartı uygulanmış ve kabul edilmiştir.
 
-Kabul düzeltmesi (yeniden denetim bekliyor): Gerçek smoke control-plane üzerinden durable pending/decision/resolved/terminal akışını ölçer. File diff context scoped event lookup ile gelir; runtime health/generation pending kayıtları proaktif expire eder; terminal approval durumları UI'da kalır. WP5 durumu nihai yönetim kabulüne kadar Aktif kalır.
+Kabul sonucu: Gerçek smoke control-plane üzerinden durable pending/decision/resolved/terminal akışını kanıtladı. File diff lookup, runtime health/generation expiry, concurrent karar, WebSocket lifecycle ve terminal approval UI bağımsız olarak doğrulandı.
 
 İşler:
 
@@ -293,7 +293,7 @@ Kabul kriterleri:
 
 ### WP6 — Resume, reconnect ve recovery
 
-Durum: Başlanmadı
+Durum: Aktif
 
 İşler:
 
@@ -452,6 +452,6 @@ Bir iş paketi ancak şu koşullarda tamamlandı sayılır:
 
 ## 14. Güncel sonraki adım
 
-Aktif iş paketi WP5'tir: server-initiated command/file approval istekleri durable pending kayda dönüştürülecek; optimistic locking ve idempotency ile tek karar uygulanacak; upstream response/reconciliation ve mobil uyumlu approval UI tamamlanacaktır.
+Aktif iş paketi WP6'dır: browser ve control-plane reconnect, kalıcı Codex thread binding, app-server restart sonrası `thread/read`/`thread/resume` ve açık recovery durumları tamamlanacaktır.
 
-WP5 kabul edilmeden WP6 veya sonraki iş paketleri aktif edilemez. Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.
+WP6 kabul edilmeden WP7 veya sonraki iş paketleri aktif edilemez. Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.

@@ -55,8 +55,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP2 — Normalize event adapter                | Tamamlandı | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
 | WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
 | WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
-| WP5 — Approval state machine                 | Aktif      | Durable pending/decision state machine, optimistic locking, upstream response ve approval UI tamamlanacak   |
-| WP6 — Resume, reconnect ve recovery          | Bekliyor   | —                                                                                                           |
+| WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
+| WP6 — Resume, reconnect ve recovery          | Aktif      | Kalıcı Codex home, thread resume, reconnect ve açık recovery davranışı tamamlanacak                         |
 | WP7 — Büyük çıktı ve timeline dayanıklılığı  | Bekliyor   | —                                                                                                           |
 | WP8 — Golden senaryolar ve PoC demosu        | Bekliyor   | —                                                                                                           |
 
@@ -214,3 +214,22 @@ Durum: **Aktif / kabul bekliyor**
 Düzeltme teslimatında gerçek smoke control-plane REST hattına taşındı; command/file context, diff lookup, runtime health/generation expiry, resolved reconciliation, WebSocket lifecycle ve terminal approval kartları eklendi. Integration matrisi command/file karar mapping'i, concurrent CAS, idempotency, isolation, lifecycle, redaction ve reconnect davranışını kapsayacak biçimde genişletildi. Gerçek smoke pending REST kaydı, karar öncesi sıfır response, decision endpoint'i sonrası tek response, durable resolved durum ve terminal turn gözlemini kanıtladı. Çalışan uygulama gerçek controlled approval ile desktop ve 390×844 görünümde doğrulandı.
 
 Bu kayıt WP5'i tamamlandı yapmaz; nihai karar yönetici yeniden denetimindedir.
+
+## WP5 nihai yeniden denetim sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Approval kaydı raw envelope ve normalize event ile aynı transaction'da durable oluşuyor; tenant/workspace scope, optimistic locking ve idempotency korunuyor.
+- Generated command ve file approval istekleri ile dört public karar mapping'i test ediliyor; concurrent iki karardan yalnız biri upstream `respond` üretiyor.
+- File approval context'i aynı session/turn/item içindeki proposal/diff event'lerinden bulunuyor; bulunamayan diff açıkça unavailable kalıyor ve hassas command context'i redakte ediliyor.
+- Runtime health kaybı, process generation değişimi ve terminal/interrupted turn pending approval'ları expire veya supersede ediyor; `serverRequest/resolved` ikinci response üretmeden reconcile ediliyor.
+- WebSocket pending→resolving→resolved/expired lifecycle'ını yayınlıyor; REST reconnect sonrası durable reconciliation sağlıyor.
+- `pnpm verify` başarılı: 5 test dosyasında 65 test geçti; bütün package typecheck'leri ve TanStack Start client/SSR build tamamlandı.
+- Gerçek Codex `0.144.2` control-plane smoke'unda durable pending kayıt, karar öncesi 0 response, REST `decline` sonrası tam 1 response, resolved kayıt ve terminal turn doğrulandı; geçici Codex home ve SQLite DB temizlendi.
+- Bağımsız browser denetiminde gerçek command approval kartı pending context ve karar butonlarıyla göründü; `Decline` sonrası resolved kart ekranda kaldı ve turn tamamlandı.
+- 390×844 görünümünde yatay taşma, console warning/error veya error overlay yoktu.
+- Uygulama commit'i: `82e1de1` (`feat: add durable approval state machine`).
+
+Aktif iş paketi WP6'dır.
