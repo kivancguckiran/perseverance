@@ -63,7 +63,8 @@ session içeriği subprocess çıktısından acceptance dosyasına kopyalanmaz. 
 Runbook'taki tek-node SQLite, lokal process, offline backup, filesystem artifact, lokal
 auth ve salt-okunur Git sınırlamaları geçerlidir. Org/user/RBAC, güçlü tenant izolasyonu,
 scheduler, KMS/Vault, egress policy, billing, production backup/DR, object storage,
-multi-region ve deployment Faz 2+ konularıdır. Bu rapor Faz 1'i tamamlandı ilan etmez.
+multi-region ve deployment Faz 2+ konularıdır. Bu sınırlamalar kabul edilmiş alfa kapsam
+sınırlarıdır; Faz 1'in tamamlanmasını engellemez.
 
 ## WP12 uygulama doğrulama kaydı
 
