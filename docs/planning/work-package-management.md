@@ -57,8 +57,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
 | WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
 | WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
-| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Aktif      | Bounded output tail, artifact spill, backpressure ve timeline sanallaştırma tamamlanacak                    |
-| WP8 — Golden senaryolar ve PoC demosu        | Bekliyor   | —                                                                                                           |
+| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
+| WP8 — Golden senaryolar ve PoC demosu        | Aktif      | Üç golden görev ve dört arıza senaryosu tekrarlanabilir PoC demosunda doğrulanacak                          |
 
 ## WP1 nihai denetim sonucu
 
@@ -373,3 +373,87 @@ Uygulama commit'leri: `86b5fa4` (`feat: add session resume and recovery`) ve
 `45e73ef` (`fix: use TanStack session route params`).
 
 Aktif iş paketi WP7'dir.
+
+## WP7 ilk kabul denetimi — uçtan uca bounded-output düzeltmesi gerekli
+
+Karar: **Eksik**
+
+Doğrulananlar:
+
+- `60c71e1` (`feat: add bounded output and timeline resilience`) commit'i mevcut ve
+  denetim başlangıcında çalışma ağacı temizdi.
+- ADR-0007, shared artifact/event/realtime sözleşmeleri, schema v4 artifact tablosu,
+  filesystem-backed storage, scoped metadata/download route'u, 64 KiB preview tail,
+  2.000 event UI penceresi ve TanStack virtualizer uygulama adayı mevcut.
+- Artifact storage testi 100 MiB veriyi 64 KiB chunk'larla yazarak bounded tail,
+  byte count, SHA-256, duplicate chunk ve basit secret redaction davranışını doğruluyor.
+- `pnpm verify` kapsamındaki format, typecheck, 8 test dosyasında 84 test ve production
+  build geçti. Localhost izniyle ayrıca çalıştırılan SSR HTTP smoke'u iki route için
+  başarılı oldu.
+
+Kalan kabul engelleri:
+
+- 100 MiB doğrulaması yalnız `LocalArtifactStorage` katmanını çalıştırıyor; gerçek
+  adapter → orchestrator → event store → artifact API → realtime → browser hattını
+  kanıtlayan controlled smoke yok.
+- Adapter tek bir upstream delta 64 KiB'ı aştığında yalnız son tail'i event'e koyuyor;
+  orchestrator artifact'e bu kesilmiş `event.payload.text` değerini append ediyor.
+  Deltası olmayan büyük completed snapshot'ta da yalnız preview tail yazılıyor. Bu iki
+  durumda tam artifact eksik, total byte/checksum semantiği hatalıdır.
+- Redaction streaming değildir; chunk sınırına bölünen credential kaçabilir. Ayrıca raw
+  envelope redaction hook'u credential içeren string'in tamamını `[REDACTED]` yaparak
+  secret dışındaki çıktıyı da kaybediyor. Uçtan uca tam redakte çıktı kanıtlanmamıştır.
+- Artifact download sunucuda `readFileSync`, web istemcisinde `response.blob()` kullanıp
+  tam dosyayı belleğe alıyor. Büyük artifact için bounded server/browser bellek ve
+  streaming/range kabulü karşılanmıyor.
+- Realtime limitleri yalnız replay/live sınırındaki geçici buffer'a uygulanıyor. Canlı
+  `socket.send` hattında outbound queue, `bufferedAmount`/drain kontrolü veya slow-consumer
+  politikası yok; `slow_consumer` durumu üretilemiyor ve test edilmemiş.
+- Browser event Map'i 2.000 kayıtla sınırlı olsa da 1.600 × 64 KiB delta yaklaşık tam
+  100 MiB metni bellekte tutabiliyor. Command deltaları state içinde coalesce edilmediği
+  için 100 MiB browser kabulü kanıtlanmıyor.
+- Schema v4 `artifacts` tablosu için persistence API/call bulunmuyor; metadata yalnız
+  filesystem JSON'unda kalıyor. v3→v4 metadata migration/reopen testi yok.
+- Artifact API metadata/range/header/isolation, orchestrator spill/dedupe/completed,
+  crash/finalize recovery, gerçek orphan cleanup, symlink escape, slow consumer/resync,
+  UI bounded tail/artifact/virtualization testleri eklenmemiş. Browser doğrulama kanıtı
+  da teslimatta bulunmuyor.
+
+WP7 aktif kalır; WP8'e geçilemez.
+
+## WP7 nihai yeniden denetim sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- `e450689` (`fix: complete WP7 bounded output pipeline`) düzeltme commit'i mevcut;
+  önceki kabul engellerini adapter, orchestrator, event store, artifact storage,
+  realtime sender ve web state katmanlarında birlikte kapatıyor.
+- Kontrollü 100 MiB delta akışı adapter → orchestrator → SQLite artifact metadata →
+  filesystem artifact hattından geçiyor; ayrıca deltası olmayan 100 MiB completed
+  snapshot tam çıktı, byte count ve SHA-256 ile ayrı regresyon testine sahip.
+- Command preview 64 KiB ile sınırlı; raw büyük çıktı transient spill alanıyla raw/event
+  satırlarına inline yazılmadan streaming redaction ve 64 KiB storage chunk'larıyla
+  artifact'e aktarılıyor. Chunk sınırına bölünen bearer, `sk-`, `sess-` ve structured
+  credential örnekleri sızıntısız doğrulandı.
+- Artifact metadata tenant/workspace scope'uyla SQLite'da kalıcı; startup reconciliation,
+  `recovery_required`, reopen, range response, opaque tek kullanımlık download grant,
+  symlink/traversal reddi ve stream download testleri mevcut.
+- Canlı WebSocket outbound kuyruğu event/byte sınırına ve `bufferedAmount` kontrolüne
+  sahip; yavaş tüketici tek typed `resync` mesajıyla durable cursor'dan toparlanıyor.
+- Browser command delta state'i item başına coalesce edilerek 1.600 × 64 KiB girişte
+  tek 64 KiB tail olarak kalıyor; uzun timeline sanallaştırılıyor ve sona git kontrolü
+  erişilebilir.
+- `pnpm verify` kapsamındaki format, bütün package typecheck'leri, 9 test dosyasında
+  94 test ve production build geçti. Sandbox dışında SSR HTTP smoke'u `/` ile
+  `/sessions/:sessionId` için başarılı oldu.
+- Bağımsız browser denetiminde control plane bağlantısı desktop 1280×720 ve mobil
+  390×844 görünümünde kuruldu; yatay taşma, console warning/error veya Vite overlay
+  oluşmadı. Geçici dev süreçleri ve browser tab'ları kapatıldı.
+
+Uygulama commit'leri: `60c71e1` (`feat: add bounded output and timeline resilience`) ve
+`e450689` (`fix: complete WP7 bounded output pipeline`).
+
+Aktif iş paketi WP8'dir. WP8 tamamlanmadan yeni bir iş paketi açılamaz; mevcut Faz 0
+planında WP9 tanımlı değildir.

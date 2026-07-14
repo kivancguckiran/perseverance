@@ -314,7 +314,7 @@ Kabul kriterleri:
 
 ### WP7 — Büyük çıktı ve timeline dayanıklılığı
 
-Durum: Aktif
+Durum: Tamamlandı
 
 İşler:
 
@@ -333,7 +333,7 @@ Kabul kriterleri:
 
 ### WP8 — Golden senaryolar ve PoC demosu
 
-Durum: Başlanmadı
+Durum: Aktif
 
 Golden görevler:
 
@@ -454,9 +454,9 @@ Bir iş paketi ancak şu koşullarda tamamlandı sayılır:
 
 ## 14. Güncel sonraki adım
 
-Aktif iş paketi WP7'dir (kabul bekliyor): büyük command output ingest hattı bounded tutulacak, tam
-redakte çıktı artifact storage'a spill edilecek ve uzun timeline backpressure ile
-sanallaştırma kullanacaktır.
+Aktif iş paketi WP8'dir: üç golden görev ve reconnect, app-server restart, unknown event
+replay ile concurrent approval arıza senaryoları gerçek web timeline'ında yürütülecek;
+temiz kurulumdan tekrarlanabilir demo ve kanıt paketi hazırlanacaktır.
 
-WP7 kabul edilmeden WP8 aktif edilemez. Güncel denetim
-`docs/planning/work-package-management.md` içinde tutulur.
+WP8 tamamlanmadan yeni bir iş paketi açılamaz. Faz 0 planında WP9 tanımlı değildir.
+Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.

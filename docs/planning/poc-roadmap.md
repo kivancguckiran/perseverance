@@ -14,16 +14,17 @@ PoC'nin kabul edilmiş teknoloji yığını ve repository sınırları için `do
 
 ## Uygulama durumu — 14 Temmuz 2026
 
-| Paket                      | Durum                  | Kanıt                                                                                                                                                      |
-| -------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P0 Repository ve sözleşme  | Tamamlandı             | pnpm/TypeScript monorepo, Codex 0.144.2 pini, generated TS + JSON Schema ve schema hash                                                                    |
-| P1 Workspace Agent köprüsü | Tamamlandı             | Typed process/protocol/timeout hataları, health state, restart/backoff, crash-loop limiti, fake server lifecycle testleri ve gerçek app-server smoke testi |
-| P2 Normalize event adapter | Tamamlandı             | Tüm hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve on golden fixture doğrulandı                                              |
-| P3 Session ve replay       | Tamamlandı             | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
-| P4 Thread, turn ve web     | Tamamlandı             | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
-| P5 Approval                | Tamamlandı             | Durable state machine, concurrent karar, gerçek control-plane smoke ve responsive approval UI doğrulandı                                                   |
-| P6 Resume ve arıza         | Tamamlandı             | Persistent home, aynı-thread restart/resume, recovery modeli ve adreslenebilir session route doğrulandı                                                    |
-| P7 Büyük çıktı             | Aktif / kabul bekliyor | Bounded live tail, redakte artifact spill, backpressure ve timeline sanallaştırma uygulama adayı doğrulanıyor                                              |
+| Paket                      | Durum      | Kanıt                                                                                                                                                      |
+| -------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 Repository ve sözleşme  | Tamamlandı | pnpm/TypeScript monorepo, Codex 0.144.2 pini, generated TS + JSON Schema ve schema hash                                                                    |
+| P1 Workspace Agent köprüsü | Tamamlandı | Typed process/protocol/timeout hataları, health state, restart/backoff, crash-loop limiti, fake server lifecycle testleri ve gerçek app-server smoke testi |
+| P2 Normalize event adapter | Tamamlandı | Tüm hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve on golden fixture doğrulandı                                              |
+| P3 Session ve replay       | Tamamlandı | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
+| P4 Thread, turn ve web     | Tamamlandı | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
+| P5 Approval                | Tamamlandı | Durable state machine, concurrent karar, gerçek control-plane smoke ve responsive approval UI doğrulandı                                                   |
+| P6 Resume ve arıza         | Tamamlandı | Persistent home, aynı-thread restart/resume, recovery modeli ve adreslenebilir session route doğrulandı                                                    |
+| P7 Büyük çıktı             | Tamamlandı | Uçtan uca 100 MiB spill, streaming redaction, scoped artifact, slow-consumer resync ve bounded responsive timeline doğrulandı                              |
+| P8 Golden demo             | Aktif      | Üç golden görev ve reconnect/restart/unknown/concurrent-approval arıza senaryoları temiz kurulumdan kanıtlanacak                                           |
 
 WP2 adapter teslimatı tamamlandı: generated Codex sözleşmeleri runtime'da doğrulanır; hedef event aileleri normalize edilir; unknown girdiler güvenli biçimde korunur; completed snapshot deltaların yetkili son halidir; redaction canonical checksum'dan önce uygulanır. On golden fixture dahil repo doğrulamasında 31 test geçmiştir.
 
@@ -35,7 +36,9 @@ WP4 tamamlandı.
 
 WP5 kabul edildi: atomik durable approval, optimistic-lock/idempotent karar, generated command/file mapping, runtime lifecycle expiry, WebSocket reconciliation ve responsive approval kartı 65 testle doğrulandı. Gerçek control-plane smoke karar öncesi sıfır, karar sonrası tek upstream response ve terminal turn kanıtladı; browser denetiminde pending→resolved akışı desktop ve mobilde tamamlandı.
 
-WP6 kabul edildi: server-owned persistent home, durable recovery alanları, scoped session detail/resume, generated steer/interrupt ve adreslenebilir browser session route'u tamamlandı. Gerçek iki-instance smoke aynı thread resume, monotonic sequence ve snapshot dedupe davranışını; browser reload denetimi TanStack route param aktarımı ile responsive görünümü doğruladı. Aktif iş paketi WP7 büyük çıktı ve timeline dayanıklılığıdır.
+WP6 kabul edildi: server-owned persistent home, durable recovery alanları, scoped session detail/resume, generated steer/interrupt ve adreslenebilir browser session route'u tamamlandı. Gerçek iki-instance smoke aynı thread resume, monotonic sequence ve snapshot dedupe davranışını; browser reload denetimi TanStack route param aktarımı ile responsive görünümü doğruladı.
+
+WP7 kabul edildi: 100 MiB delta ve completed-only akışları bounded preview ile tam redakte artifact'e taşındı; durable metadata/recovery, scoped streaming download, slow-consumer resync ve item başına coalesce edilen responsive timeline 94 test, build, SSR smoke ve browser denetimiyle doğrulandı. Aktif iş paketi WP8 golden senaryolar ve PoC demosudur.
 
 ## Uygulama sırası
 
@@ -111,6 +114,18 @@ sequence gap veya duplicate authoritative snapshot olmadan sürdürülür.
 
 Kabul: 100 MB çıktı UI belleğini sınırsız büyütmez; son N KB canlı görünür ve tam
 redakte çıktı tenant/workspace scoped artifact olarak erişilebilir.
+
+### P8. Golden senaryolar ve PoC demosu
+
+- Read-only repository inceleme ve final özet görevini uçtan uca yürüt.
+- Küçük kod değişikliği, hedefli test ve diff görevini uçtan uca yürüt.
+- Ağ veya komut approval'ı isteyen görevi gerçek karar akışıyla yürüt.
+- Browser reconnect, app-server restart, unknown event replay ve concurrent approval
+  yarışını tekrarlanabilir senaryolar olarak doğrula.
+- Temiz kurulum, çalıştırma, demo ve beklenen kanıt adımlarını tek dokümanda kaydet.
+
+Kabul: Üç golden görev web timeline'ında semantik olarak doğru görünür; kayıp/çift event
+ve çift approval kararı oluşmaz; demo temiz kurulumdan yeniden çalıştırılabilir.
 
 ## Faz 0 dışında
 
