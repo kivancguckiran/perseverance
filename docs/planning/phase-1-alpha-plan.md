@@ -1,8 +1,8 @@
 # Faz 1 — Tek kiracılı alfa uygulama planı
 
-- Plan durumu: Aktif
+- Plan durumu: Tamamlandı
 - Plan tarihi: 14 Temmuz 2026
-- Aktif iş paketi: WP12
+- Aktif iş paketi: Yok — Faz 1 tamamlandı
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
@@ -44,12 +44,12 @@ Faz 1 ancak aşağıdaki koşullar birlikte sağlandığında tamamlanır:
 
 ## 4. İş paketi özeti
 
-| Paket | Durum                      | Hedef                                                                |
-| ----- | -------------------------- | -------------------------------------------------------------------- |
-| WP9   | Tamamlandı                 | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
-| WP10  | Tamamlandı                 | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
-| WP11  | Tamamlandı                 | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
-| WP12  | Uygulandı / kabul bekliyor | Tek kiracılı alfa hardening, runbook ve release kabulü               |
+| Paket | Durum      | Hedef                                                                |
+| ----- | ---------- | -------------------------------------------------------------------- |
+| WP9   | Tamamlandı | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
+| WP10  | Tamamlandı | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
+| WP11  | Tamamlandı | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
+| WP12  | Tamamlandı | Tek kiracılı alfa hardening, runbook ve release kabulü               |
 
 ## 5. WP9 — Alfa başlatma ve auth bootstrap
 
@@ -272,5 +272,5 @@ kullanım için runbook ve release gate hazırlamak.
 
 ## 9. Paket geçiş kuralı
 
-WP12 tek aktif pakettir. Eksik paket
-için yeni pakete geçilmez, yalnız kabul engellerini kapatan düzeltme prompt'u üretilir.
+Faz 1 iş paketlerinin tamamı bağımsız kabul edilmiştir. Yeni bir iş paketi ancak ayrı
+bir Faz 2 planı onaylanıp aktive edildikten sonra açılabilir.

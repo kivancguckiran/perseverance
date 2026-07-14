@@ -1,7 +1,7 @@
 # Faz 1 tek kiracılı alfa kabul raporu
 
-- WP12 durumu: **Uygulandı / kabul bekliyor**
-- Faz 1 durumu: **Bağımsız WP12 kabulü bekleniyor**
+- WP12 durumu: **Tamamlandı**
+- Faz 1 durumu: **Tamamlandı**
 - Kanıt formatı: `.runtime/acceptance/alpha-accept.json` ve opt-in
   `.runtime/acceptance/alpha-canary.json`; bu dosyalar git'e alınmaz.
 
@@ -90,4 +90,9 @@ yalnız auth dosyasını bağlayacak biçimde daraltıldı; kişisel config/sess
 başarısız olur. Final canary dört aşamayı da orphan, port veya geçici runtime bırakmadan
 yeniden geçti.
 
-Bu kayıt teslimat sahibinin uygulama kanıtıdır; bağımsız WP12 kabul kararı değildir.
+## Bağımsız kabul kararı
+
+15 Temmuz 2026 tarihinde frozen install, çift generator drift kontrolü,
+`pnpm alpha:accept`, `pnpm alpha:canary`, desktop/mobil browser matrisi ve cleanup
+bağımsız olarak yeniden çalıştırıldı. Tüm release gate aşamaları geçti; çalışma ağacı
+temiz ve kabul portları kapalı kaldı. WP12 ve Faz 1 tamamlandı.
