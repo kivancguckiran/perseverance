@@ -1,0 +1,10 @@
+[
+  {
+    "type": "codex.unknown",
+    "payload": {
+      "envelopeKind": "notification",
+      "method": "future/timeline/event",
+      "params": { "nested": { "value": 42 } }
+    }
+  }
+]

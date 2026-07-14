@@ -1,0 +1,24 @@
+[
+  {
+    "type": "approval.requested",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "cmd_1",
+    "payload": {
+      "requestId": 7,
+      "approvalId": null,
+      "approvalKind": "command",
+      "reason": "Network required",
+      "command": "curl example.com",
+      "cwd": "/workspace",
+      "grantRoot": null
+    }
+  },
+  {
+    "type": "approval.resolved",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "cmd_1",
+    "payload": { "requestId": 7, "approvalKind": "command" }
+  }
+]

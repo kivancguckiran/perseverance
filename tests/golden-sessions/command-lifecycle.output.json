@@ -1,0 +1,38 @@
+[
+  {
+    "type": "command.proposed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "cmd_1",
+    "payload": {
+      "command": "pnpm test",
+      "cwd": "/workspace",
+      "status": "inProgress"
+    }
+  },
+  {
+    "type": "command.output.delta",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "cmd_1",
+    "payload": {
+      "commandId": "cmd_1",
+      "stream": "combined",
+      "text": "partial output\n"
+    }
+  },
+  {
+    "type": "command.completed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "cmd_1",
+    "payload": {
+      "command": "pnpm test",
+      "cwd": "/workspace",
+      "status": "completed",
+      "output": "authoritative output\n",
+      "exitCode": 0,
+      "durationMs": 42
+    }
+  }
+]

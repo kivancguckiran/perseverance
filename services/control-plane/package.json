@@ -1,0 +1,25 @@
+{
+  "name": "@persistent-codex/control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/websocket": "^11.3.0",
+    "@persistent-codex/control-plane-contracts": "workspace:*",
+    "@persistent-codex/codex-event-adapter": "workspace:*",
+    "@persistent-codex/codex-protocol-generated": "workspace:*",
+    "@persistent-codex/domain-events": "workspace:*",
+    "@persistent-codex/event-store": "workspace:*",
+    "@persistent-codex/workspace-agent": "workspace:*",
+    "fastify": "^5.10.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}

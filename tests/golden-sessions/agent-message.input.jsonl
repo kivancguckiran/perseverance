@@ -1,0 +1,2 @@
+{"method":"item/agentMessage/delta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"msg_1","delta":"Taslak metin"}}
+{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"agentMessage","id":"msg_1","text":"Yetkili son mesaj","phase":null,"memoryCitation":null},"completedAtMs":1001}}

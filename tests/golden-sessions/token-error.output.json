@@ -1,0 +1,35 @@
+[
+  {
+    "type": "token.usage.updated",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "payload": {
+      "total": {
+        "totalTokens": 100,
+        "inputTokens": 70,
+        "cachedInputTokens": 10,
+        "outputTokens": 30,
+        "reasoningOutputTokens": 5
+      },
+      "last": {
+        "totalTokens": 20,
+        "inputTokens": 12,
+        "cachedInputTokens": 2,
+        "outputTokens": 8,
+        "reasoningOutputTokens": 1
+      },
+      "modelContextWindow": 200000
+    }
+  },
+  {
+    "type": "error.reported",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "payload": {
+      "message": "Rate limited",
+      "additionalDetails": "retry later",
+      "codexErrorInfo": "usageLimitExceeded",
+      "willRetry": true
+    }
+  }
+]

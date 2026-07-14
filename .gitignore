@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+dist/
+coverage/
+tmp/
+*.log
+
+# Generated runtime state and secrets
+.codex-home/
+.runtime/
+artifacts/
+

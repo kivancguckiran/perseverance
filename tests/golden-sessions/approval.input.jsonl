@@ -1,0 +1,2 @@
+{"id":7,"method":"item/commandExecution/requestApproval","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"cmd_1","startedAtMs":1000,"approvalId":null,"environmentId":null,"reason":"Network required","command":"curl example.com","cwd":"/workspace","commandActions":null,"proposedExecpolicyAmendment":null,"proposedNetworkPolicyAmendments":null}}
+{"method":"serverRequest/resolved","params":{"threadId":"thr_1","requestId":7}}

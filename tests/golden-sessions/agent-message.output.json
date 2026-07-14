@@ -1,0 +1,16 @@
+[
+  {
+    "type": "agent.message.delta",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "msg_1",
+    "payload": { "text": "Taslak metin" }
+  },
+  {
+    "type": "agent.message.completed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "msg_1",
+    "payload": { "text": "Yetkili son mesaj" }
+  }
+]

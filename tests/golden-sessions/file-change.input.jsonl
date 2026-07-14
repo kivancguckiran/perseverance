@@ -1,0 +1,3 @@
+{"method":"item/started","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"fileChange","id":"file_1","changes":[{"path":"src/a.ts","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@"}],"status":"inProgress"},"startedAtMs":1000}}
+{"method":"item/fileChange/patchUpdated","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"file_1","changes":[{"path":"src/a.ts","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@\n-old\n+new"}]}}
+{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"fileChange","id":"file_1","changes":[{"path":"src/a.ts","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@\n-old\n+final"}],"status":"completed"},"completedAtMs":1003}}

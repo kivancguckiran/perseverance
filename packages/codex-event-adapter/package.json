@@ -1,0 +1,17 @@
+{
+  "name": "@persistent-codex/codex-event-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@persistent-codex/codex-protocol-generated": "workspace:*",
+    "@persistent-codex/domain-events": "workspace:*",
+    "ajv": "^8.20.0"
+  }
+}

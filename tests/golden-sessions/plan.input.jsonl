@@ -1,0 +1,2 @@
+{"method":"item/plan/delta","params":{"threadId":"thr_1","turnId":"turn_1","itemId":"plan_1","delta":"1. Taslak"}}
+{"method":"item/completed","params":{"threadId":"thr_1","turnId":"turn_1","item":{"type":"plan","id":"plan_1","text":"1. Yetkili plan\n2. Doğrula"},"completedAtMs":1002}}

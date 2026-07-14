@@ -1,0 +1,16 @@
+{
+  "name": "@persistent-codex/codex-protocol-generated",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./v2": "./src/generated/typescript/v2/index.ts",
+    "./schemas/server-notification": "./src/generated/json-schema/ServerNotification.json",
+    "./schemas/server-request": "./src/generated/json-schema/ServerRequest.json",
+    "./manifest": "./protocol-manifest.json"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

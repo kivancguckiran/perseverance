@@ -1,0 +1,18 @@
+{
+  "name": "@persistent-codex/event-store",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@persistent-codex/domain-events": "workspace:*"
+  },
+  "devDependencies": {
+    "@persistent-codex/codex-event-adapter": "workspace:*"
+  }
+}

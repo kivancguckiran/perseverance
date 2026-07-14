@@ -1,0 +1,16 @@
+[
+  {
+    "type": "plan.delta",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "plan_1",
+    "payload": { "text": "1. Taslak" }
+  },
+  {
+    "type": "plan.completed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "plan_1",
+    "payload": { "text": "1. Yetkili plan\n2. Doğrula" }
+  }
+]

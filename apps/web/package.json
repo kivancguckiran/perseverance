@@ -1,0 +1,27 @@
+{
+  "name": "@persistent-codex/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && tsc --noEmit",
+    "dev": "vite dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@persistent-codex/control-plane-contracts": "workspace:*",
+    "@persistent-codex/domain-events": "workspace:*",
+    "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-router": "^1.170.18",
+    "@tanstack/react-router-ssr-query": "^1.167.1",
+    "@tanstack/react-start": "^1.168.28",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "vite": "^8.1.4"
+  }
+}

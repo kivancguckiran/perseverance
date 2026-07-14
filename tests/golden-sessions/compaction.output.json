@@ -1,0 +1,15 @@
+[
+  {
+    "type": "context.compacted",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "payload": { "itemId": null }
+  },
+  {
+    "type": "context.compacted",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "compact_1",
+    "payload": { "itemId": "compact_1" }
+  }
+]

@@ -1,0 +1,64 @@
+[
+  {
+    "type": "tool.started",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "tool_1",
+    "payload": {
+      "toolKind": "mcp",
+      "tool": "search",
+      "provider": "docs",
+      "status": "inProgress",
+      "arguments": { "query": "adapter" }
+    }
+  },
+  {
+    "type": "tool.completed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "tool_1",
+    "payload": {
+      "toolKind": "mcp",
+      "tool": "search",
+      "provider": "docs",
+      "status": "completed",
+      "result": {
+        "content": [{ "type": "text", "text": "found" }],
+        "structuredContent": null,
+        "_meta": null
+      },
+      "error": null,
+      "success": true,
+      "durationMs": 12
+    }
+  },
+  {
+    "type": "tool.started",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "tool_2",
+    "payload": {
+      "toolKind": "dynamic",
+      "tool": "inspect",
+      "provider": "local",
+      "status": "inProgress",
+      "arguments": { "path": "a.ts" }
+    }
+  },
+  {
+    "type": "tool.completed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "tool_2",
+    "payload": {
+      "toolKind": "dynamic",
+      "tool": "inspect",
+      "provider": "local",
+      "status": "completed",
+      "result": [{ "type": "inputText", "text": "ok" }],
+      "error": null,
+      "success": true,
+      "durationMs": 5
+    }
+  }
+]

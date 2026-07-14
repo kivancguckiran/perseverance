@@ -1,0 +1,49 @@
+[
+  {
+    "type": "file.change.proposed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "file_1",
+    "payload": {
+      "status": "inProgress",
+      "changes": [
+        {
+          "path": "src/a.ts",
+          "kind": { "type": "update", "move_path": null },
+          "diff": "@@ -1 +1 @@"
+        }
+      ]
+    }
+  },
+  {
+    "type": "diff.updated",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "file_1",
+    "payload": {
+      "changes": [
+        {
+          "path": "src/a.ts",
+          "kind": { "type": "update", "move_path": null },
+          "diff": "@@ -1 +1 @@\n-old\n+new"
+        }
+      ]
+    }
+  },
+  {
+    "type": "file.change.completed",
+    "codexThreadId": "thr_1",
+    "codexTurnId": "turn_1",
+    "codexItemId": "file_1",
+    "payload": {
+      "status": "completed",
+      "changes": [
+        {
+          "path": "src/a.ts",
+          "kind": { "type": "update", "move_path": null },
+          "diff": "@@ -1 +1 @@\n-old\n+final"
+        }
+      ]
+    }
+  }
+]
