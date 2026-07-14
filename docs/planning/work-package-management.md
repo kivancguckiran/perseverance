@@ -49,21 +49,21 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 
 ## Güncel iş paketi durumu
 
-| İş paketi                                    | Durum                      | Not                                                                                                         |
-| -------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| WP0 — Repository ve protokol temeli          | Tamamlandı                 | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                              |
-| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı                 | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
-| WP2 — Normalize event adapter                | Tamamlandı                 | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
-| WP3 — Session, event store ve replay         | Tamamlandı                 | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
-| WP4 — Gerçek thread ve turn akışı            | Tamamlandı                 | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
-| WP5 — Approval state machine                 | Tamamlandı                 | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
-| WP6 — Resume, reconnect ve recovery          | Tamamlandı                 | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
-| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı                 | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
-| WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı                 | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı               |
-| WP9 — Alfa başlatma ve auth bootstrap        | Tamamlandı                 | Güvenli provisioning, readiness ve actionable auth recovery bağımsız olarak doğrulandı                      |
-| WP10 — Workspace ve Git görünürlüğü          | Uygulandı / kabul bekliyor | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi                                        |
-| WP11 — Audit ve temel metrics                | Bekliyor                   | Durable audit, liveness/readiness ve bounded operasyon metrikleri                                           |
-| WP12 — Alfa hardening ve kabul               | Bekliyor                   | Tek kiracılı alfa runbook, soak/canary ve release gate                                                      |
+| İş paketi                                    | Durum      | Not                                                                                                         |
+| -------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| WP0 — Repository ve protokol temeli          | Tamamlandı | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                              |
+| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
+| WP2 — Normalize event adapter                | Tamamlandı | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
+| WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
+| WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
+| WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
+| WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
+| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
+| WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı               |
+| WP9 — Alfa başlatma ve auth bootstrap        | Tamamlandı | Güvenli provisioning, readiness ve actionable auth recovery bağımsız olarak doğrulandı                      |
+| WP10 — Workspace ve Git görünürlüğü          | Tamamlandı | Scoped session navigasyonu, durable Git snapshot ve responsive salt-okunur yüzey doğrulandı                 |
+| WP11 — Audit ve temel metrics                | Aktif      | Durable audit, liveness/readiness ve bounded operasyon metrikleri                                           |
+| WP12 — Alfa hardening ve kabul               | Bekliyor   | Tek kiracılı alfa runbook, soak/canary ve release gate                                                      |
 
 ## WP1 nihai denetim sonucu
 
@@ -543,3 +543,37 @@ Uygulama commit'i: `66523dc` (`feat: add alpha auth bootstrap and readiness`).
 
 Aktif iş paketi WP10'dur ve uygulama teslimi bağımsız kabul beklemektedir. WP10
 tamamlanmadan WP11'e geçilemez.
+
+## WP10 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Uygulama commit'i `3a41ac5` (`feat: add alpha workspace and Git visibility`)
+  mevcut ve kabul başlangıcında çalışma ağacı temizdi.
+- Workspace Agent Git okuyucusu yalnız sabit salt-okunur `execFile` komutları,
+  canonical server-owned cwd, timeout ve output limitleri kullanıyor; API cwd, keyfi
+  argüman veya mutation kabul etmiyor.
+- Clean/dirty, staged/unstaged/untracked, rename, binary, no-repo, worktree, submodule
+  ve symlink fixture'ları; scoped session pagination ve snapshot reopen/idempotency
+  testleri geçti.
+- Turn öncesi/sonrası snapshot'lar session ve turn kapsamıyla durable saklanıyor;
+  bounded diff preview sınırı 64 KiB ve büyük diff scoped `git-diff` artifact hattına
+  taşınıyor.
+- Tam test koşusunda 11 test dosyasında 109 test geçti; bütün package typecheck'leri,
+  production build ve sandbox dışında `/` ile `/sessions/:sessionId` SSR HTTP smoke'u
+  başarılı oldu.
+- İzole gerçek Codex change golden akışı file change, diff, iki başarılı command ve
+  terminal turn üretti; workspace, process, SQLite, artifact ve geçici Codex home
+  cleanup sonuçlarının tamamı başarılıydı.
+- Desteklenen alfa akışında iki session oluşturuldu; yakın session listesinden önceki
+  session'a dönüldü ve Git snapshot refresh/reload sonrasında branch, HEAD, clean durum,
+  sınırlı log ve diff görünümü korundu.
+- Desktop 1280×720 ve mobil 390×844 denetimlerinde Git/session yüzeyi yatay taşma,
+  Vite overlay veya console warning/error üretmedi; browser tab'ları ve geliştirme
+  süreçleri kapatıldı.
+
+Uygulama commit'i: `3a41ac5` (`feat: add alpha workspace and Git visibility`).
+
+Aktif iş paketi WP11'dir. WP11 tamamlanmadan WP12'ye geçilemez.
