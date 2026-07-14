@@ -8,6 +8,10 @@ import {
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { buildControlPlane } from './server'
+import {
+  CodexAppServerClient,
+  createIsolatedCodexHome,
+} from '@persistent-codex/workspace-agent'
 
 const timeoutMs = Number(process.env.CODEX_RECOVERY_SMOKE_TIMEOUT_MS ?? 180_000)
 const tenantId = 'ten_recovery_smoke'
@@ -23,6 +27,11 @@ const provisioningSource =
   process.env.CODEX_HOME ??
   join(homedir(), '.codex')
 mkdirSync(workspaceCwd)
+const isolatedHome = createIsolatedCodexHome({
+  sourceHome: provisioningSource,
+  temporaryRoot: runtimeRoot,
+  includeConfig: false,
+})
 
 async function pollEvents(
   app: Awaited<ReturnType<typeof buildControlPlane>>,
@@ -50,8 +59,12 @@ const build = () =>
     databasePath,
     artifactRoot,
     workspaceCwd,
-    codexHomeRoot,
-    codexProvisioningSource: provisioningSource,
+    runtimeClientFactory: () =>
+      new CodexAppServerClient({
+        cwd: workspaceCwd,
+        env: { ...process.env, CODEX_HOME: isolatedHome.path },
+        requestTimeoutMs: timeoutMs,
+      }),
     approvalPolicy: 'never',
   })
 
@@ -260,6 +273,7 @@ try {
 } finally {
   await firstApp?.close().catch(() => undefined)
   await secondApp?.close().catch(() => undefined)
+  isolatedHome.cleanup()
   rmSync(runtimeRoot, { recursive: true, force: true })
 }
 

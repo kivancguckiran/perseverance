@@ -22,6 +22,7 @@ export function createIsolatedCodexHome(
   options: {
     sourceHome?: string
     temporaryRoot?: string
+    includeConfig?: boolean
   } = {},
 ): IsolatedCodexHome {
   const sourceHome = resolve(
@@ -32,6 +33,8 @@ export function createIsolatedCodexHome(
   const linkedFiles: string[] = []
   try {
     for (const filename of linkedConfigurationFiles) {
+      if (filename === 'config.toml' && options.includeConfig === false)
+        continue
       const source = join(sourceHome, filename)
       if (!existsSync(source)) continue
       const stat = lstatSync(source)

@@ -3,7 +3,11 @@ import {
   parseTimelineEvent,
   type TimelineEvent,
 } from '@persistent-codex/domain-events'
-import { boundedTail, coalesceTimelineEvents } from './workspace-page'
+import {
+  boundedTail,
+  coalesceTimelineEvents,
+  sessionScopedCursor,
+} from './workspace-page'
 const base = {
   schemaVersion: 1 as const,
   tenantId: 'ten',
@@ -37,6 +41,11 @@ function delta(sequence: number, text: string): TimelineEvent {
   })
 }
 describe('bounded browser timeline state', () => {
+  it('resets the realtime cursor when navigating between sessions', () => {
+    expect(sessionScopedCursor('ses_a', 'ses_b', 42)).toBe(0)
+    expect(sessionScopedCursor('ses_a', 'ses_a', 42)).toBe(42)
+  })
+
   it('coalesces 1600 command chunks into one 64 KiB item snapshot', () => {
     let state = new Map<string, TimelineEvent>()
     for (let index = 1; index <= 1600; index++)

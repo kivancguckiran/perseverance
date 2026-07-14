@@ -21,7 +21,7 @@ const timeoutMs = Number(process.env.CODEX_APPROVAL_SMOKE_TIMEOUT_MS ?? 120_000)
 const tenantId = 'ten_smoke'
 const workspaceId = 'wsp_smoke'
 const headers = { 'x-tenant-id': tenantId, 'x-workspace-id': workspaceId }
-const isolatedHome = createIsolatedCodexHome()
+const isolatedHome = createIsolatedCodexHome({ includeConfig: false })
 const runtimeRoot = mkdtempSync(
   join(tmpdir(), 'persistent-approval-smoke-runtime-'),
 )

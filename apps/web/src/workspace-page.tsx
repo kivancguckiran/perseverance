@@ -79,6 +79,14 @@ export async function readSessionDetail(
   return sessionResponseSchema.parse(await response.json())
 }
 
+export function sessionScopedCursor(
+  currentSessionId: string | undefined,
+  nextSessionId: string | undefined,
+  cursor: number,
+): number {
+  return currentSessionId === nextSessionId ? cursor : 0
+}
+
 async function readRecentSessions(cursor: string | null) {
   const query = new URLSearchParams({ limit: '12' })
   if (cursor) query.set('cursor', cursor)
@@ -676,6 +684,19 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     if (!sessionId) return
     let active = true
+    const scopedCursor = sessionScopedCursor(
+      session?.sessionId,
+      sessionId,
+      lastSequence.current,
+    )
+    if (session?.sessionId !== sessionId) {
+      lastSequence.current = scopedCursor
+      setSession(undefined)
+      setEvents(new Map())
+      setApprovals(new Map())
+      setError(undefined)
+      setRealtimeState('kapalı')
+    }
     readSessionDetail(sessionId)
       .then((loaded) => {
         if (active && loaded) setSession(loaded)
