@@ -4,6 +4,10 @@ import type {
   ArtifactStorage,
   ArtifactScope,
 } from '@persistent-codex/artifact-storage'
+import {
+  DEFAULT_ARTIFACT_CHUNK_BYTES,
+  redactCommandOutput,
+} from '@persistent-codex/artifact-storage'
 import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
 import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import {
@@ -26,7 +30,9 @@ import {
   ProcessExitedError,
   ProcessUnavailableError,
   RequestTimeoutError,
+  GitSnapshotReader,
   WorkspaceRuntimeRegistry,
+  type GitSnapshotResult,
   type RuntimeDelivery,
   type WorkspaceRuntime,
   type WorkspaceRuntimeClient,
@@ -195,6 +201,7 @@ export class SessionOrchestrator {
   readonly #approvalPolicy: ThreadStartParams['approvalPolicy'] | undefined
   readonly #onRecoveryError: SessionOrchestratorOptions['onRecoveryError']
   readonly #artifactStorage: ArtifactStorage | undefined
+  readonly #gitReaders = new Map<string, GitSnapshotReader>()
   readonly #commandArtifacts = new Map<
     string,
     { artifactId: string; scope: ArtifactScope }
@@ -445,6 +452,127 @@ export class SessionOrchestrator {
           : session.status === 'recovering' && session.recoveryErrorCode
             ? ['retry_resume', 'view_read_only']
             : [],
+    })
+  }
+
+  async captureGitSnapshot(
+    scope: StoreScope,
+    phase: 'before' | 'after' | 'refresh',
+    turnId: string | null,
+    idempotencyKey: string,
+  ) {
+    this.#store.getSession(scope)
+    const existing = this.#store.findGitSnapshotByIdempotency(
+      scope,
+      idempotencyKey,
+    )
+    if (existing) return existing
+    const cwd =
+      typeof this.#workspaceCwd === 'function'
+        ? this.#workspaceCwd(scope)
+        : this.#workspaceCwd
+    const readerKey = JSON.stringify([scope.tenantId, scope.workspaceId])
+    let reader = this.#gitReaders.get(readerKey)
+    if (!reader) {
+      reader = new GitSnapshotReader(cwd)
+      this.#gitReaders.set(readerKey, reader)
+    }
+    return this.#persistGitSnapshot(
+      scope,
+      phase,
+      turnId,
+      idempotencyKey,
+      await reader.capture(),
+    )
+  }
+
+  #persistGitSnapshot(
+    scope: StoreScope,
+    phase: 'before' | 'after' | 'refresh',
+    turnId: string | null,
+    idempotencyKey: string,
+    captured: GitSnapshotResult,
+  ) {
+    let artifactId: string | null = null
+    const snapshotId = `git_${randomUUID()}`
+    if (
+      captured.diff.content &&
+      captured.diff.truncated &&
+      this.#artifactStorage
+    ) {
+      const artifactScope: ArtifactScope = {
+        ...scope,
+        turnId: turnId ?? snapshotId,
+        itemId: `git-${phase}`,
+      }
+      let metadata = this.#artifactStorage.create(artifactScope, 'git-diff')
+      const content = Buffer.from(captured.diff.content)
+      for (
+        let offset = 0, chunkIndex = 0;
+        offset < content.length;
+        chunkIndex++
+      ) {
+        const chunk = content.subarray(
+          offset,
+          offset + DEFAULT_ARTIFACT_CHUNK_BYTES,
+        )
+        offset += chunk.byteLength
+        metadata = this.#artifactStorage.append({
+          artifactId: metadata.artifactId,
+          scope: artifactScope,
+          chunkIndex,
+          stream: 'combined',
+          data: chunk,
+          sourceKey: idempotencyKey,
+        })
+      }
+      metadata = this.#artifactStorage.finalize(
+        metadata.artifactId,
+        artifactScope,
+      )
+      this.#persistArtifact(metadata)
+      artifactId = metadata.artifactId
+    }
+    const eventChangeCount = turnId
+      ? this.#store.countTurnFileChanges(scope, turnId)
+      : 0
+    return this.#store.putGitSnapshot({
+      ...scope,
+      snapshotId,
+      turnId,
+      phase,
+      repositoryKind: captured.repositoryKind,
+      branch: captured.branch ? redactCommandOutput(captured.branch) : null,
+      headOid: captured.headOid,
+      detached: captured.detached,
+      clean: captured.clean,
+      changes: captured.changes.map((change) => ({
+        ...change,
+        path: redactCommandOutput(change.path),
+        previousPath: change.previousPath
+          ? redactCommandOutput(change.previousPath)
+          : null,
+      })),
+      diff: {
+        preview: redactCommandOutput(captured.diff.preview),
+        byteLength: captured.diff.byteLength,
+        truncated: captured.diff.truncated,
+        artifactId,
+      },
+      log: captured.log.map((entry) => ({
+        ...entry,
+        authorName: redactCommandOutput(entry.authorName),
+        subject: redactCommandOutput(entry.subject),
+      })),
+      eventChangeCount,
+      relationship:
+        eventChangeCount === 0
+          ? 'authoritative'
+          : captured.changes.length >= eventChangeCount
+            ? 'matches_events'
+            : 'differs_from_events',
+      capturedAt: captured.capturedAt,
+      idempotencyKey,
     })
   }
 
@@ -1031,6 +1159,12 @@ export class SessionOrchestrator {
     keyScope: string,
   ): Promise<TurnAcceptedResponse> {
     try {
+      const before = await this.captureGitSnapshot(
+        scope,
+        'before',
+        null,
+        `turn-request:${idempotencyKey}:before`,
+      ).catch(() => undefined)
       const runtime = this.#registry.get(scope)
       if (!runtime) {
         throw new OrchestrationError(
@@ -1053,6 +1187,12 @@ export class SessionOrchestrator {
         codexTurnId: upstream.turn.id,
         idempotencyKey,
       })
+      if (before)
+        this.#store.bindGitSnapshotTurn(
+          scope,
+          before.snapshotId,
+          upstream.turn.id,
+        )
       this.#store.completeIdempotencyKey({
         ...scope,
         scope: keyScope,
@@ -1243,6 +1383,13 @@ export class SessionOrchestrator {
       ) {
         this.#activeTurns.delete(activeTurnKey)
       }
+      if (adapted.event.codexTurnId)
+        await this.captureGitSnapshot(
+          scope,
+          'after',
+          adapted.event.codexTurnId,
+          `turn:${adapted.event.codexTurnId}:after`,
+        ).catch(() => undefined)
     }
   }
 

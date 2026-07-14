@@ -10,6 +10,17 @@ export {
   CodexHomePathError,
 } from './persistent-codex-home'
 export {
+  GitSnapshotReader,
+  GIT_COMMAND_TIMEOUT_MS,
+  GIT_DIFF_OUTPUT_BYTES,
+  GIT_DIFF_PREVIEW_BYTES,
+  type GitChange,
+  type GitChangeArea,
+  type GitLogEntry,
+  type GitRepositoryKind,
+  type GitSnapshotResult,
+} from './git-snapshot'
+export {
   AlphaPreflightError,
   PINNED_CODEX_VERSION,
   runAlphaPreflight,

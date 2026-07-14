@@ -22,6 +22,9 @@ import {
   turnActionResponseSchema,
   replayResponseSchema,
   readinessResponseSchema,
+  sessionListResponseSchema,
+  gitSnapshotSchema,
+  gitSnapshotListResponseSchema,
   serverMessageSchema,
   type ServerMessage,
   type SubscribeMessage,
@@ -140,6 +143,28 @@ function parseLimit(value: string | undefined): number | undefined {
   if (!/^[1-9]\d*$/.test(value)) return undefined
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed <= 500 ? parsed : undefined
+}
+
+function decodeSessionCursor(value: string | undefined) {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString()) as {
+      updatedAt?: unknown
+      sessionId?: unknown
+    }
+    if (
+      typeof parsed.updatedAt !== 'string' ||
+      typeof parsed.sessionId !== 'string'
+    )
+      return null
+    return { updatedAt: parsed.updatedAt, sessionId: parsed.sessionId }
+  } catch {
+    return null
+  }
+}
+
+function encodeSessionCursor(value: { updatedAt: string; sessionId: string }) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url')
 }
 
 export class BoundedRealtimeSender {
@@ -672,6 +697,42 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     }
   })
 
+  app.get<{ Querystring: { cursor?: string; limit?: string } }>(
+    '/v1/sessions',
+    async (request, reply) => {
+      const scope = workspaceScope(request.headers)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const limit =
+        request.query.limit === undefined ? 20 : parseLimit(request.query.limit)
+      const cursor = decodeSessionCursor(request.query.cursor)
+      if (!limit || limit > 100)
+        return reply.code(400).send({
+          code: 'INVALID_LIMIT',
+          message: 'limit must be between 1 and 100',
+        })
+      if (cursor === null)
+        return reply
+          .code(400)
+          .send({ code: 'INVALID_CURSOR', message: 'cursor is invalid' })
+      const page = store.listRecentSessions(scope, limit, cursor)
+      const last = page.sessions.at(-1)
+      return sessionListResponseSchema.parse({
+        sessions: page.sessions,
+        nextCursor:
+          page.hasMore && last
+            ? encodeSessionCursor({
+                updatedAt: last.updatedAt,
+                sessionId: last.sessionId,
+              })
+            : null,
+      })
+    },
+  )
+
   app.get<{ Params: { sessionId: string } }>(
     '/v1/sessions/:sessionId',
     async (request, reply) => {
@@ -689,6 +750,74 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             .code(404)
             .send({ code: error.code, message: error.message })
         throw error
+      }
+    },
+  )
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/git-snapshots',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        store.getSession(scope)
+        return gitSnapshotListResponseSchema.parse({
+          snapshots: store.listGitSnapshots(scope).map((snapshot) => ({
+            ...snapshot,
+            stale: Date.now() - Date.parse(snapshot.capturedAt) > 30_000,
+          })),
+        })
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/git-snapshots/refresh',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const idempotencyKey = headerValue(request.headers['idempotency-key'])
+      if (!idempotencyKey?.trim())
+        return reply.code(400).send({
+          code: 'MISSING_IDEMPOTENCY_KEY',
+          message: 'Idempotency-Key header is required',
+        })
+      if (!createSessionRequestSchema.safeParse(request.body ?? {}).success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Git refresh does not accept cwd, arguments, or operations',
+        })
+      try {
+        const snapshot = await orchestrator.captureGitSnapshot(
+          scope,
+          'refresh',
+          null,
+          `refresh:${idempotencyKey}`,
+        )
+        return gitSnapshotSchema.parse({ ...snapshot, stale: false })
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        return reply.code(503).send({
+          code: 'GIT_SNAPSHOT_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        })
       }
     },
   )

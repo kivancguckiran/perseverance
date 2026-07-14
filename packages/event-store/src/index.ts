@@ -16,7 +16,7 @@ export interface ArtifactRecord extends StoreScope {
   artifactId: string
   turnId: string
   itemId: string
-  kind: 'command-output'
+  kind: 'command-output' | 'git-diff'
   byteLength: number
   sha256: string | null
   chunkCount: number
@@ -39,6 +39,43 @@ export interface SessionRecord extends StoreScope {
 
 export interface CreateSessionInput extends StoreScope {
   status?: string
+}
+
+export interface GitSnapshotRecord extends StoreScope {
+  snapshotId: string
+  turnId: string | null
+  phase: 'before' | 'after' | 'refresh'
+  repositoryKind: 'repository' | 'worktree' | 'submodule' | 'none'
+  branch: string | null
+  headOid: string | null
+  detached: boolean
+  clean: boolean
+  changes: Array<{
+    path: string
+    previousPath: string | null
+    areas: Array<'staged' | 'unstaged' | 'untracked'>
+    stagedStatus: string | null
+    unstagedStatus: string | null
+    renamed: boolean
+    binary: boolean
+    submodule: boolean
+  }>
+  diff: {
+    preview: string
+    byteLength: number
+    truncated: boolean
+    artifactId: string | null
+  }
+  log: Array<{
+    oid: string
+    shortOid: string
+    authoredAt: string
+    authorName: string
+    subject: string
+  }>
+  eventChangeCount: number
+  relationship: 'authoritative' | 'matches_events' | 'differs_from_events'
+  capturedAt: string
 }
 
 interface RawEventMetadata {
@@ -449,6 +486,157 @@ export class SqliteEventStore {
       )
       .all(scope.tenantId, scope.workspaceId) as unknown as SessionRow[]
     return rows.map(sessionFromRow)
+  }
+
+  listRecentSessions(
+    scope: { tenantId: string; workspaceId: string },
+    limit: number,
+    cursor?: { updatedAt: string; sessionId: string },
+  ): { sessions: SessionRecord[]; hasMore: boolean } {
+    assertIdentifier(scope.tenantId, 'tenantId')
+    assertIdentifier(scope.workspaceId, 'workspaceId')
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new StoreError('INVALID_LIMIT', 'limit must be between 1 and 100')
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM sessions
+         WHERE tenant_id = ? AND workspace_id = ?
+           AND (? IS NULL OR updated_at < ? OR (updated_at = ? AND session_id < ?))
+         ORDER BY updated_at DESC, session_id DESC LIMIT ?`,
+      )
+      .all(
+        scope.tenantId,
+        scope.workspaceId,
+        cursor?.updatedAt ?? null,
+        cursor?.updatedAt ?? null,
+        cursor?.updatedAt ?? null,
+        cursor?.sessionId ?? null,
+        limit + 1,
+      ) as unknown as SessionRow[]
+    return {
+      sessions: rows.slice(0, limit).map(sessionFromRow),
+      hasMore: rows.length > limit,
+    }
+  }
+
+  putGitSnapshot(
+    input: GitSnapshotRecord & { idempotencyKey: string },
+  ): GitSnapshotRecord {
+    assertScope(input)
+    assertIdentifier(input.snapshotId, 'snapshotId')
+    assertIdentifier(input.idempotencyKey, 'idempotencyKey')
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO git_snapshots
+         (snapshot_id,tenant_id,workspace_id,session_id,turn_id,phase,idempotency_key,payload_json,captured_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        input.snapshotId,
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.turnId,
+        input.phase,
+        input.idempotencyKey,
+        JSON.stringify(input),
+        input.capturedAt,
+      )
+    const row = this.#database
+      .prepare(
+        `SELECT payload_json FROM git_snapshots
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND idempotency_key=?`,
+      )
+      .get(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.idempotencyKey,
+      ) as { payload_json: string }
+    return JSON.parse(row.payload_json) as GitSnapshotRecord
+  }
+
+  findGitSnapshotByIdempotency(
+    scope: StoreScope,
+    idempotencyKey: string,
+  ): GitSnapshotRecord | undefined {
+    assertScope(scope)
+    const row = this.#database
+      .prepare(
+        `SELECT payload_json FROM git_snapshots
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND idempotency_key=?`,
+      )
+      .get(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        idempotencyKey,
+      ) as { payload_json: string } | undefined
+    return row ? (JSON.parse(row.payload_json) as GitSnapshotRecord) : undefined
+  }
+
+  bindGitSnapshotTurn(
+    scope: StoreScope,
+    snapshotId: string,
+    turnId: string,
+  ): GitSnapshotRecord {
+    assertScope(scope)
+    const existing = this.#database
+      .prepare(
+        `SELECT payload_json FROM git_snapshots
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND snapshot_id=?`,
+      )
+      .get(scope.tenantId, scope.workspaceId, scope.sessionId, snapshotId) as
+      { payload_json: string } | undefined
+    if (!existing)
+      throw new StoreError('GIT_SNAPSHOT_NOT_FOUND', 'Git snapshot not found')
+    const payload = {
+      ...(JSON.parse(existing.payload_json) as GitSnapshotRecord),
+      turnId,
+    }
+    this.#database
+      .prepare(
+        `UPDATE git_snapshots SET turn_id=?, payload_json=?
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND snapshot_id=?`,
+      )
+      .run(
+        turnId,
+        JSON.stringify(payload),
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        snapshotId,
+      )
+    return payload
+  }
+
+  listGitSnapshots(scope: StoreScope, limit = 20): GitSnapshotRecord[] {
+    assertScope(scope)
+    const rows = this.#database
+      .prepare(
+        `SELECT payload_json FROM git_snapshots
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?
+         ORDER BY captured_at DESC, snapshot_id DESC LIMIT ?`,
+      )
+      .all(scope.tenantId, scope.workspaceId, scope.sessionId, limit) as Array<{
+      payload_json: string
+    }>
+    return rows.map((row) => JSON.parse(row.payload_json) as GitSnapshotRecord)
+  }
+
+  countTurnFileChanges(scope: StoreScope, turnId: string): number {
+    assertScope(scope)
+    const row = this.#database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM events
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?
+           AND type='file.change.completed'
+           AND json_extract(payload_json, '$.codexTurnId')=?`,
+      )
+      .get(scope.tenantId, scope.workspaceId, scope.sessionId, turnId) as {
+      count: number
+    }
+    return row.count
   }
 
   bindCodexThread(scope: StoreScope, codexThreadId: string): SessionRecord {

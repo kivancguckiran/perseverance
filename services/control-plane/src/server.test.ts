@@ -63,6 +63,116 @@ describe('bounded realtime sender', () => {
   })
 })
 
+describe('WP10 session navigation and Git API', () => {
+  it('paginates scoped sessions, persists refresh, and rejects Git operations', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp10-api-'))
+    const repository = join(directory, 'repo')
+    const databasePath = join(directory, 'events.sqlite')
+    const artifactRoot = join(directory, 'artifacts')
+    mkdirSync(repository)
+    execFileSync('git', ['init', '-q'], { cwd: repository })
+    execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], {
+      cwd: repository,
+    })
+    execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: repository })
+    writeFileSync(join(repository, 'file.txt'), 'one\n')
+    execFileSync('git', ['add', 'file.txt'], { cwd: repository })
+    execFileSync('git', ['commit', '-qm', 'initial'], { cwd: repository })
+    writeFileSync(join(repository, 'file.txt'), 'two\n')
+    const store = new SqliteEventStore(databasePath)
+    store.createSession(scope)
+    store.createSession({ ...scope, sessionId: 'ses_second' })
+    store.createSession({
+      ...scope,
+      tenantId: 'ten_other',
+      sessionId: 'ses_hidden',
+    })
+    const app = await buildControlPlane({
+      eventStore: store,
+      workspaceCwd: repository,
+      artifactRoot,
+      codexHomeRoot: join(directory, 'homes'),
+    })
+    try {
+      const first = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions?limit=1',
+        headers,
+      })
+      expect(first.statusCode).toBe(200)
+      expect(first.json().sessions).toHaveLength(1)
+      expect(first.json().nextCursor).toBeTruthy()
+      const second = await app.inject({
+        method: 'GET',
+        url: `/v1/sessions?limit=1&cursor=${encodeURIComponent(first.json().nextCursor)}`,
+        headers,
+      })
+      expect(second.json().sessions).toHaveLength(1)
+      expect(second.json().sessions[0].tenantId).toBe(scope.tenantId)
+
+      const mutation = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/git-snapshots/refresh`,
+        headers: { ...headers, 'idempotency-key': 'mutate' },
+        payload: { operation: 'checkout', args: ['--force'], cwd: '..' },
+      })
+      expect(mutation.statusCode).toBe(400)
+      const refresh = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/git-snapshots/refresh`,
+        headers: { ...headers, 'idempotency-key': 'refresh-1' },
+        payload: {},
+      })
+      expect(refresh.statusCode).toBe(200)
+      expect(refresh.json()).toMatchObject({
+        repositoryKind: 'repository',
+        clean: false,
+        phase: 'refresh',
+      })
+      const list = await app.inject({
+        method: 'GET',
+        url: `/v1/sessions/${scope.sessionId}/git-snapshots`,
+        headers,
+      })
+      expect(list.json().snapshots).toHaveLength(1)
+      expect(list.json().snapshots[0].headOid).toBe(
+        execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: repository,
+          encoding: 'utf8',
+        }).trim(),
+      )
+      writeFileSync(join(repository, 'large.txt'), 'old line\n'.repeat(12_000))
+      execFileSync('git', ['add', 'large.txt'], { cwd: repository })
+      execFileSync('git', ['commit', '-qm', 'large base'], { cwd: repository })
+      writeFileSync(join(repository, 'large.txt'), 'new line\n'.repeat(12_000))
+      const large = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/git-snapshots/refresh`,
+        headers: { ...headers, 'idempotency-key': 'refresh-large' },
+        payload: {},
+      })
+      expect(large.statusCode).toBe(200)
+      expect(large.json().diff).toMatchObject({ truncated: true })
+      expect(Buffer.byteLength(large.json().diff.preview)).toBeLessThanOrEqual(
+        64 * 1024,
+      )
+      const artifact = store
+        .listArtifacts(scope)
+        .find((item) => item.kind === 'git-diff')
+      expect(artifact).toMatchObject({ finalized: true, kind: 'git-diff' })
+      const wrongTenant = await app.inject({
+        method: 'POST',
+        url: `/v1/artifacts/${artifact!.artifactId}/download-token`,
+        headers: { ...headers, 'x-tenant-id': 'ten_other' },
+      })
+      expect(wrongTenant.statusCode).toBe(404)
+    } finally {
+      await app.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
+})
+
 describe('WP9 auth readiness and recovery', () => {
   it('blocks session creation before thread/start when account setup is required', async () => {
     class LoggedOutClient extends FakeRuntimeClient {
@@ -647,6 +757,105 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
     for (const listener of this.#healthListeners) listener(this.health)
   }
 }
+
+describe('WP10 turn Git checkpoints', () => {
+  it('links before/after snapshots, diff and HEAD to a file-changing turn', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp10-turn-git-'))
+    const repository = join(directory, 'repo')
+    mkdirSync(repository)
+    execFileSync('git', ['init', '-q'], { cwd: repository })
+    execFileSync('git', ['config', 'user.email', 'fixture@example.invalid'], {
+      cwd: repository,
+    })
+    execFileSync('git', ['config', 'user.name', 'Fixture'], { cwd: repository })
+    writeFileSync(join(repository, 'turn.txt'), 'before\n')
+    execFileSync('git', ['add', 'turn.txt'], { cwd: repository })
+    execFileSync('git', ['commit', '-qm', 'initial'], { cwd: repository })
+    class ChangingClient extends FakeRuntimeClient {
+      override emitNotification(message: Record<string, unknown>) {
+        if (message.method === 'turn/completed')
+          writeFileSync(join(repository, 'turn.txt'), 'after\n')
+        super.emitNotification(message)
+      }
+    }
+    const client = new ChangingClient({ turnId: 'turn_git' })
+    const store = new SqliteEventStore(join(directory, 'events.sqlite'))
+    const localApp = await buildControlPlane({
+      eventStore: store,
+      workspaceCwd: repository,
+      artifactRoot: join(directory, 'artifacts'),
+      codexHomeRoot: join(directory, 'homes'),
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => 'ses_git',
+    })
+    const localHeaders = {
+      'x-tenant-id': 'ten_git',
+      'x-workspace-id': 'wsp_git',
+    }
+    try {
+      expect(
+        (
+          await localApp.inject({
+            method: 'POST',
+            url: '/v1/sessions',
+            headers: localHeaders,
+            payload: {},
+          })
+        ).statusCode,
+      ).toBe(201)
+      expect(
+        (
+          await localApp.inject({
+            method: 'POST',
+            url: '/v1/sessions/ses_git/turns',
+            headers: { ...localHeaders, 'idempotency-key': 'turn-git' },
+            payload: { prompt: 'turn.txt dosyasını değiştir' },
+          })
+        ).statusCode,
+      ).toBe(202)
+      for (let attempt = 0; attempt < 1_500; attempt++) {
+        if (
+          store.listGitSnapshots({
+            tenantId: 'ten_git',
+            workspaceId: 'wsp_git',
+            sessionId: 'ses_git',
+          }).length === 2
+        )
+          break
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      const snapshots = store.listGitSnapshots({
+        tenantId: 'ten_git',
+        workspaceId: 'wsp_git',
+        sessionId: 'ses_git',
+      })
+      expect(snapshots.map((item) => item.phase).sort()).toEqual([
+        'after',
+        'before',
+      ])
+      expect(snapshots.every((item) => item.turnId === 'turn_git')).toBe(true)
+      expect(
+        snapshots.every(
+          (item) =>
+            item.headOid ===
+            execFileSync('git', ['rev-parse', 'HEAD'], {
+              cwd: repository,
+              encoding: 'utf8',
+            }).trim(),
+        ),
+      ).toBe(true)
+      expect(snapshots.find((item) => item.phase === 'before')?.clean).toBe(
+        true,
+      )
+      expect(
+        snapshots.find((item) => item.phase === 'after')?.diff.preview,
+      ).toContain('+after')
+    } finally {
+      await localApp.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
+})
 
 async function connect(): Promise<{
   socket: TestSocket
@@ -2274,7 +2483,8 @@ describe('WP4 restart-safe ingest regression', () => {
     }
   })
 })
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'

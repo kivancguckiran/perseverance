@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 14 Temmuz 2026
-- Aktif iş paketi: WP10
+- Aktif iş paketi: WP10 — Uygulandı / kabul bekliyor
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
@@ -44,12 +44,12 @@ Faz 1 ancak aşağıdaki koşullar birlikte sağlandığında tamamlanır:
 
 ## 4. İş paketi özeti
 
-| Paket | Durum      | Hedef                                                                |
-| ----- | ---------- | -------------------------------------------------------------------- |
-| WP9   | Tamamlandı | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
-| WP10  | Aktif      | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
-| WP11  | Bekliyor   | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
-| WP12  | Bekliyor   | Tek kiracılı alfa hardening, runbook ve release kabulü               |
+| Paket | Durum                      | Hedef                                                                |
+| ----- | -------------------------- | -------------------------------------------------------------------- |
+| WP9   | Tamamlandı                 | Güvenli alfa başlatma, auth bootstrap ve actionable readiness        |
+| WP10  | Uygulandı / kabul bekliyor | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi |
+| WP11  | Bekliyor                   | Durable audit zinciri, liveness/readiness ve bounded temel metrics   |
+| WP12  | Bekliyor                   | Tek kiracılı alfa hardening, runbook ve release kabulü               |
 
 ## 5. WP9 — Alfa başlatma ve auth bootstrap
 

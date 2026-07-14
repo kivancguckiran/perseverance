@@ -470,11 +470,91 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 4,
+        user_version: 5,
       })
       database.close()
     } finally {
       migrated.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('WP10 sessions and Git snapshot persistence', () => {
+  it('paginates recent sessions with tenant/workspace isolation', () => {
+    withStore((store) => {
+      store.createSession({ ...scope, sessionId: 'ses_2' })
+      store.createSession({ ...scope, sessionId: 'ses_3' })
+      store.createSession({
+        ...scope,
+        tenantId: 'ten_other',
+        sessionId: 'hidden',
+      })
+      const first = store.listRecentSessions(
+        { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
+        2,
+      )
+      expect(first.sessions).toHaveLength(2)
+      expect(first.hasMore).toBe(true)
+      const last = first.sessions.at(-1)!
+      const second = store.listRecentSessions(
+        { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
+        2,
+        { updatedAt: last.updatedAt, sessionId: last.sessionId },
+      )
+      expect(second.sessions).toHaveLength(1)
+      expect(
+        [...first.sessions, ...second.sessions].every(
+          (item) => item.tenantId === scope.tenantId,
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('keeps idempotent scoped Git snapshots after reload', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'event-store-git-'))
+    const path = join(directory, 'events.sqlite')
+    const first = new SqliteEventStore(path)
+    first.createSession(scope)
+    const input = {
+      ...scope,
+      snapshotId: 'git_1',
+      turnId: 'turn_1',
+      phase: 'before' as const,
+      repositoryKind: 'repository' as const,
+      branch: 'main',
+      headOid: 'a'.repeat(40),
+      detached: false,
+      clean: false,
+      changes: [],
+      diff: {
+        preview: 'diff',
+        byteLength: 4,
+        truncated: false,
+        artifactId: null,
+      },
+      log: [],
+      eventChangeCount: 0,
+      relationship: 'authoritative' as const,
+      capturedAt: '2026-07-14T12:00:00.000Z',
+      idempotencyKey: 'turn:turn_1:before',
+    }
+    expect(first.putGitSnapshot(input).snapshotId).toBe('git_1')
+    expect(
+      first.putGitSnapshot({ ...input, snapshotId: 'git_duplicate' })
+        .snapshotId,
+    ).toBe('git_1')
+    first.close()
+    const reopened = new SqliteEventStore(path)
+    try {
+      expect(reopened.listGitSnapshots(scope)).toEqual([
+        expect.objectContaining({ snapshotId: 'git_1', turnId: 'turn_1' }),
+      ])
+      expect(
+        reopened.listGitSnapshots({ ...scope, tenantId: 'ten_other' }),
+      ).toEqual([])
+    } finally {
+      reopened.close()
       rmSync(directory, { recursive: true, force: true })
     }
   })

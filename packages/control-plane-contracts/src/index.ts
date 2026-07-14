@@ -75,7 +75,7 @@ export const artifactMetadataSchema = scopeSchema.extend({
   artifactId: identifierSchema,
   turnId: identifierSchema,
   itemId: identifierSchema,
-  kind: z.literal('command-output'),
+  kind: z.enum(['command-output', 'git-diff']),
   byteLength: z.number().int().nonnegative(),
   sha256: z
     .string()
@@ -200,6 +200,72 @@ export const sessionResponseSchema = scopeSchema.extend({
   recoveryOptions: z.array(recoveryOptionSchema),
 })
 
+export const sessionSummarySchema = sessionResponseSchema
+  .pick({
+    tenantId: true,
+    workspaceId: true,
+    sessionId: true,
+    codexThreadId: true,
+    status: true,
+  })
+  .extend({
+    lastSequence: sequenceSchema,
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+
+export const sessionListResponseSchema = z.object({
+  sessions: z.array(sessionSummarySchema),
+  nextCursor: z.string().min(1).nullable(),
+})
+
+export const gitChangeSchema = z.object({
+  path: z.string(),
+  previousPath: z.string().nullable(),
+  areas: z.array(z.enum(['staged', 'unstaged', 'untracked'])),
+  stagedStatus: z.string().nullable(),
+  unstagedStatus: z.string().nullable(),
+  renamed: z.boolean(),
+  binary: z.boolean(),
+  submodule: z.boolean(),
+})
+export const gitLogEntrySchema = z.object({
+  oid: z.string(),
+  shortOid: z.string(),
+  authoredAt: z.string(),
+  authorName: z.string(),
+  subject: z.string(),
+})
+export const gitSnapshotSchema = scopeSchema.extend({
+  snapshotId: identifierSchema,
+  turnId: identifierSchema.nullable(),
+  phase: z.enum(['before', 'after', 'refresh']),
+  repositoryKind: z.enum(['repository', 'worktree', 'submodule', 'none']),
+  branch: z.string().nullable(),
+  headOid: z.string().nullable(),
+  detached: z.boolean(),
+  clean: z.boolean(),
+  changes: z.array(gitChangeSchema),
+  diff: z.object({
+    preview: z.string(),
+    byteLength: z.number().int().nonnegative(),
+    truncated: z.boolean(),
+    artifactId: identifierSchema.nullable(),
+  }),
+  log: z.array(gitLogEntrySchema),
+  eventChangeCount: z.number().int().nonnegative(),
+  relationship: z.enum([
+    'authoritative',
+    'matches_events',
+    'differs_from_events',
+  ]),
+  capturedAt: z.iso.datetime(),
+  stale: z.boolean(),
+})
+export const gitSnapshotListResponseSchema = z.object({
+  snapshots: z.array(gitSnapshotSchema),
+})
+
 export const createTurnRequestSchema = z.object({
   prompt: z.string().trim().min(1).max(100_000),
 })
@@ -254,6 +320,12 @@ export type ArtifactDownloadToken = z.infer<typeof artifactDownloadTokenSchema>
 export type ReplayResponse = z.infer<typeof replayResponseSchema>
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>
 export type SessionResponse = z.infer<typeof sessionResponseSchema>
+export type SessionSummary = z.infer<typeof sessionSummarySchema>
+export type SessionListResponse = z.infer<typeof sessionListResponseSchema>
+export type GitSnapshot = z.infer<typeof gitSnapshotSchema>
+export type GitSnapshotListResponse = z.infer<
+  typeof gitSnapshotListResponseSchema
+>
 export type CreateTurnRequest = z.infer<typeof createTurnRequestSchema>
 export type TurnAcceptedResponse = z.infer<typeof turnAcceptedResponseSchema>
 export type SteerTurnRequest = z.infer<typeof steerTurnRequestSchema>

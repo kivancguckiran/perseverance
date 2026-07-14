@@ -37,7 +37,7 @@ export interface ArtifactRange {
 }
 export interface ArtifactMetadata extends ArtifactScope {
   artifactId: string
-  kind: 'command-output'
+  kind: 'command-output' | 'git-diff'
   byteLength: number
   sha256: string | null
   chunkCount: number
@@ -56,7 +56,10 @@ export interface AppendInput {
   sourceKey?: string
 }
 export interface ArtifactStorage {
-  create(scope: ArtifactScope): ArtifactMetadata
+  create(
+    scope: ArtifactScope,
+    kind?: ArtifactMetadata['kind'],
+  ): ArtifactMetadata
   append(input: AppendInput): ArtifactMetadata
   finalize(artifactId: string, scope: ArtifactScope): ArtifactMetadata
   metadata(
@@ -207,7 +210,10 @@ export class LocalArtifactStorage implements ArtifactStorage {
     }
     throw new Error('ARTIFACT_NOT_FOUND')
   }
-  create(scope: ArtifactScope) {
+  create(
+    scope: ArtifactScope,
+    kind: ArtifactMetadata['kind'] = 'command-output',
+  ) {
     const artifactId = `art_${randomUUID()}`
     const p = this.#paths(artifactId, scope)
     mkdirSync(p.dir, { recursive: true })
@@ -215,7 +221,7 @@ export class LocalArtifactStorage implements ArtifactStorage {
     const meta: ArtifactMetadata = {
       ...scope,
       artifactId,
-      kind: 'command-output',
+      kind,
       byteLength: 0,
       sha256: null,
       chunkCount: 0,

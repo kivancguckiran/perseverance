@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import {
   serverMessageSchema,
   approvalListResponseSchema,
@@ -8,10 +8,14 @@ import {
   turnAcceptedResponseSchema,
   turnActionResponseSchema,
   readinessResponseSchema,
+  sessionListResponseSchema,
+  gitSnapshotListResponseSchema,
+  gitSnapshotSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
   type ReadinessResponse,
+  type GitSnapshot,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
@@ -71,6 +75,148 @@ export async function readSessionDetail(
   )
   if (!response.ok) throw await apiError(response)
   return sessionResponseSchema.parse(await response.json())
+}
+
+async function readRecentSessions(cursor: string | null) {
+  const query = new URLSearchParams({ limit: '12' })
+  if (cursor) query.set('cursor', cursor)
+  const response = await fetch(`${apiBaseUrl}/v1/sessions?${query}`, {
+    headers: scopeHeaders,
+  })
+  if (!response.ok) throw await apiError(response)
+  return sessionListResponseSchema.parse(await response.json())
+}
+
+async function readGitSnapshots(sessionId: string) {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/git-snapshots`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return gitSnapshotListResponseSchema.parse(await response.json())
+}
+
+async function downloadArtifact(artifactId: string) {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}/download-token`,
+    { method: 'POST', headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  const token = artifactDownloadTokenSchema.parse(await response.json())
+  const anchor = document.createElement('a')
+  anchor.href = new URL(token.downloadUrl, apiBaseUrl).toString()
+  anchor.click()
+}
+
+function GitPanel({
+  snapshot,
+  pending,
+  error,
+  onRefresh,
+}: {
+  snapshot?: GitSnapshot
+  pending: boolean
+  error?: string
+  onRefresh(): void
+}) {
+  return (
+    <section
+      className="git-panel"
+      aria-labelledby="git-title"
+      aria-busy={pending}
+    >
+      <div className="git-panel-heading">
+        <div>
+          <p className="section-label">Git doğruluk kaynağı</p>
+          <h2 id="git-title">Status · diff · log</h2>
+        </div>
+        <button type="button" disabled={pending} onClick={onRefresh}>
+          {pending ? 'Yenileniyor…' : 'Yenile'}
+        </button>
+      </div>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {!snapshot && !pending ? (
+        <p className="git-empty">Henüz Git snapshot yok.</p>
+      ) : null}
+      {snapshot ? (
+        <>
+          <div className="git-summary">
+            <span>{snapshot.repositoryKind}</span>
+            <span>
+              {snapshot.branch ??
+                (snapshot.detached ? 'detached HEAD' : 'branch yok')}
+            </span>
+            <code>{snapshot.headOid?.slice(0, 10) ?? 'HEAD yok'}</code>
+            <span>
+              {snapshot.clean
+                ? 'clean'
+                : `${snapshot.changes.length} değişiklik`}
+            </span>
+            {snapshot.stale ? <strong>stale</strong> : null}
+          </div>
+          <p
+            className={`git-relationship relationship-${snapshot.relationship}`}
+          >
+            {snapshot.relationship === 'authoritative'
+              ? 'Git snapshot authoritative; normalize event değişiklik sayısı yok.'
+              : snapshot.relationship === 'matches_events'
+                ? `Git snapshot, ${snapshot.eventChangeCount} normalize file-change eventiyle uyumlu.`
+                : 'Normalize event özeti ile Git snapshot farklı; Git sonucu authoritative.'}
+          </p>
+          <div className="git-columns">
+            <div>
+              <h3>Değişiklikler</h3>
+              <ul className="git-change-list">
+                {snapshot.changes.map((change) => (
+                  <li key={`${change.previousPath ?? ''}:${change.path}`}>
+                    <code>{change.areas.join(' + ')}</code>
+                    <span>
+                      {change.previousPath ? `${change.previousPath} → ` : ''}
+                      {change.path}
+                    </span>
+                    {change.binary ? <b>binary</b> : null}
+                    {change.submodule ? <b>submodule</b> : null}
+                  </li>
+                ))}
+                {!snapshot.changes.length ? <li>Workspace temiz.</li> : null}
+              </ul>
+            </div>
+            <div>
+              <h3>Son commit’ler</h3>
+              <ul className="git-log-list">
+                {snapshot.log.slice(0, 6).map((entry) => (
+                  <li key={entry.oid}>
+                    <code>{entry.shortOid}</code>
+                    <span>{entry.subject}</span>
+                  </li>
+                ))}
+                {!snapshot.log.length ? <li>Commit geçmişi yok.</li> : null}
+              </ul>
+            </div>
+          </div>
+          <details className="git-diff" open={Boolean(snapshot.diff.preview)}>
+            <summary>
+              Diff preview · {snapshot.diff.byteLength} byte
+              {snapshot.diff.truncated ? ' · bounded' : ''}
+            </summary>
+            <pre>{snapshot.diff.preview || 'Diff yok.'}</pre>
+            {snapshot.diff.artifactId ? (
+              <button
+                type="button"
+                onClick={() => void downloadArtifact(snapshot.diff.artifactId!)}
+              >
+                Tam redakte diff’i indir
+              </button>
+            ) : null}
+          </details>
+        </>
+      ) : null}
+    </section>
+  )
 }
 
 interface TimelineCard {
@@ -274,17 +420,6 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
     card.event.type === 'command.completed'
       ? card.event.payload.output.artifact?.artifactId
       : undefined
-  async function downloadArtifact(artifactId: string) {
-    const response = await fetch(
-      `${apiBaseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}/download-token`,
-      { method: 'POST', headers: scopeHeaders },
-    )
-    if (!response.ok) throw await apiError(response)
-    const token = artifactDownloadTokenSchema.parse(await response.json())
-    const anchor = document.createElement('a')
-    anchor.href = new URL(token.downloadUrl, apiBaseUrl).toString()
-    anchor.click()
-  }
   return (
     <article
       className={`timeline-card event-${card.event.type.replaceAll('.', '-')} ${
@@ -423,10 +558,23 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       query.state.data?.status === 'ready' ? false : 5_000,
   })
   const authReady = readiness.data?.status === 'ready'
+  const recentSessions = useInfiniteQuery({
+    queryKey: ['recent-sessions'],
+    queryFn: ({ pageParam }) => readRecentSessions(pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+  })
+  const gitSnapshots = useQuery({
+    queryKey: ['git-snapshots', sessionId],
+    queryFn: () => readGitSnapshots(sessionId!),
+    enabled: Boolean(sessionId),
+  })
   const [session, setSession] = useState<SessionResponse>()
   const [events, setEvents] = useState<Map<string, TimelineEvent>>(new Map())
   const [sessionPending, setSessionPending] = useState(false)
   const [turnPending, setTurnPending] = useState(false)
+  const [gitRefreshPending, setGitRefreshPending] = useState(false)
+  const [gitError, setGitError] = useState<string>()
   const [error, setError] = useState<string>()
   const [prompt, setPrompt] = useState('')
   const [realtimeState, setRealtimeState] = useState('kapalı')
@@ -646,10 +794,34 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         to: '/sessions/$sessionId',
         params: { sessionId: created.sessionId },
       })
+      void recentSessions.refetch()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setSessionPending(false)
+    }
+  }
+
+  async function refreshGit() {
+    if (!session) return
+    setGitError(undefined)
+    setGitRefreshPending(true)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/sessions/${encodeURIComponent(session.sessionId)}/git-snapshots/refresh`,
+        {
+          method: 'POST',
+          headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
+          body: '{}',
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      gitSnapshotSchema.parse(await response.json())
+      await gitSnapshots.refetch()
+    } catch (cause) {
+      setGitError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setGitRefreshPending(false)
     }
   }
 
@@ -811,6 +983,48 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               ) : null}
             </div>
           ) : null}
+          <nav className="recent-sessions" aria-label="Yakın session’lar">
+            <p className="section-label">Yakın session’lar</p>
+            {recentSessions.isPending ? <span>Yükleniyor…</span> : null}
+            {recentSessions.isError ? (
+              <span>Session listesi alınamadı.</span>
+            ) : null}
+            {recentSessions.data?.pages
+              .flatMap((page) => page.sessions)
+              .map((item) => (
+                <button
+                  type="button"
+                  key={item.sessionId}
+                  className={item.sessionId === sessionId ? 'is-active' : ''}
+                  onClick={() =>
+                    void navigate({
+                      to: '/sessions/$sessionId',
+                      params: { sessionId: item.sessionId },
+                    })
+                  }
+                >
+                  <span>{item.sessionId}</span>
+                  <small>{item.status}</small>
+                </button>
+              ))}
+            {recentSessions.hasNextPage ? (
+              <button
+                type="button"
+                disabled={recentSessions.isFetchingNextPage}
+                onClick={() => void recentSessions.fetchNextPage()}
+              >
+                <span>
+                  {recentSessions.isFetchingNextPage
+                    ? 'Yükleniyor…'
+                    : 'Daha eski session’lar'}
+                </span>
+              </button>
+            ) : null}
+            {recentSessions.data &&
+            !recentSessions.data.pages.some((page) => page.sessions.length) ? (
+              <span>Session yok.</span>
+            ) : null}
+          </nav>
         </aside>
 
         <section className="timeline-panel" aria-labelledby="timeline-title">
@@ -847,6 +1061,22 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               </button>
             ) : null}
           </section>
+          {session ? (
+            <GitPanel
+              {...(gitSnapshots.data?.snapshots[0]
+                ? { snapshot: gitSnapshots.data.snapshots[0] }
+                : {})}
+              pending={
+                gitRefreshPending ||
+                gitSnapshots.isPending ||
+                gitSnapshots.isFetching
+              }
+              {...(gitError || gitSnapshots.error
+                ? { error: gitError ?? gitSnapshots.error!.message }
+                : {})}
+              onRefresh={() => void refreshGit()}
+            />
+          ) : null}
           <div className="timeline-heading">
             <div>
               <p className="section-label">Canlı görev</p>
