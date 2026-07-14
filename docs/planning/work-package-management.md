@@ -48,17 +48,17 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 
 ## Güncel iş paketi durumu
 
-| İş paketi                                    | Durum          | Not                                                                                                         |
-| -------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
-| WP0 — Repository ve protokol temeli          | Tamamlandı     | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                              |
-| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı     | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
-| WP2 — Normalize event adapter                | Tamamlandı     | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
-| WP3 — Session, event store ve replay         | Tamamlandı     | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
-| WP4 — Gerçek thread ve turn akışı            | Tamamlandı     | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
-| WP5 — Approval state machine                 | Tamamlandı     | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
-| WP6 — Resume, reconnect ve recovery          | Tamamlandı     | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
-| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı     | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
-| WP8 — Golden senaryolar ve PoC demosu        | Kabul bekliyor | Üç gerçek golden görev, dört arıza senaryosu, browser kabul listesi ve temiz kurulum rehberi hazırlandı     |
+| İş paketi                                    | Durum      | Not                                                                                                         |
+| -------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| WP0 — Repository ve protokol temeli          | Tamamlandı | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                              |
+| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
+| WP2 — Normalize event adapter                | Tamamlandı | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
+| WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
+| WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
+| WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
+| WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
+| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
+| WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı               |
 
 ## WP1 nihai denetim sonucu
 
@@ -474,3 +474,30 @@ Durum: **Uygulandı / kabul bekliyor**
 
 Bu kayıt WP8'i `Tamamlandı` yapmaz; bağımsız kabul denetimi ve teslimat commit'i
 sonrasında nihai karar verilecektir.
+
+## WP8 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Uygulama commit'i `7e1d913` mevcut ve çalışma ağacı temizdir.
+- Pinli Codex 0.144.2 generator'ı iki ardışık çalışmada generated drift üretmemiştir.
+- Format, bütün package typecheck'leri, 9 test dosyasında 94 test, production build ve
+  `/` ile `/sessions/:sessionId` SSR HTTP smoke'u geçmiştir.
+- `pnpm demo:smoke`; 54 hedefli testi, unknown event'in event store → REST replay
+  hattında `codex.unknown` kalmasını ve gerçek iki-instance aynı-thread recovery'yi
+  doğrulamıştır.
+- Üç gerçek golden görevde read-only fixture bütünlüğü; file change, diff ve exit code
+  0 hedefli test; approval requested → resolved lifecycle'ı, `200/409` yarışı ve tam
+  bir upstream response doğrulanmıştır.
+- Golden timeline sequence'leri boşluksuz/monoton, event ID'leri benzersiz ve bütün
+  geçici process/store/workspace/Codex home cleanup sonuçları `true` olmuştur.
+- Bağımsız browser denetiminde session route ve canlı timeline desktop 1280×720 ile
+  mobil 390×844 görünümünde yatay taşma, console warning/error veya overlay olmadan
+  açılmış; denetim tab'ları ve dev process'leri kapatılmıştır.
+
+Uygulama commit'i: `7e1d913` (`feat: complete WP8 golden PoC demo`).
+
+Faz 0 tamamlandı. Mevcut planda WP9 tanımlı değildir; yeni paket ancak Faz 1 kapsamı
+kararlaştırıldıktan sonra açılabilir.

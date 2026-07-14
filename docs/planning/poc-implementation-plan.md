@@ -333,7 +333,7 @@ Kabul kriterleri:
 
 ### WP8 — Golden senaryolar ve PoC demosu
 
-Durum: Uygulandı / kabul bekliyor
+Durum: Tamamlandı
 
 Golden görevler:
 
@@ -358,7 +358,8 @@ Uygulama notu: `pnpm demo:smoke`; reconnect/unknown/concurrent-approval contract
 regresyonlarını ve gerçek iki-instance recovery smoke'unu çalıştırır. Üç
 `pnpm demo:golden:*` komutu gerçek app-server golden görevlerini yürütür. Geçici workspace, SQLite ve `CODEX_HOME` kapanışta
 silinir. Temiz kurulum ve browser kabul adımları `docs/demo/poc-demo.md` içindedir.
-Bu kayıt WP8'i tamamlandı ilan etmez; bağımsız kabul denetimi beklenmektedir.
+Bağımsız kabul denetiminde generator determinism, doğrulama zinciri, gerçek golden
+görevler, arıza smoke'ları, cleanup ve responsive browser görünümü doğrulanmıştır.
 
 ## 8. Önerilen teslimat sırası
 
@@ -460,9 +461,6 @@ Bir iş paketi ancak şu koşullarda tamamlandı sayılır:
 
 ## 14. Güncel sonraki adım
 
-Aktif iş paketi WP8'dir: üç golden görev ve reconnect, app-server restart, unknown event
-replay ile concurrent approval arıza senaryoları gerçek web timeline'ında yürütülecek;
-temiz kurulumdan tekrarlanabilir demo ve kanıt paketi hazırlanacaktır.
-
-WP8 tamamlanmadan yeni bir iş paketi açılamaz. Faz 0 planında WP9 tanımlı değildir.
+Faz 0, WP8 kabulüyle tamamlanmıştır. Mevcut planda WP9 tanımlı değildir. Yeni bir iş
+paketi açılmadan önce Faz 1 hedefi, kapsamı ve kabul kriterleri ayrıca planlanmalıdır.
 Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.

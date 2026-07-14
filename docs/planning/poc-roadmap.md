@@ -14,17 +14,17 @@ PoC'nin kabul edilmiş teknoloji yığını ve repository sınırları için `do
 
 ## Uygulama durumu — 14 Temmuz 2026
 
-| Paket                      | Durum          | Kanıt                                                                                                                                                      |
-| -------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| P0 Repository ve sözleşme  | Tamamlandı     | pnpm/TypeScript monorepo, Codex 0.144.2 pini, generated TS + JSON Schema ve schema hash                                                                    |
-| P1 Workspace Agent köprüsü | Tamamlandı     | Typed process/protocol/timeout hataları, health state, restart/backoff, crash-loop limiti, fake server lifecycle testleri ve gerçek app-server smoke testi |
-| P2 Normalize event adapter | Tamamlandı     | Tüm hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve on golden fixture doğrulandı                                              |
-| P3 Session ve replay       | Tamamlandı     | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
-| P4 Thread, turn ve web     | Tamamlandı     | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
-| P5 Approval                | Tamamlandı     | Durable state machine, concurrent karar, gerçek control-plane smoke ve responsive approval UI doğrulandı                                                   |
-| P6 Resume ve arıza         | Tamamlandı     | Persistent home, aynı-thread restart/resume, recovery modeli ve adreslenebilir session route doğrulandı                                                    |
-| P7 Büyük çıktı             | Tamamlandı     | Uçtan uca 100 MiB spill, streaming redaction, scoped artifact, slow-consumer resync ve bounded responsive timeline doğrulandı                              |
-| P8 Golden demo             | Kabul bekliyor | Üç gerçek golden görev ile reconnect/restart/unknown/concurrent-approval senaryoları birleşik smoke ve demo rehberinde hazırlandı                          |
+| Paket                      | Durum      | Kanıt                                                                                                                                                      |
+| -------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 Repository ve sözleşme  | Tamamlandı | pnpm/TypeScript monorepo, Codex 0.144.2 pini, generated TS + JSON Schema ve schema hash                                                                    |
+| P1 Workspace Agent köprüsü | Tamamlandı | Typed process/protocol/timeout hataları, health state, restart/backoff, crash-loop limiti, fake server lifecycle testleri ve gerçek app-server smoke testi |
+| P2 Normalize event adapter | Tamamlandı | Tüm hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve on golden fixture doğrulandı                                              |
+| P3 Session ve replay       | Tamamlandı | Session/thread binding, atomik raw+normalize ingest, scoped REST replay ve high-water replay/live+ack doğrulandı                                           |
+| P4 Thread, turn ve web     | Tamamlandı | Restart-safe runtime instance ingest key, collision guard, observable delivery error ve iki-instance gerçek browser kanıtı                                 |
+| P5 Approval                | Tamamlandı | Durable state machine, concurrent karar, gerçek control-plane smoke ve responsive approval UI doğrulandı                                                   |
+| P6 Resume ve arıza         | Tamamlandı | Persistent home, aynı-thread restart/resume, recovery modeli ve adreslenebilir session route doğrulandı                                                    |
+| P7 Büyük çıktı             | Tamamlandı | Uçtan uca 100 MiB spill, streaming redaction, scoped artifact, slow-consumer resync ve bounded responsive timeline doğrulandı                              |
+| P8 Golden demo             | Tamamlandı | Üç gerçek golden görev ile reconnect/restart/unknown/concurrent-approval senaryoları temiz kurulumdan doğrulandı                                           |
 
 WP2 adapter teslimatı tamamlandı: generated Codex sözleşmeleri runtime'da doğrulanır; hedef event aileleri normalize edilir; unknown girdiler güvenli biçimde korunur; completed snapshot deltaların yetkili son halidir; redaction canonical checksum'dan önce uygulanır. On golden fixture dahil repo doğrulamasında 31 test geçmiştir.
 
@@ -38,12 +38,13 @@ WP5 kabul edildi: atomik durable approval, optimistic-lock/idempotent karar, gen
 
 WP6 kabul edildi: server-owned persistent home, durable recovery alanları, scoped session detail/resume, generated steer/interrupt ve adreslenebilir browser session route'u tamamlandı. Gerçek iki-instance smoke aynı thread resume, monotonic sequence ve snapshot dedupe davranışını; browser reload denetimi TanStack route param aktarımı ile responsive görünümü doğruladı.
 
-WP7 kabul edildi: 100 MiB delta ve completed-only akışları bounded preview ile tam redakte artifact'e taşındı; durable metadata/recovery, scoped streaming download, slow-consumer resync ve item başına coalesce edilen responsive timeline 94 test, build, SSR smoke ve browser denetimiyle doğrulandı. Aktif iş paketi WP8 golden senaryolar ve PoC demosudur.
+WP7 kabul edildi: 100 MiB delta ve completed-only akışları bounded preview ile tam redakte artifact'e taşındı; durable metadata/recovery, scoped streaming download, slow-consumer resync ve item başına coalesce edilen responsive timeline 94 test, build, SSR smoke ve browser denetimiyle doğrulandı.
 
-WP8 uygulama teslimatı kabul bekliyor: `pnpm demo:smoke` arıza regresyonlarını ve
-aynı-thread restart/resume'u; üç `pnpm demo:golden:*` komutu gerçek app-server
-görevlerini ve tek kazananlı concurrent approval yarışını çalıştırır. `docs/demo/poc-demo.md` temiz
-kurulum, desktop/mobil browser kabulü ve cleanup adımlarını tek yerde toplar.
+WP8 kabul edildi: `pnpm demo:smoke` arıza regresyonlarını ve aynı-thread
+restart/resume'u; üç `pnpm demo:golden:*` komutu gerçek app-server görevlerini ve tek
+kazananlı concurrent approval yarışını doğruladı. Generator deterministik kaldı,
+cleanup kontrolleri geçti ve desktop/mobil browser görünümü taşmasız, temiz console ile
+açıldı. Faz 0 tamamlandı; mevcut planda WP9 yoktur.
 
 ## Uygulama sırası
 
