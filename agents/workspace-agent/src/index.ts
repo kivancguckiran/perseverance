@@ -1,6 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createInterface, type Interface } from 'node:readline'
+export {
+  createIsolatedCodexHome,
+  type IsolatedCodexHome,
+} from './isolated-codex-home'
 
 export type JsonRpcId = number | string
 
@@ -526,6 +530,8 @@ export interface WorkspaceRuntimeClient {
   ): Promise<TResult>
   onNotification(listener: MessageListener): () => void
   onServerRequest(listener: MessageListener): () => void
+  onHealthChange?(listener: HealthListener): () => void
+  respond(id: JsonRpcId, result: unknown): void
   stop(): Promise<void>
 }
 
@@ -563,6 +569,7 @@ export interface WorkspaceRuntimeRegistryOptions {
     delivery: RuntimeDelivery,
     error: unknown,
   ) => void
+  onHealthChange?: (runtime: WorkspaceRuntime, health: ProcessHealth) => void
 }
 
 function runtimeKey(
@@ -720,6 +727,9 @@ export class WorkspaceRuntimeRegistry {
 
     client.onNotification((message) => deliver('notification', message))
     client.onServerRequest((message) => deliver('request', message))
+    client.onHealthChange?.((health) => {
+      if (runtime) this.#options.onHealthChange?.(runtime, health)
+    })
     try {
       await client.initialize(this.#options.clientInfo)
       runtime = {
@@ -729,6 +739,7 @@ export class WorkspaceRuntimeRegistry {
         initializedAt: new Date().toISOString(),
       }
       this.#runtimes.set(key, runtime)
+      this.#options.onHealthChange?.(runtime, client.health)
       return runtime
     } catch (error) {
       await client.stop().catch(() => undefined)

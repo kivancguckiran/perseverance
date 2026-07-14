@@ -1,5 +1,6 @@
 import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import { CodexAppServerClient } from './index'
+import { createIsolatedCodexHome } from './isolated-codex-home'
 
 type ThreadStartResponse = codexV2.ThreadStartResponse
 type TurnStartResponse = codexV2.TurnStartResponse
@@ -8,8 +9,10 @@ const timeoutMs = Number.parseInt(
   process.env.CODEX_FLOW_SMOKE_TIMEOUT_MS ?? '120000',
   10,
 )
+const isolatedHome = createIsolatedCodexHome()
 const client = new CodexAppServerClient({
   cwd: process.cwd(),
+  env: { ...process.env, CODEX_HOME: isolatedHome.path },
   onStderr: (chunk) => process.stderr.write(chunk),
   requestTimeoutMs: timeoutMs,
 })
@@ -38,6 +41,7 @@ client.onNotification((message) => {
   }
 })
 
+let smokeResult: Record<string, unknown> | undefined
 try {
   await client.initialize({
     name: 'persistent_codex_flow_smoke',
@@ -68,18 +72,19 @@ try {
   const text = await Promise.race([finalMessage, timeout]).finally(() => {
     if (timeoutHandle) clearTimeout(timeoutHandle)
   })
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        ok: true,
-        codexThreadId: expectedThreadId,
-        codexTurnId: turn.turn.id,
-        finalAgentMessage: text,
-      },
-      null,
-      2,
-    )}\n`,
-  )
+  smokeResult = {
+    ok: true,
+    isolatedCodexHome: isolatedHome.path,
+    codexThreadId: expectedThreadId,
+    codexTurnId: turn.turn.id,
+    finalAgentMessage: text,
+  }
 } finally {
   await client.stop()
+  isolatedHome.cleanup()
+}
+if (smokeResult) {
+  process.stdout.write(
+    `${JSON.stringify({ ...smokeResult, isolatedCodexHomeCleaned: true }, null, 2)}\n`,
+  )
 }

@@ -270,6 +270,10 @@ Bağımsız kabul denetiminde bulunan ve giderilen kök neden:
 
 Durum: Aktif
 
+Uygulama notu (kabul bekliyor): Approval kaydı raw+normalize ingest ile atomik yazılır; kararlar expected-version CAS ve Idempotency-Key ile korunur; response runtime instance/process generation'a bağlanır. REST, WebSocket ve responsive web kartı uygulanmıştır. Nihai kabul ayrı yönetim denetimine tabidir.
+
+Kabul düzeltmesi (yeniden denetim bekliyor): Gerçek smoke control-plane üzerinden durable pending/decision/resolved/terminal akışını ölçer. File diff context scoped event lookup ile gelir; runtime health/generation pending kayıtları proaktif expire eder; terminal approval durumları UI'da kalır. WP5 durumu nihai yönetim kabulüne kadar Aktif kalır.
+
 İşler:
 
 - Server-initiated command/file approval yakalama
@@ -388,6 +392,8 @@ pnpm verify
 ```bash
 pnpm --filter @persistent-codex/workspace-agent smoke:real
 ```
+
+Gerçek smoke komutları opt-in'dir ve `pnpm verify` tarafından çalıştırılmaz. Her çalışma, yalnız mevcut auth/config dosyalarını symlink eden geçici bir `CODEX_HOME` kullanır; Codex Desktop task/session/state depoları bağlanmaz ve child process durduktan sonra geçici home silinir. Kullanıcının mevcut task'ları test cleanup işleminin parçası değildir.
 
 ### UI değişikliğinde
 

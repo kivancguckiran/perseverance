@@ -43,6 +43,48 @@ export interface IngestEventInput extends StoreScope {
   ingestKey: string
   raw: RawEventInput
   event: TimelineEvent
+  approval?: NewApprovalInput
+}
+
+export type ApprovalDecision =
+  'accept' | 'accept_for_session' | 'decline' | 'cancel'
+export type ApprovalStatus =
+  'pending' | 'resolving' | 'resolved' | 'expired' | 'superseded'
+export interface ApprovalRecord extends StoreScope {
+  approvalId: string
+  turnId: string
+  itemId: string
+  requestId: string | number
+  runtimeInstanceId: string
+  processGeneration: number
+  kind: 'command_execution' | 'file_change'
+  status: ApprovalStatus
+  context: Record<string, unknown>
+  availableDecisions: ApprovalDecision[]
+  requestedAt: string
+  resolvedAt: string | null
+  resolvingUserId: string | null
+  selectedDecision: ApprovalDecision | null
+  version: number
+  upstreamResponseStatus: 'pending' | 'sent' | 'acknowledged' | 'unknown'
+}
+export interface NewApprovalInput extends StoreScope {
+  approvalId: string
+  turnId: string
+  itemId: string
+  requestId: string | number
+  runtimeInstanceId: string
+  processGeneration: number
+  kind: ApprovalRecord['kind']
+  context: Record<string, unknown>
+  availableDecisions: ApprovalDecision[]
+  requestedAt: string
+}
+
+export interface FileApprovalContext {
+  filePath: string | null
+  diff: string | null
+  diffAvailable: boolean
 }
 
 export interface IngestEventResult {
@@ -130,8 +172,30 @@ interface IdempotencyRow {
   created_at: string
   updated_at: string
 }
+interface ApprovalRow {
+  approval_id: string
+  tenant_id: string
+  workspace_id: string
+  session_id: string
+  turn_id: string
+  item_id: string
+  request_id_json: string
+  runtime_instance_id: string
+  process_generation: number
+  kind: ApprovalRecord['kind']
+  status: ApprovalStatus
+  context_json: string
+  available_decisions_json: string
+  requested_at: string
+  resolved_at: string | null
+  resolving_user_id: string | null
+  selected_decision: ApprovalDecision | null
+  version: number
+  upstream_response_status: ApprovalRecord['upstreamResponseStatus']
+}
 
 type CommitListener = (event: TimelineEvent) => void
+type ApprovalListener = (approval: ApprovalRecord) => void
 
 function assertIdentifier(value: string, name: string): void {
   if (value.length === 0)
@@ -172,9 +236,34 @@ function idempotencyFromRow(row: IdempotencyRow): IdempotencyRecord {
   }
 }
 
+function approvalFromRow(row: ApprovalRow): ApprovalRecord {
+  return {
+    approvalId: row.approval_id,
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    turnId: row.turn_id,
+    itemId: row.item_id,
+    requestId: JSON.parse(row.request_id_json),
+    runtimeInstanceId: row.runtime_instance_id,
+    processGeneration: row.process_generation,
+    kind: row.kind,
+    status: row.status,
+    context: JSON.parse(row.context_json),
+    availableDecisions: JSON.parse(row.available_decisions_json),
+    requestedAt: row.requested_at,
+    resolvedAt: row.resolved_at,
+    resolvingUserId: row.resolving_user_id,
+    selectedDecision: row.selected_decision,
+    version: row.version,
+    upstreamResponseStatus: row.upstream_response_status,
+  }
+}
+
 export class SqliteEventStore {
   readonly #database: DatabaseSync
   readonly #listeners = new Set<CommitListener>()
+  readonly #approvalListeners = new Set<ApprovalListener>()
   readonly #now: () => Date
   #closed = false
 
@@ -188,6 +277,11 @@ export class SqliteEventStore {
       PRAGMA busy_timeout = 5000;
     `)
     bootstrapSchema(this.#database, this.#timestamp())
+    this.#database
+      .prepare(
+        `UPDATE approvals SET status = 'expired', upstream_response_status = 'unknown', resolved_at = ?, version = version + 1 WHERE status = 'resolving'`,
+      )
+      .run(this.#timestamp())
   }
 
   #timestamp(): string {
@@ -436,6 +530,32 @@ export class SqliteEventStore {
           input.workspaceId,
           input.sessionId,
         )
+      if (input.approval) {
+        const approval = input.approval
+        this.#database
+          .prepare(
+            `INSERT OR IGNORE INTO approvals (
+            approval_id, tenant_id, workspace_id, session_id, turn_id, item_id,
+            request_id_json, runtime_instance_id, process_generation, kind, status,
+            context_json, available_decisions_json, requested_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+          )
+          .run(
+            approval.approvalId,
+            approval.tenantId,
+            approval.workspaceId,
+            approval.sessionId,
+            approval.turnId,
+            approval.itemId,
+            JSON.stringify(approval.requestId),
+            approval.runtimeInstanceId,
+            approval.processGeneration,
+            approval.kind,
+            JSON.stringify(approval.context),
+            JSON.stringify(approval.availableDecisions),
+            approval.requestedAt,
+          )
+      }
       this.#database.exec('COMMIT')
     } catch (error) {
       this.#database.exec('ROLLBACK')
@@ -448,6 +568,10 @@ export class SqliteEventStore {
       } catch {
         // Persistence succeeded; a realtime consumer cannot roll it back.
       }
+    }
+    if (input.approval) {
+      const approval = this.getApproval(input, input.approval.approvalId)
+      for (const listener of this.#approvalListeners) listener(approval)
     }
     return { event: committedEvent, duplicate: false }
   }
@@ -514,6 +638,241 @@ export class SqliteEventStore {
   onCommitted(listener: CommitListener): () => void {
     this.#listeners.add(listener)
     return () => this.#listeners.delete(listener)
+  }
+
+  onApprovalChanged(listener: ApprovalListener): () => void {
+    this.#approvalListeners.add(listener)
+    return () => this.#approvalListeners.delete(listener)
+  }
+
+  getApproval(
+    scope: Pick<StoreScope, 'tenantId' | 'workspaceId'>,
+    approvalId: string,
+  ): ApprovalRecord {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM approvals WHERE tenant_id = ? AND workspace_id = ? AND approval_id = ?`,
+      )
+      .get(scope.tenantId, scope.workspaceId, approvalId) as unknown as
+      ApprovalRow | undefined
+    if (!row)
+      throw new StoreError(
+        'APPROVAL_NOT_FOUND',
+        'Approval not found in the requested scope',
+      )
+    return approvalFromRow(row)
+  }
+
+  findApprovalByRequest(
+    input: Pick<StoreScope, 'tenantId' | 'workspaceId'> & {
+      runtimeInstanceId: string
+      processGeneration: number
+      requestId: string | number
+    },
+  ): ApprovalRecord | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM approvals WHERE tenant_id = ? AND workspace_id = ? AND runtime_instance_id = ? AND process_generation = ? AND request_id_json = ?`,
+      )
+      .get(
+        input.tenantId,
+        input.workspaceId,
+        input.runtimeInstanceId,
+        input.processGeneration,
+        JSON.stringify(input.requestId),
+      ) as unknown as ApprovalRow | undefined
+    return row ? approvalFromRow(row) : undefined
+  }
+
+  findFileApprovalContext(
+    input: StoreScope & { turnId: string; itemId: string },
+  ): FileApprovalContext {
+    const rows = this.#database
+      .prepare(
+        `SELECT payload_json FROM events
+       WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+         AND type IN ('file.change.proposed', 'file.change.completed', 'diff.updated')
+       ORDER BY sequence DESC`,
+      )
+      .all(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+      ) as unknown as EventRow[]
+    let filePath: string | null = null
+    let diff: string | null = null
+    for (const row of rows) {
+      const event = parseTimelineEvent(JSON.parse(row.payload_json))
+      if (
+        event.codexTurnId !== input.turnId ||
+        event.codexItemId !== input.itemId
+      )
+        continue
+      if (
+        event.type === 'file.change.proposed' ||
+        event.type === 'file.change.completed'
+      ) {
+        const change = event.payload.changes[0]
+        filePath ??= change?.path ?? null
+        diff ??= change?.diff || null
+      } else if (event.type === 'diff.updated') {
+        diff ??=
+          'diff' in event.payload
+            ? event.payload.diff || null
+            : event.payload.changes
+                .map((change) => change.diff)
+                .filter(Boolean)
+                .join('\n') || null
+        filePath ??=
+          'changes' in event.payload
+            ? (event.payload.changes[0]?.path ?? null)
+            : null
+      }
+      if (filePath && diff) break
+    }
+    return { filePath, diff, diffAvailable: diff !== null }
+  }
+
+  listApprovals(
+    scope: Pick<StoreScope, 'tenantId' | 'workspaceId'>,
+    status?: ApprovalStatus,
+  ): ApprovalRecord[] {
+    const rows = (status
+      ? this.#database
+          .prepare(
+            `SELECT * FROM approvals WHERE tenant_id = ? AND workspace_id = ? AND status = ? ORDER BY requested_at`,
+          )
+          .all(scope.tenantId, scope.workspaceId, status)
+      : this.#database
+          .prepare(
+            `SELECT * FROM approvals WHERE tenant_id = ? AND workspace_id = ? ORDER BY requested_at`,
+          )
+          .all(scope.tenantId, scope.workspaceId)) as unknown as ApprovalRow[]
+    return rows.map(approvalFromRow)
+  }
+
+  beginApprovalResolution(
+    input: Pick<StoreScope, 'tenantId' | 'workspaceId'> & {
+      approvalId: string
+      expectedVersion: number
+      decision: ApprovalDecision
+      userId: string
+    },
+  ): ApprovalRecord {
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const current = this.getApproval(input, input.approvalId)
+      if (current.status !== 'pending')
+        throw new StoreConflictError(
+          'APPROVAL_ALREADY_RESOLVED',
+          'Approval is no longer pending',
+        )
+      if (current.version !== input.expectedVersion)
+        throw new StoreConflictError(
+          'APPROVAL_VERSION_CONFLICT',
+          'Approval version is stale',
+        )
+      const result = this.#database
+        .prepare(
+          `UPDATE approvals SET status = 'resolving', selected_decision = ?, resolving_user_id = ?, version = version + 1
+         WHERE tenant_id = ? AND workspace_id = ? AND approval_id = ? AND status = 'pending' AND version = ?`,
+        )
+        .run(
+          input.decision,
+          input.userId,
+          input.tenantId,
+          input.workspaceId,
+          input.approvalId,
+          input.expectedVersion,
+        )
+      if (Number(result.changes) !== 1)
+        throw new StoreConflictError(
+          'APPROVAL_ALREADY_RESOLVED',
+          'Approval was resolved concurrently',
+        )
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+    const record = this.getApproval(input, input.approvalId)
+    for (const listener of this.#approvalListeners) listener(record)
+    return record
+  }
+
+  finishApproval(
+    input: Pick<StoreScope, 'tenantId' | 'workspaceId'> & {
+      approvalId: string
+      status?: 'resolved' | 'expired' | 'superseded'
+      upstreamResponseStatus: ApprovalRecord['upstreamResponseStatus']
+    },
+  ): ApprovalRecord {
+    const status = input.status ?? 'resolved'
+    const result = this.#database
+      .prepare(
+        `UPDATE approvals SET status = ?, upstream_response_status = ?, resolved_at = ?, version = version + 1
+       WHERE tenant_id = ? AND workspace_id = ? AND approval_id = ? AND status IN ('pending','resolving','resolved')`,
+      )
+      .run(
+        status,
+        input.upstreamResponseStatus,
+        this.#timestamp(),
+        input.tenantId,
+        input.workspaceId,
+        input.approvalId,
+      )
+    if (Number(result.changes) !== 1)
+      return this.getApproval(input, input.approvalId)
+    const record = this.getApproval(input, input.approvalId)
+    for (const listener of this.#approvalListeners) listener(record)
+    return record
+  }
+
+  expireApprovals(
+    scope: StoreScope,
+    status: 'expired' | 'superseded' = 'expired',
+  ): ApprovalRecord[] {
+    const pending = this.listApprovals(scope, 'pending').filter(
+      (item) => item.sessionId === scope.sessionId,
+    )
+    return pending.map((item) =>
+      this.finishApproval({
+        ...scope,
+        approvalId: item.approvalId,
+        status,
+        upstreamResponseStatus: 'unknown',
+      }),
+    )
+  }
+
+  expireRuntimeApprovals(
+    input: Pick<StoreScope, 'tenantId' | 'workspaceId'> & {
+      runtimeInstanceId: string
+      currentProcessGeneration?: number
+    },
+  ): ApprovalRecord[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM approvals WHERE tenant_id = ? AND workspace_id = ?
+       AND runtime_instance_id = ? AND status IN ('pending','resolving')
+       ${input.currentProcessGeneration === undefined ? '' : 'AND process_generation <> ?'}`,
+      )
+      .all(
+        input.tenantId,
+        input.workspaceId,
+        input.runtimeInstanceId,
+        ...(input.currentProcessGeneration === undefined
+          ? []
+          : [input.currentProcessGeneration]),
+      ) as unknown as ApprovalRow[]
+    return rows.map(approvalFromRow).map((approval) =>
+      this.finishApproval({
+        ...input,
+        approvalId: approval.approvalId,
+        status: 'expired',
+        upstreamResponseStatus: 'unknown',
+      }),
+    )
   }
 
   getRecordCounts(scope: StoreScope): {
@@ -678,6 +1037,7 @@ export class SqliteEventStore {
     if (this.#closed) return
     this.#closed = true
     this.#listeners.clear()
+    this.#approvalListeners.clear()
     this.#database.close()
   }
 }

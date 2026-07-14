@@ -332,6 +332,8 @@ describe('WorkspaceRuntimeRegistry', () => {
         return () => undefined
       }
 
+      respond() {}
+
       async stop() {
         this.health = { state: 'stopped', restartAttempt: 0 }
       }

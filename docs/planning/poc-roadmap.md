@@ -32,6 +32,8 @@ WP4 düzeltmesi kabul edildi: runtime-instance kimliği yeni control-plane regis
 
 WP4 tamamlandı. Aktif iş paketi WP5 durable approval state machine'dir; WP5 kabul edilmeden sonraki pakete geçilmez.
 
+WP5 uygulama adayı: durable approval şeması, atomik ingest, optimistic-lock karar akışı, idempotent REST endpoint'leri, scoped WebSocket lifecycle ve responsive approval kartı eklendi. Paket yönetim durumunda aktif kalır; nihai kabul ve gerçek app-server approval smoke kanıtı WP yöneticisi tarafından doğrulanacaktır.
+
 ## Uygulama sırası
 
 ### P0. Repository ve sözleşme temeli

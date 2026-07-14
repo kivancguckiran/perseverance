@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 1
+export const CURRENT_SCHEMA_VERSION = 2
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -92,6 +92,23 @@ export const CREATE_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idempotency_session_status_idx
     ON idempotency_keys(tenant_id, workspace_id, session_id, status);
+
+  CREATE TABLE IF NOT EXISTS approvals (
+    approval_id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    request_id_json TEXT NOT NULL, runtime_instance_id TEXT NOT NULL,
+    process_generation INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+    context_json TEXT NOT NULL, available_decisions_json TEXT NOT NULL,
+    requested_at TEXT NOT NULL, resolved_at TEXT, resolving_user_id TEXT,
+    selected_decision TEXT, version INTEGER NOT NULL DEFAULT 1,
+    upstream_response_status TEXT NOT NULL DEFAULT 'pending',
+    UNIQUE(tenant_id, workspace_id, runtime_instance_id, process_generation, request_id_json),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
+  CREATE INDEX IF NOT EXISTS approvals_scope_status_idx
+    ON approvals(tenant_id, workspace_id, status, requested_at);
 `
 
 interface TableInfoRow {

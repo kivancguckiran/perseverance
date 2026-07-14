@@ -182,3 +182,35 @@ Doğrulama kanıtı:
 - Uygulama commit'i: `81b6881` (`feat: complete persistent Codex workspace through WP4`).
 
 Aktif iş paketi WP5'tir.
+
+## WP5 ilk kabul denetimi — düzeltme gerekli
+
+Karar: **Eksik**
+
+Doğrulananlar:
+
+- Durable approval schema, atomik raw+normalize+approval ingest, optimistic version kontrolü, REST karar endpoint'i, scoped WebSocket approval mesajı ve responsive approval kartı için uygulama adayı mevcut.
+- `pnpm verify` başarılı: 5 test dosyasında 59 test geçti; typecheck ile TanStack Start client/SSR build tamamlandı.
+- Gerçek Codex `0.144.2` approval smoke'u command approval request'i aldı, bir `decline` response gönderdi ve terminal turn durumuna ulaştı.
+- Smoke geçici izole `CODEX_HOME` kullandı ve dizinin temizlendiği bağımsız olarak doğrulandı.
+- Uygulama desktop ve 390×844 görünümde yatay taşma, console warning/error veya overlay olmadan açıldı.
+
+Eksik/hatalı davranış:
+
+- WP5 değişiklikleri commit edilmemiş; zorunlu `feat: add durable approval state machine` commit'i yok ve çalışma ağacı dirty.
+- Gerçek approval smoke doğrudan `CodexAppServerClient.respond()` çağırıyor; control-plane durable approval kaydını, pending REST sorgusunu, decision endpoint'ini, CAS/idempotency akışını ve tek upstream response'u uçtan uca kanıtlamıyor. `responseBeforeDecision` alanı gerçek bir ölçüm yerine sabit `false` yazılıyor.
+- File approval için integration testi ve aynı session/turn/item kapsamından diff context lookup uygulanmamış; context her zaman `diff: null` oluyor.
+- UI command actions ve redakte network context'i göstermiyor; eski “WP5’e kadar yalnızca pasif kayıt” metni korunmuş.
+- UI yalnız `pending`/`resolving` kayıtları render ettiği için WebSocket ile gelen `resolved`, `expired` veya `superseded` durum kartı anında kayboluyor; karar sonucu kullanıcıya canlı olarak gösterilmiyor.
+- Zorunlu file/command dört karar mapping'i, gerçek concurrent decision yarışı, generation/runtime mismatch, turn completion/interrupt/crash expiry, `serverRequest/resolved` reconciliation, redaction, approval WebSocket lifecycle/reconnect ve UI interaction testleri eksik.
+- Process crash/generation değişiminde pending approval'ları proaktif expire eden lifecycle bağlantısı ve buna ait crash/recovery testi bulunmuyor.
+
+WP5 tamamlanmadan WP6 aktif edilemez.
+
+## WP5 kabul düzeltmesi — yeniden denetim bekliyor
+
+Durum: **Aktif / kabul bekliyor**
+
+Düzeltme teslimatında gerçek smoke control-plane REST hattına taşındı; command/file context, diff lookup, runtime health/generation expiry, resolved reconciliation, WebSocket lifecycle ve terminal approval kartları eklendi. Integration matrisi command/file karar mapping'i, concurrent CAS, idempotency, isolation, lifecycle, redaction ve reconnect davranışını kapsayacak biçimde genişletildi. Gerçek smoke pending REST kaydı, karar öncesi sıfır response, decision endpoint'i sonrası tek response, durable resolved durum ve terminal turn gözlemini kanıtladı. Çalışan uygulama gerçek controlled approval ile desktop ve 390×844 görünümde doğrulandı.
+
+Bu kayıt WP5'i tamamlandı yapmaz; nihai karar yönetici yeniden denetimindedir.

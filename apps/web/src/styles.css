@@ -218,11 +218,45 @@ h2 {
   font-size: 0.76rem;
 }
 
-.card-heading span,
-.approval-note {
+.card-heading span {
   color: #71857d;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.65rem;
+}
+
+.approval-card {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 16px;
+  border: 1px solid #a47b3c;
+  border-radius: 14px;
+  background: #211c12;
+  box-shadow: 0 12px 35px rgb(0 0 0 / 35%);
+}
+.approval-card p {
+  color: #cbbd9e;
+  overflow-wrap: anywhere;
+}
+.approval-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.approval-actions button {
+  padding: 9px 12px;
+  border: 1px solid #765f38;
+  border-radius: 9px;
+  color: #f0ddba;
+  background: #302617;
+}
+.approval-actions button:disabled {
+  opacity: 0.5;
 }
 
 .timeline-card pre {
@@ -236,8 +270,22 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.approval-note {
-  margin: 10px 0 0;
+.approval-resolved {
+  border-color: #315b4c;
+  background: #10201b;
+}
+.approval-expired,
+.approval-superseded {
+  border-color: #5a625f;
+  background: #151b19;
+}
+.approval-context {
+  margin-top: 12px;
+}
+.approval-context b,
+.approval-progress {
+  color: #d8c598;
+  font-size: 0.75rem;
 }
 
 .timeline-heading {
@@ -358,5 +406,9 @@ h2 {
   .composer-row {
     align-items: stretch;
     flex-direction: column;
+  }
+  .approval-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }

@@ -9,6 +9,7 @@
   "scripts": {
     "smoke:real": "tsx src/smoke.ts",
     "smoke:real-flow": "tsx src/smoke.ts",
+    "smoke:real-approval": "tsx ../../services/control-plane/src/approval-smoke.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

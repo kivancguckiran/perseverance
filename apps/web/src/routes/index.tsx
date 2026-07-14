@@ -2,9 +2,13 @@ import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import {
   serverMessageSchema,
+  approvalListResponseSchema,
+  approvalSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
   type SessionResponse,
+  type Approval,
+  type ApprovalDecision,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -171,11 +175,11 @@ function detailOf(card: TimelineCard): string {
 }
 
 function TimelineEntry({ card }: { card: TimelineCard }) {
-  const passiveApproval = card.event.type === 'approval.requested'
+  const approvalEvent = card.event.type === 'approval.requested'
   return (
     <article
       className={`timeline-card event-${card.event.type.replaceAll('.', '-')} ${
-        passiveApproval ? 'is-approval' : ''
+        approvalEvent ? 'is-approval' : ''
       }`}
     >
       <div className="card-heading">
@@ -183,10 +187,101 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
         <span>#{card.event.sequence}</span>
       </div>
       <pre>{detailOf(card)}</pre>
-      {passiveApproval ? (
-        <p className="approval-note">WP5’e kadar yalnızca pasif kayıt</p>
-      ) : null}
     </article>
+  )
+}
+
+function ApprovalCard({
+  approval,
+  onDecision,
+  pending,
+  error,
+}: {
+  approval: Approval
+  onDecision: (decision: ApprovalDecision) => void
+  pending: boolean
+  error?: string
+}) {
+  const context = approval.context
+  const commandActions = Array.isArray(context.commandActions)
+    ? context.commandActions
+    : []
+  const networkContext = context.networkApprovalContext
+  return (
+    <aside
+      className={`approval-card approval-${approval.status}`}
+      aria-live="assertive"
+    >
+      <div className="card-heading">
+        <strong>
+          {approval.kind === 'command_execution'
+            ? 'Komut onayı'
+            : 'Dosya değişikliği onayı'}
+        </strong>
+        <span>{approval.status}</span>
+      </div>
+      {context.command ? <pre>$ {String(context.command)}</pre> : null}
+      {context.cwd ? (
+        <p>
+          <b>cwd</b> {String(context.cwd)}
+        </p>
+      ) : null}
+      {context.grantRoot ? (
+        <p>
+          <b>grant root</b> {String(context.grantRoot)}
+        </p>
+      ) : null}
+      {context.reason ? <p>{String(context.reason)}</p> : null}
+      {commandActions.length ? (
+        <div className="approval-context">
+          <b>Command actions</b>
+          <pre>{JSON.stringify(commandActions, null, 2)}</pre>
+        </div>
+      ) : null}
+      {networkContext ? (
+        <div className="approval-context">
+          <b>Network context</b>
+          <pre>{JSON.stringify(networkContext, null, 2)}</pre>
+        </div>
+      ) : null}
+      {approval.kind === 'file_change' ? (
+        <div className="approval-context">
+          {context.filePath ? (
+            <p>
+              <b>file</b> {String(context.filePath)}
+            </p>
+          ) : null}
+          <pre>
+            {context.diffAvailable && context.diff
+              ? String(context.diff)
+              : 'Diff mevcut değil'}
+          </pre>
+        </div>
+      ) : null}
+      {error ? <p className="form-error">{error}</p> : null}
+      {approval.status === 'resolving' ? (
+        <p className="approval-progress">Karar gönderiliyor…</p>
+      ) : null}
+      {approval.status === 'pending' ? (
+        <div className="approval-actions">
+          <button disabled={pending} onClick={() => onDecision('accept')}>
+            Accept once
+          </button>
+          <button
+            disabled={pending}
+            onClick={() => onDecision('accept_for_session')}
+          >
+            Accept for session
+          </button>
+          <button disabled={pending} onClick={() => onDecision('decline')}>
+            Decline
+          </button>
+          <button disabled={pending} onClick={() => onDecision('cancel')}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
+    </aside>
   )
 }
 
@@ -202,6 +297,11 @@ function WorkspacePage() {
   const [error, setError] = useState<string>()
   const [prompt, setPrompt] = useState('')
   const [realtimeState, setRealtimeState] = useState('kapalı')
+  const [approvals, setApprovals] = useState<Map<string, Approval>>(new Map())
+  const [approvalPending, setApprovalPending] = useState<string>()
+  const [approvalErrors, setApprovalErrors] = useState<Map<string, string>>(
+    new Map(),
+  )
   const lastSequence = useRef(0)
 
   useEffect(() => {
@@ -228,6 +328,34 @@ function WorkspacePage() {
         return next
       })
     }
+    void Promise.all(
+      ['pending', 'resolving', 'resolved', 'expired', 'superseded'].map(
+        async (status) => {
+          const response = await fetch(
+            `${apiBaseUrl}/v1/approvals?status=${status}`,
+            { headers: scopeHeaders },
+          )
+          if (!response.ok) throw await apiError(response)
+          return approvalListResponseSchema.parse(await response.json())
+            .approvals
+        },
+      ),
+    )
+      .then((groups) => {
+        if (active)
+          setApprovals(
+            new Map(
+              groups
+                .flat()
+                .filter((a) => a.sessionId === session.sessionId)
+                .map((a) => [a.approvalId, a]),
+            ),
+          )
+      })
+      .catch((cause) => {
+        if (active)
+          setError(cause instanceof Error ? cause.message : String(cause))
+      })
     const connect = () => {
       if (!active) return
       const url = new URL('/v1/realtime', apiBaseUrl)
@@ -270,6 +398,12 @@ function WorkspacePage() {
           )
         }
         if (parsed.data.type === 'error') setError(parsed.data.message)
+        if (parsed.data.type === 'approval') {
+          const approval = parsed.data.approval
+          setApprovals((current) =>
+            new Map(current).set(approval.approvalId, approval),
+          )
+        }
       })
       socket.addEventListener('close', () => {
         setRealtimeState('yeniden bağlanıyor')
@@ -283,6 +417,46 @@ function WorkspacePage() {
       socket?.close()
     }
   }, [session])
+
+  async function decideApproval(
+    approval: Approval,
+    decision: ApprovalDecision,
+  ) {
+    setApprovalPending(approval.approvalId)
+    setApprovalErrors((current) => {
+      const next = new Map(current)
+      next.delete(approval.approvalId)
+      return next
+    })
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/approvals/${approval.approvalId}/decision`,
+        {
+          method: 'POST',
+          headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
+          body: JSON.stringify({
+            decision,
+            expectedVersion: approval.version,
+            clientContext: { deviceId: 'web-poc', reason: null },
+          }),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      const updated = approvalSchema.parse(await response.json())
+      setApprovals((current) =>
+        new Map(current).set(updated.approvalId, updated),
+      )
+    } catch (cause) {
+      setApprovalErrors((current) =>
+        new Map(current).set(
+          approval.approvalId,
+          cause instanceof Error ? cause.message : String(cause),
+        ),
+      )
+    } finally {
+      setApprovalPending(undefined)
+    }
+  }
 
   const cards = useMemo(
     () =>
@@ -409,6 +583,21 @@ function WorkspacePage() {
           </div>
 
           <div className="timeline-stream" aria-live="polite">
+            {[...approvals.values()]
+              .filter((approval) => approval.sessionId === session?.sessionId)
+              .map((approval) => (
+                <ApprovalCard
+                  key={approval.approvalId}
+                  approval={approval}
+                  pending={approvalPending === approval.approvalId}
+                  {...(approvalErrors.get(approval.approvalId)
+                    ? { error: approvalErrors.get(approval.approvalId)! }
+                    : {})}
+                  onDecision={(decision) =>
+                    void decideApproval(approval, decision)
+                  }
+                />
+              ))}
             {cards.length ? (
               cards.map((card) => <TimelineEntry key={card.key} card={card} />)
             ) : (

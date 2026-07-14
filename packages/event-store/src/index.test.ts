@@ -101,6 +101,72 @@ describe('SqliteEventStore sessions', () => {
 })
 
 describe('SqliteEventStore atomic ingest', () => {
+  it('persists an approval atomically and enforces optimistic locking', () => {
+    withStore((store) => {
+      const input = ingestInput('approval', 'evt_approval', {
+        approval: {
+          ...scope,
+          approvalId: 'apr_1',
+          turnId: 'turn_1',
+          itemId: 'item_1',
+          requestId: 7,
+          runtimeInstanceId: 'runtime_1',
+          processGeneration: 1,
+          kind: 'command_execution',
+          context: { command: 'echo safe', token: '[REDACTED]' },
+          availableDecisions: [
+            'accept',
+            'accept_for_session',
+            'decline',
+            'cancel',
+          ],
+          requestedAt: '2026-07-14T00:00:00.000Z',
+        },
+      })
+      store.ingest(input)
+      expect(store.getApproval(scope, 'apr_1')).toMatchObject({
+        status: 'pending',
+        version: 1,
+        requestId: 7,
+      })
+      expect(store.ingest(input).duplicate).toBe(true)
+      expect(store.listApprovals(scope, 'pending')).toHaveLength(1)
+      const winner = store.beginApprovalResolution({
+        ...scope,
+        approvalId: 'apr_1',
+        expectedVersion: 1,
+        decision: 'decline',
+        userId: 'user_1',
+      })
+      expect(winner).toMatchObject({
+        status: 'resolving',
+        version: 2,
+        selectedDecision: 'decline',
+      })
+      expect(() =>
+        store.beginApprovalResolution({
+          ...scope,
+          approvalId: 'apr_1',
+          expectedVersion: 1,
+          decision: 'accept',
+          userId: 'user_2',
+        }),
+      ).toThrowError(
+        expect.objectContaining({ code: 'APPROVAL_ALREADY_RESOLVED' }),
+      )
+      expect(
+        store.finishApproval({
+          ...scope,
+          approvalId: 'apr_1',
+          upstreamResponseStatus: 'sent',
+        }),
+      ).toMatchObject({ status: 'resolved', version: 3 })
+      expect(() =>
+        store.getApproval({ ...scope, tenantId: 'other' }, 'apr_1'),
+      ).toThrowError(expect.objectContaining({ code: 'APPROVAL_NOT_FOUND' }))
+    })
+  })
+
   it('allocates unique monotonic workspace sequences across connections', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'event-store-concurrency-'))
     const path = join(directory, 'events.sqlite')

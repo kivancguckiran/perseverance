@@ -14,6 +14,8 @@ import {
   SqliteEventStore,
   StoreConflictError,
   type StoreScope,
+  type ApprovalDecision,
+  type ApprovalRecord,
 } from '@persistent-codex/event-store'
 import {
   WorkspaceRuntimeRegistry,
@@ -52,6 +54,7 @@ export interface SessionOrchestratorOptions {
   runtimeInstanceIdFactory?: () => string
   sourceVersion?: string
   onDeliveryError?: WorkspaceRuntimeRegistryOptions['onDeliveryError']
+  approvalPolicy?: ThreadStartParams['approvalPolicy']
 }
 
 function threadIdOf(message: Record<string, unknown>): string | undefined {
@@ -72,6 +75,16 @@ function requestHash(prompt: string): string {
   return createHash('sha256').update(JSON.stringify({ prompt })).digest('hex')
 }
 
+function approvalResponse(
+  decision: ApprovalDecision,
+):
+  | codexV2.CommandExecutionRequestApprovalResponse
+  | codexV2.FileChangeRequestApprovalResponse {
+  return {
+    decision: decision === 'accept_for_session' ? 'acceptForSession' : decision,
+  }
+}
+
 function errorPayload(error: unknown) {
   return {
     code:
@@ -87,6 +100,7 @@ export class SessionOrchestrator {
   readonly #workspaceCwd: SessionOrchestratorOptions['workspaceCwd']
   readonly #sessionIdFactory: () => string
   readonly #sourceVersion: string
+  readonly #approvalPolicy: ThreadStartParams['approvalPolicy'] | undefined
   readonly #registry: WorkspaceRuntimeRegistry
   readonly #threadScopes = new Map<string, StoreScope>()
   readonly #adapters = new Map<string, CodexEventAdapter>()
@@ -102,6 +116,7 @@ export class SessionOrchestrator {
     this.#sessionIdFactory =
       options.sessionIdFactory ?? (() => `ses_${randomUUID()}`)
     this.#sourceVersion = options.sourceVersion ?? '0.144.2'
+    this.#approvalPolicy = options.approvalPolicy
     this.#registry = new WorkspaceRuntimeRegistry({
       ...(options.runtimeClientFactory
         ? { clientFactory: options.runtimeClientFactory }
@@ -114,6 +129,16 @@ export class SessionOrchestrator {
         : {}),
       onMessage: (runtime, message, delivery) =>
         this.#ingestRuntimeMessage(runtime, message, delivery),
+      onHealthChange: (runtime, health) => {
+        if (health.state === 'ready') {
+          this.#store.expireRuntimeApprovals({
+            ...runtime,
+            currentProcessGeneration: runtime.client.processGeneration,
+          })
+        } else if (['restarting', 'failed', 'stopped'].includes(health.state)) {
+          this.#store.expireRuntimeApprovals(runtime)
+        }
+      },
     })
   }
 
@@ -137,7 +162,12 @@ export class SessionOrchestrator {
 
     try {
       const runtime = await this.#registry.getOrInitialize({ ...input, cwd })
-      const params: ThreadStartParams = { cwd }
+      const params: ThreadStartParams = {
+        cwd,
+        ...(this.#approvalPolicy
+          ? { approvalPolicy: this.#approvalPolicy }
+          : {}),
+      }
       const response = await runtime.client.request<ThreadStartResponse>(
         'thread/start',
         params,
@@ -247,6 +277,71 @@ export class SessionOrchestrator {
     await this.#registry.stopAll()
   }
 
+  async decideApproval(input: {
+    tenantId: string
+    workspaceId: string
+    approvalId: string
+    decision: ApprovalDecision
+    expectedVersion: number
+    userId: string
+  }): Promise<ApprovalRecord> {
+    const approval = this.#store.getApproval(input, input.approvalId)
+    if (!approval.availableDecisions.includes(input.decision)) {
+      throw new OrchestrationError(
+        'INVALID_APPROVAL_DECISION',
+        'Decision is not available for this approval',
+        400,
+      )
+    }
+    const runtime = this.#registry.get(input)
+    if (!runtime || runtime.runtimeInstanceId !== approval.runtimeInstanceId) {
+      this.#store.finishApproval({
+        ...input,
+        status: 'expired',
+        upstreamResponseStatus: 'unknown',
+      })
+      throw new OrchestrationError(
+        'APPROVAL_RUNTIME_UNAVAILABLE',
+        'Original approval runtime is unavailable',
+        409,
+      )
+    }
+    if (runtime.client.processGeneration !== approval.processGeneration) {
+      this.#store.finishApproval({
+        ...input,
+        status: 'expired',
+        upstreamResponseStatus: 'unknown',
+      })
+      throw new OrchestrationError(
+        'APPROVAL_GENERATION_MISMATCH',
+        'Approval belongs to an earlier process generation',
+        409,
+      )
+    }
+    this.#store.beginApprovalResolution(input)
+    try {
+      runtime.client.respond(
+        approval.requestId,
+        approvalResponse(input.decision),
+      )
+    } catch (error) {
+      this.#store.finishApproval({
+        ...input,
+        status: 'expired',
+        upstreamResponseStatus: 'unknown',
+      })
+      throw new OrchestrationError(
+        'APPROVAL_RUNTIME_UNAVAILABLE',
+        error instanceof Error ? error.message : String(error),
+        503,
+      )
+    }
+    return this.#store.finishApproval({
+      ...input,
+      upstreamResponseStatus: 'sent',
+    })
+  }
+
   async #startReservedTurn(
     scope: StoreScope,
     codexThreadId: string,
@@ -331,6 +426,67 @@ export class SessionOrchestrator {
       this.#adapters.set(adapterKey, adapter)
     }
     const adapted = adapter.adapt(message)
+    const approvalPayload =
+      adapted.event.type === 'approval.requested'
+        ? adapted.event.payload
+        : undefined
+    const approval =
+      approvalPayload && delivery.kind === 'request'
+        ? (() => {
+            const fileContext =
+              approvalPayload.approvalKind === 'file'
+                ? this.#store.findFileApprovalContext({
+                    ...scope,
+                    turnId: adapted.event.codexTurnId!,
+                    itemId: adapted.event.codexItemId!,
+                  })
+                : { filePath: null, diff: null, diffAvailable: false }
+            return {
+              ...scope,
+              approvalId: `apr_${createHash('sha256')
+                .update(
+                  JSON.stringify([
+                    runtime.runtimeInstanceId,
+                    delivery.processGeneration,
+                    approvalPayload.requestId,
+                  ]),
+                )
+                .digest('hex')
+                .slice(0, 24)}`,
+              turnId: adapted.event.codexTurnId!,
+              itemId: adapted.event.codexItemId!,
+              requestId: approvalPayload.requestId,
+              runtimeInstanceId: runtime.runtimeInstanceId,
+              processGeneration: delivery.processGeneration,
+              kind:
+                approvalPayload.approvalKind === 'command'
+                  ? ('command_execution' as const)
+                  : ('file_change' as const),
+              context: {
+                command: approvalPayload.command,
+                cwd: approvalPayload.cwd,
+                reason: approvalPayload.reason,
+                grantRoot: approvalPayload.grantRoot,
+                commandActions:
+                  (adapted.envelope.params as Record<string, unknown>)
+                    ?.commandActions ?? null,
+                networkApprovalContext:
+                  (adapted.envelope.params as Record<string, unknown>)
+                    ?.networkApprovalContext ?? null,
+                filePath: fileContext.filePath,
+                diff: fileContext.diff,
+                diffAvailable: fileContext.diffAvailable,
+              },
+              availableDecisions: [
+                'accept',
+                'accept_for_session',
+                'decline',
+                'cancel',
+              ] as ApprovalDecision[],
+              requestedAt: adapted.event.occurredAt,
+            }
+          })()
+        : undefined
     this.#store.ingest({
       ...scope,
       ingestKey: delivery.ingestKey,
@@ -347,8 +503,27 @@ export class SessionOrchestrator {
         receivedAt: adapted.event.receivedAt,
       },
       event: adapted.event,
+      ...(approval ? { approval } : {}),
     })
+    if (message.method === 'serverRequest/resolved') {
+      const params = message.params as { requestId?: string | number }
+      if (params?.requestId !== undefined) {
+        const found = this.#store.findApprovalByRequest({
+          ...scope,
+          runtimeInstanceId: runtime.runtimeInstanceId,
+          processGeneration: delivery.processGeneration,
+          requestId: params.requestId,
+        })
+        if (found && found.upstreamResponseStatus !== 'acknowledged')
+          this.#store.finishApproval({
+            ...scope,
+            approvalId: found.approvalId,
+            upstreamResponseStatus: 'acknowledged',
+          })
+      }
+    }
     if (adapted.event.type === 'turn.completed') {
+      this.#store.expireApprovals(scope, 'superseded')
       const activeTurnKey = this.#activeTurnKey(scope)
       const active = this.#activeTurns.get(activeTurnKey)
       if (

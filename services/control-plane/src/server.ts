@@ -3,6 +3,9 @@ import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import {
   ackMessageSchema,
+  approvalDecisionRequestSchema,
+  approvalListResponseSchema,
+  approvalSchema,
   apiErrorResponseSchema,
   clientMessageSchema,
   createSessionRequestSchema,
@@ -11,7 +14,9 @@ import {
   serverMessageSchema,
   type ServerMessage,
   type SubscribeMessage,
+  type Approval,
 } from '@persistent-codex/control-plane-contracts'
+import { createHash } from 'node:crypto'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import {
   SqliteEventStore,
@@ -46,6 +51,7 @@ export interface ControlPlaneOptions {
   ) => WorkspaceRuntimeClient
   sessionIdFactory?: () => string
   runtimeInstanceIdFactory?: () => string
+  approvalPolicy?: 'untrusted' | 'on-request' | 'never'
 }
 
 interface SubscriptionState extends StoreScope {
@@ -131,6 +137,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     ...(options.runtimeInstanceIdFactory
       ? { runtimeInstanceIdFactory: options.runtimeInstanceIdFactory }
       : {}),
+    ...(options.approvalPolicy
+      ? { approvalPolicy: options.approvalPolicy }
+      : {}),
     onDeliveryError: (runtime, delivery, error) => {
       app.log.error(
         {
@@ -160,6 +169,122 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     codexVersion: '0.144.2',
     transport: 'stdio-jsonl',
   }))
+
+  app.get<{ Querystring: { status?: string } }>(
+    '/v1/approvals',
+    async (request, reply) => {
+      const scope = workspaceScope(request.headers)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const status = request.query.status ?? 'pending'
+      if (
+        !['pending', 'resolving', 'resolved', 'expired', 'superseded'].includes(
+          status,
+        )
+      )
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid approval status',
+        })
+      return approvalListResponseSchema.parse({
+        approvals: store.listApprovals(scope, status as never),
+      })
+    },
+  )
+
+  app.get<{ Params: { approvalId: string } }>(
+    '/v1/approvals/:approvalId',
+    async (request, reply) => {
+      const scope = workspaceScope(request.headers)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        return approvalSchema.parse(
+          store.getApproval(scope, request.params.approvalId),
+        )
+      } catch (error) {
+        if (error instanceof StoreError)
+          return reply
+            .code(404)
+            .send({ code: 'APPROVAL_NOT_FOUND', message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { approvalId: string } }>(
+    '/v1/approvals/:approvalId/decision',
+    async (request, reply) => {
+      const scope = workspaceScope(request.headers)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const key = headerValue(request.headers['idempotency-key'])
+      if (!key?.trim())
+        return reply.code(400).send({
+          code: 'MISSING_IDEMPOTENCY_KEY',
+          message: 'Idempotency-Key header is required',
+        })
+      const body = approvalDecisionRequestSchema.safeParse(request.body)
+      if (!body.success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Approval decision is invalid',
+          issues: body.error.issues.map((i) => i.message),
+        })
+      const hash = createHash('sha256')
+        .update(JSON.stringify(body.data))
+        .digest('hex')
+      try {
+        const reservation = store.reserveIdempotencyKey({
+          ...scope,
+          scope: `approval:${request.params.approvalId}`,
+          key,
+          requestHash: hash,
+        })
+        if (!reservation.created && reservation.record.status === 'completed')
+          return approvalSchema.parse(reservation.record.response)
+        const result = await orchestrator.decideApproval({
+          ...scope,
+          approvalId: request.params.approvalId,
+          decision: body.data.decision,
+          expectedVersion: body.data.expectedVersion,
+          userId: body.data.clientContext?.deviceId ?? 'poc-user',
+        })
+        const safe = approvalSchema.parse(result)
+        store.completeIdempotencyKey({
+          ...scope,
+          scope: `approval:${request.params.approvalId}`,
+          key,
+          status: 'completed',
+          response: safe,
+        })
+        return safe
+      } catch (error) {
+        if (error instanceof StoreConflictError)
+          return reply
+            .code(409)
+            .send({ code: error.code, message: error.message })
+        if (error instanceof StoreError)
+          return reply
+            .code(error.code === 'APPROVAL_NOT_FOUND' ? 404 : 400)
+            .send({ code: error.code, message: error.message })
+        if (error instanceof OrchestrationError)
+          return reply
+            .code(error.statusCode)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
 
   app.post('/v1/sessions', async (request, reply) => {
     const scope = workspaceScope(request.headers)
@@ -325,7 +450,25 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
       current.lastSentSequence = event.sequence
     })
-    socket.once('close', unsubscribe)
+    const unsubscribeApprovals = store.onApprovalChanged((approval) => {
+      const current = subscription
+      if (
+        !current ||
+        current.tenantId !== approval.tenantId ||
+        current.workspaceId !== approval.workspaceId ||
+        current.sessionId !== approval.sessionId
+      )
+        return
+      send(socket, {
+        type: 'approval',
+        ...current,
+        approval: approvalSchema.parse(approval) as Approval,
+      })
+    })
+    socket.once('close', () => {
+      unsubscribe()
+      unsubscribeApprovals()
+    })
 
     async function subscribe(message: SubscribeMessage): Promise<void> {
       if (subscription) {

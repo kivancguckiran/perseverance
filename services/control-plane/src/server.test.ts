@@ -105,18 +105,20 @@ async function setup(
 }
 
 class FakeRuntimeClient implements WorkspaceRuntimeClient {
-  readonly processGeneration = 1
+  processGeneration = 1
   health: ProcessHealth = { state: 'stopped', restartAttempt: 0 }
   initializeCalls = 0
   turnStartCalls = 0
   failThreadStart = false
   readonly requests: string[] = []
+  readonly responses: Array<{ id: string | number; result: unknown }> = []
   readonly #notifications = new Set<
     (message: Record<string, unknown>) => void
   >()
   readonly #serverRequests = new Set<
     (message: Record<string, unknown>) => void
   >()
+  readonly #healthListeners = new Set<(health: ProcessHealth) => void>()
   readonly fixture: {
     threadId: string
     turnId: string
@@ -246,8 +248,18 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
     return () => this.#serverRequests.delete(listener)
   }
 
+  onHealthChange(listener: (health: ProcessHealth) => void) {
+    this.#healthListeners.add(listener)
+    return () => this.#healthListeners.delete(listener)
+  }
+
+  respond(id: string | number, result: unknown) {
+    this.responses.push({ id, result })
+  }
+
   async stop() {
     this.health = { state: 'stopped', restartAttempt: 0 }
+    this.emitHealth()
   }
 
   emitNotification(message: Record<string, unknown>) {
@@ -256,6 +268,19 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
 
   emitServerRequest(message: Record<string, unknown>) {
     for (const listener of this.#serverRequests) listener(message)
+  }
+
+  setHealth(
+    state: ProcessHealth['state'],
+    generation = this.processGeneration,
+  ) {
+    this.processGeneration = generation
+    this.health = { state, restartAttempt: 0 }
+    this.emitHealth()
+  }
+
+  private emitHealth() {
+    for (const listener of this.#healthListeners) listener(this.health)
   }
 }
 
@@ -271,6 +296,107 @@ async function connect(): Promise<{
 
 function subscribe(socket: TestSocket, afterSequence = 0): void {
   socket.send(JSON.stringify({ type: 'subscribe', ...scope, afterSequence }))
+}
+
+async function waitForApprovals(expected: number, status = 'pending') {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const response = await app!.inject({
+      method: 'GET',
+      url: `/v1/approvals?status=${status}`,
+      headers,
+    })
+    const approvals = response.json().approvals as Array<
+      Record<string, unknown>
+    >
+    if (approvals.length >= expected) return approvals
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error(`Timed out waiting for ${expected} ${status} approvals`)
+}
+
+function commandApproval(
+  client: FakeRuntimeClient,
+  id: string | number,
+  itemId: string,
+) {
+  client.emitServerRequest({
+    id,
+    method: 'item/commandExecution/requestApproval',
+    params: {
+      threadId: client.fixture.threadId,
+      turnId: 'turn_approval',
+      itemId,
+      startedAtMs: 1,
+      approvalId: null,
+      environmentId: null,
+      reason: 'Bearer secret-token-value',
+      command: 'curl example.test',
+      cwd: '/workspace',
+      commandActions: [{ type: 'unknown', command: 'curl example.test' }],
+      networkApprovalContext: { host: 'example.test', protocol: 'https' },
+      proposedExecpolicyAmendment: null,
+      proposedNetworkPolicyAmendments: null,
+    },
+  })
+}
+
+function fileApproval(
+  client: FakeRuntimeClient,
+  id: string | number,
+  itemId: string,
+  withDiff = true,
+) {
+  if (withDiff) {
+    client.emitNotification({
+      method: 'item/started',
+      params: {
+        threadId: client.fixture.threadId,
+        turnId: 'turn_approval',
+        startedAtMs: 1,
+        item: {
+          type: 'fileChange',
+          id: itemId,
+          status: 'inProgress',
+          changes: [
+            {
+              path: 'src/safe.ts',
+              kind: { type: 'update', move_path: null },
+              diff: '@@ -1 +1 @@\n-old\n+new',
+            },
+          ],
+        },
+      },
+    })
+  }
+  client.emitServerRequest({
+    id,
+    method: 'item/fileChange/requestApproval',
+    params: {
+      threadId: client.fixture.threadId,
+      turnId: 'turn_approval',
+      itemId,
+      startedAtMs: 2,
+      reason: 'write required',
+      grantRoot: '/workspace/src',
+    },
+  })
+}
+
+async function decide(
+  approval: { approvalId: string; version: number },
+  decision: string,
+  key: string,
+) {
+  return app!.inject({
+    method: 'POST',
+    url: `/v1/approvals/${approval.approvalId}/decision`,
+    headers: { ...headers, 'idempotency-key': key },
+    payload: {
+      decision,
+      expectedVersion: approval.version,
+      clientContext: { deviceId: key, reason: null },
+    },
+  })
 }
 
 afterEach(async () => {
@@ -346,7 +472,439 @@ describe('control plane REST replay', () => {
   })
 })
 
+describe('durable approval API', () => {
+  it('keeps approval pending until an idempotent decision sends one upstream response', async () => {
+    const client = new FakeRuntimeClient()
+    await setup({
+      runtimeClientFactory: () => client,
+      runtimeInstanceIdFactory: () => 'runtime_approval',
+    })
+    const created = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers,
+      payload: {},
+    })
+    expect(created.statusCode).toBe(201)
+    client.emitServerRequest({
+      id: 91,
+      method: 'item/commandExecution/requestApproval',
+      params: {
+        threadId: client.fixture.threadId,
+        turnId: 'turn_approval',
+        itemId: 'cmd_approval',
+        startedAtMs: 1,
+        approvalId: null,
+        environmentId: null,
+        reason: 'safe fixture',
+        command: 'echo safe',
+        cwd: '/workspace',
+        commandActions: [],
+        networkApprovalContext: null,
+        proposedExecpolicyAmendment: null,
+        proposedNetworkPolicyAmendments: null,
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const pending = await app!.inject({
+      method: 'GET',
+      url: '/v1/approvals?status=pending',
+      headers,
+    })
+    expect(pending.statusCode).toBe(200)
+    const approval = pending.json().approvals[0]
+    expect(approval).toMatchObject({
+      status: 'pending',
+      kind: 'command_execution',
+      version: 1,
+    })
+    expect(client.responses).toHaveLength(0)
+    const decision = {
+      decision: 'accept_for_session',
+      expectedVersion: 1,
+      clientContext: { deviceId: 'device-1', reason: null },
+    }
+    const first = await app!.inject({
+      method: 'POST',
+      url: `/v1/approvals/${approval.approvalId}/decision`,
+      headers: { ...headers, 'idempotency-key': 'decision-1' },
+      payload: decision,
+    })
+    expect(first.statusCode).toBe(200)
+    expect(first.json()).toMatchObject({
+      status: 'resolved',
+      selectedDecision: 'accept_for_session',
+    })
+    expect(client.responses).toEqual([
+      { id: 91, result: { decision: 'acceptForSession' } },
+    ])
+    const retry = await app!.inject({
+      method: 'POST',
+      url: `/v1/approvals/${approval.approvalId}/decision`,
+      headers: { ...headers, 'idempotency-key': 'decision-1' },
+      payload: decision,
+    })
+    expect(retry.statusCode).toBe(200)
+    expect(client.responses).toHaveLength(1)
+    const conflict = await app!.inject({
+      method: 'POST',
+      url: `/v1/approvals/${approval.approvalId}/decision`,
+      headers: { ...headers, 'idempotency-key': 'decision-1' },
+      payload: { ...decision, decision: 'decline' },
+    })
+    expect(conflict.statusCode).toBe(409)
+    expect(conflict.json()).toMatchObject({ code: 'IDEMPOTENCY_HASH_CONFLICT' })
+    const isolated = await app!.inject({
+      method: 'GET',
+      url: `/v1/approvals/${approval.approvalId}`,
+      headers: { ...headers, 'x-tenant-id': 'other' },
+    })
+    expect(isolated.statusCode).toBe(404)
+  })
+
+  it('ingests generated file approval with scoped diff context and redacts command context', async () => {
+    const client = new FakeRuntimeClient()
+    await setup({
+      runtimeClientFactory: () => client,
+      runtimeInstanceIdFactory: () => 'runtime_context',
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers,
+      payload: {},
+    })
+    commandApproval(client, 'command-context', 'cmd_context')
+    fileApproval(client, 'file-context', 'file_context')
+    fileApproval(client, 'file-unavailable', 'file_unavailable', false)
+    const approvals = await waitForApprovals(3)
+    const command = approvals.find(
+      (approval) => approval.itemId === 'cmd_context',
+    )!
+    expect(command.context).toMatchObject({
+      reason: '[REDACTED]',
+      commandActions: [{ type: 'unknown', command: 'curl example.test' }],
+      networkApprovalContext: { host: 'example.test', protocol: 'https' },
+    })
+    expect(JSON.stringify(command)).not.toContain('secret-token-value')
+    const file = approvals.find(
+      (approval) => approval.itemId === 'file_context',
+    )!
+    expect(file.context).toMatchObject({
+      filePath: 'src/safe.ts',
+      diffAvailable: true,
+    })
+    expect(String((file.context as Record<string, unknown>).diff)).toContain(
+      '+new',
+    )
+    const unavailable = approvals.find(
+      (approval) => approval.itemId === 'file_unavailable',
+    )!
+    expect(unavailable.context).toMatchObject({
+      filePath: null,
+      diff: null,
+      diffAvailable: false,
+    })
+  })
+
+  it('maps all four public decisions for command and file approvals', async () => {
+    const client = new FakeRuntimeClient()
+    await setup({
+      runtimeClientFactory: () => client,
+      runtimeInstanceIdFactory: () => 'runtime_mapping',
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers,
+      payload: {},
+    })
+    const decisions = [
+      'accept',
+      'accept_for_session',
+      'decline',
+      'cancel',
+    ] as const
+    for (const [index, decision] of decisions.entries()) {
+      commandApproval(client, `command-${index}`, `cmd_${index}`)
+      fileApproval(client, `file-${index}`, `file_${index}`, false)
+    }
+    const approvals = await waitForApprovals(8)
+    for (const [index, decision] of decisions.entries()) {
+      for (const itemId of [`cmd_${index}`, `file_${index}`]) {
+        const approval = approvals.find(
+          (candidate) => candidate.itemId === itemId,
+        )! as { approvalId: string; version: number }
+        const response = await decide(approval, decision, `mapping-${itemId}`)
+        expect(response.statusCode).toBe(200)
+      }
+    }
+    expect(client.responses.map(({ result }) => result)).toEqual(
+      decisions.flatMap((decision) =>
+        Array(2).fill({
+          decision:
+            decision === 'accept_for_session' ? 'acceptForSession' : decision,
+        }),
+      ),
+    )
+  })
+
+  it('allows one concurrent winner and sends exactly one response', async () => {
+    const client = new FakeRuntimeClient()
+    await setup({
+      runtimeClientFactory: () => client,
+      runtimeInstanceIdFactory: () => 'runtime_race',
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers,
+      payload: {},
+    })
+    commandApproval(client, 201, 'cmd_race')
+    const [approval] = (await waitForApprovals(1)) as unknown as Array<{
+      approvalId: string
+      version: number
+    }>
+    const [first, second] = await Promise.all([
+      decide(approval!, 'accept', 'race-a'),
+      decide(approval!, 'decline', 'race-b'),
+    ])
+    expect([first.statusCode, second.statusCode].sort()).toEqual([200, 409])
+    expect([first.json().code, second.json().code]).toContain(
+      'APPROVAL_ALREADY_RESOLVED',
+    )
+    expect(client.responses).toHaveLength(1)
+  })
+
+  it('blocks stale runtime/generation and expires approvals on health failure and turn completion', async () => {
+    const client = new FakeRuntimeClient()
+    await setup({
+      runtimeClientFactory: () => client,
+      runtimeInstanceIdFactory: () => 'runtime_lifecycle',
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers,
+      payload: {},
+    })
+    store!.ingest({
+      ...scope,
+      ingestKey: 'runtime-mismatch-approval',
+      raw: {
+        envelope: {
+          id: 300,
+          method: 'item/commandExecution/requestApproval',
+          params: {},
+        },
+        checksum: 'runtime-mismatch-checksum',
+        sourceMethod: 'item/commandExecution/requestApproval',
+        sourceVersion: '0.144.2',
+        receivedAt: '2026-07-14T00:00:00.001Z',
+      },
+      event: event('evt_runtime_mismatch'),
+      approval: {
+        ...scope,
+        approvalId: 'apr_runtime_mismatch',
+        turnId: 'turn_approval',
+        itemId: 'cmd_runtime_mismatch',
+        requestId: 300,
+        runtimeInstanceId: 'different_runtime',
+        processGeneration: 1,
+        kind: 'command_execution',
+        context: {},
+        availableDecisions: ['decline'],
+        requestedAt: '2026-07-14T00:00:00.000Z',
+      },
+    })
+    const mismatch = await decide(
+      { approvalId: 'apr_runtime_mismatch', version: 1 },
+      'decline',
+      'runtime-mismatch',
+    )
+    expect(mismatch.statusCode).toBe(409)
+    expect(mismatch.json()).toMatchObject({
+      code: 'APPROVAL_RUNTIME_UNAVAILABLE',
+    })
+    expect(client.responses).toHaveLength(0)
+
+    commandApproval(client, 301, 'cmd_generation')
+    let approvals = await waitForApprovals(1)
+    client.setHealth('ready', 2)
+    await waitForApprovals(1, 'expired')
+    const stale = await decide(
+      approvals[0] as never,
+      'decline',
+      'stale-generation',
+    )
+    expect(stale.statusCode).toBe(409)
+    expect(client.responses).toHaveLength(0)
+
+    commandApproval(client, 302, 'cmd_crash')
+    await waitForApprovals(1)
+    client.setHealth('failed', 2)
+    expect(
+      (await waitForApprovals(2, 'expired')).map((item) => item.itemId),
+    ).toContain('cmd_crash')
+
+    client.setHealth('ready', 2)
+    commandApproval(client, 303, 'cmd_completion')
+    await waitForApprovals(1)
+    client.emitNotification({
+      method: 'turn/completed',
+      params: {
+        threadId: client.fixture.threadId,
+        turn: {
+          id: 'turn_approval',
+          status: 'interrupted',
+          items: [],
+          error: null,
+        },
+      },
+    })
+    expect(
+      (await waitForApprovals(1, 'superseded')).map((item) => item.itemId),
+    ).toContain('cmd_completion')
+    expect(client.responses).toHaveLength(0)
+  })
+
+  it('reconciles serverRequest/resolved without a second upstream response', async () => {
+    const client = new FakeRuntimeClient()
+    await setup({
+      runtimeClientFactory: () => client,
+      runtimeInstanceIdFactory: () => 'runtime_resolved',
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers,
+      payload: {},
+    })
+    commandApproval(client, 401, 'cmd_resolved')
+    const [approval] = (await waitForApprovals(1)) as unknown as Array<{
+      approvalId: string
+      version: number
+    }>
+    expect(
+      (await decide(approval!, 'decline', 'resolved-decision')).statusCode,
+    ).toBe(200)
+    expect(client.responses).toHaveLength(1)
+    client.emitNotification({
+      method: 'serverRequest/resolved',
+      params: { threadId: client.fixture.threadId, requestId: 401 },
+    })
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const detail = await app!.inject({
+        method: 'GET',
+        url: `/v1/approvals/${approval!.approvalId}`,
+        headers,
+      })
+      if (detail.json().upstreamResponseStatus === 'acknowledged') break
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    const detail = await app!.inject({
+      method: 'GET',
+      url: `/v1/approvals/${approval!.approvalId}`,
+      headers,
+    })
+    expect(detail.json()).toMatchObject({
+      status: 'resolved',
+      upstreamResponseStatus: 'acknowledged',
+    })
+    expect(client.responses).toHaveLength(1)
+  })
+})
+
 describe('control plane WebSocket replay/live stream', () => {
+  it('streams pending, resolving, and resolved approval lifecycle and supports REST reconciliation', async () => {
+    const client = new FakeRuntimeClient()
+    await setup({
+      runtimeClientFactory: () => client,
+      runtimeInstanceIdFactory: () => 'runtime_ws_approval',
+      sessionIdFactory: () => scope.sessionId,
+    })
+    await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions',
+      headers,
+      payload: {},
+    })
+    const { socket, reader } = await connect()
+    subscribe(socket)
+    await reader.next()
+    await reader.next()
+    commandApproval(client, 501, 'cmd_ws')
+    let pendingMessage: ServerMessage | undefined
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const message = await reader.next()
+      if (message.type === 'approval') {
+        pendingMessage = message
+        break
+      }
+    }
+    expect(pendingMessage).toMatchObject({
+      type: 'approval',
+      approval: { status: 'pending' },
+    })
+    if (pendingMessage?.type !== 'approval')
+      throw new Error('Pending approval message missing')
+    const decisionPromise = decide(
+      pendingMessage.approval,
+      'decline',
+      'ws-decision',
+    )
+    expect(await reader.next()).toMatchObject({
+      type: 'approval',
+      approval: { status: 'resolving' },
+    })
+    expect(await reader.next()).toMatchObject({
+      type: 'approval',
+      approval: { status: 'resolved' },
+    })
+    expect((await decisionPromise).statusCode).toBe(200)
+    commandApproval(client, 502, 'cmd_ws_expired')
+    let expiringPending: ServerMessage | undefined
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const message = await reader.next()
+      if (
+        message.type === 'approval' &&
+        message.approval.itemId === 'cmd_ws_expired'
+      ) {
+        expiringPending = message
+        break
+      }
+    }
+    expect(expiringPending).toMatchObject({
+      type: 'approval',
+      approval: { itemId: 'cmd_ws_expired', status: 'pending' },
+    })
+    client.setHealth('failed')
+    let expiredMessage: ServerMessage | undefined
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const message = await reader.next()
+      if (message.type === 'approval') {
+        expiredMessage = message
+        break
+      }
+    }
+    expect(expiredMessage).toMatchObject({
+      type: 'approval',
+      approval: { itemId: 'cmd_ws_expired', status: 'expired' },
+    })
+    socket.close()
+    const reconciled = await app!.inject({
+      method: 'GET',
+      url: '/v1/approvals?status=resolved',
+      headers,
+    })
+    expect(reconciled.json().approvals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ itemId: 'cmd_ws', status: 'resolved' }),
+      ]),
+    )
+  })
+
   it('delivers a publish at the replay/live boundary without a gap or duplicate', async () => {
     const current = await setup()
     ingest(current, 'one')

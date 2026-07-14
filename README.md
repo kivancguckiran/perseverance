@@ -60,6 +60,14 @@ Gerçek session → `thread/start` → `turn/start` → final agent message akı
 pnpm --filter @persistent-codex/workspace-agent smoke:real-flow
 ```
 
+Gerçek smoke komutları geçici `persistent-codex-smoke-*` `CODEX_HOME` dizini kullanır. Yalnız mevcut `auth.json` ve `config.toml` dosyalarına symlink açılır; normal Codex task/session/state verileri bağlanmaz. Child process kapatıldıktan sonra geçici dizin silinir. Bu smoke komutları `pnpm verify` içinde otomatik çalışmaz ve yalnız açıkça çağrıldığında çalışır.
+
+Durable approval smoke'u control-plane REST session/turn/GET pending/decision akışını, ölçülen upstream response sayısını ve geçici SQLite cleanup'ını birlikte doğrular:
+
+```bash
+pnpm --filter @persistent-codex/workspace-agent smoke:real-approval
+```
+
 ## WP4 API yüzeyi
 
 - `POST /v1/sessions`: `x-tenant-id` ve `x-workspace-id` zorunludur; body `{}` olmalıdır. Cwd yalnız server-side `WORKSPACE_CWD` konfigürasyonundan gelir.
