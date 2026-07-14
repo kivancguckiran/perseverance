@@ -11,6 +11,7 @@ import {
   type ApprovalDecision,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
+import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 interface PlatformMeta {
@@ -42,6 +43,19 @@ async function apiError(response: Response): Promise<Error> {
     message?: string
   } | null
   return new Error(body?.message ?? `İstek başarısız (${response.status})`)
+}
+
+export async function readSessionDetail(
+  sessionId: string | undefined,
+  fetcher: typeof fetch = fetch,
+): Promise<SessionResponse | undefined> {
+  if (!sessionId) return undefined
+  const response = await fetcher(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return sessionResponseSchema.parse(await response.json())
 }
 
 interface TimelineCard {
@@ -285,7 +299,8 @@ function ApprovalCard({
   )
 }
 
-export function WorkspacePage() {
+export function WorkspacePage({ sessionId }: { sessionId?: string }) {
+  const navigate = useNavigate()
   const meta = useQuery({
     queryKey: ['platform-meta'],
     queryFn: readPlatformMeta,
@@ -306,18 +321,11 @@ export function WorkspacePage() {
   const lastSequence = useRef(0)
 
   useEffect(() => {
-    const match = window.location.pathname.match(/^\/sessions\/([^/]+)$/)
-    if (!match?.[1]) return
+    if (!sessionId) return
     let active = true
-    fetch(`${apiBaseUrl}/v1/sessions/${encodeURIComponent(match[1])}`, {
-      headers: scopeHeaders,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw await apiError(response)
-        return sessionResponseSchema.parse(await response.json())
-      })
+    readSessionDetail(sessionId)
       .then((loaded) => {
-        if (active) setSession(loaded)
+        if (active && loaded) setSession(loaded)
       })
       .catch((cause) => {
         if (active)
@@ -326,7 +334,7 @@ export function WorkspacePage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [sessionId])
 
   useEffect(() => {
     if (!session) return
@@ -513,7 +521,10 @@ export function WorkspacePage() {
       setEvents(new Map())
       setSession(created)
       setReadOnly(false)
-      window.history.pushState({}, '', `/sessions/${created.sessionId}`)
+      await navigate({
+        to: '/sessions/$sessionId',
+        params: { sessionId: created.sessionId },
+      })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -617,7 +628,7 @@ export function WorkspacePage() {
   }
 
   return (
-    <main className="workspace-shell">
+    <main className="workspace-shell" data-session-id={sessionId}>
       <header className="topbar">
         <div>
           <p className="eyebrow">FAZ 0 · CANLI CODEX AKIŞI</p>

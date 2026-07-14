@@ -1,9 +1,9 @@
 import { QueryClient } from '@tanstack/react-query'
-import { createRouter } from '@tanstack/react-router'
+import { createRouter, type RouterHistory } from '@tanstack/react-router'
 import { setupRouterSsrQueryIntegration } from '@tanstack/react-router-ssr-query'
 import { routeTree } from './routeTree.gen'
 
-export function getRouter() {
+export function getRouter(history?: RouterHistory) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { staleTime: 5_000, retry: 1 },
@@ -14,6 +14,7 @@ export function getRouter() {
     context: { queryClient },
     defaultPreload: 'intent',
     scrollRestoration: true,
+    ...(history ? { history } : {}),
   })
 
   setupRouterSsrQueryIntegration({ router, queryClient })
