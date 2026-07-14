@@ -6,6 +6,13 @@ import {
   auditListResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
 import { randomBytes } from 'node:crypto'
+import {
+  accessSync,
+  constants,
+  lstatSync,
+  realpathSync,
+  statfsSync,
+} from 'node:fs'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import {
@@ -90,6 +97,7 @@ export interface ControlPlaneOptions {
   }>
   metricRecorder?: BoundedMetricRecorder
   now?: () => Date
+  readinessProbeTimeoutMs?: number
 }
 
 interface SubscriptionState extends StoreScope {
@@ -132,6 +140,53 @@ function workspaceScope(
   const workspaceId = headerValue(headers['x-workspace-id'])
   if (!tenantId || !workspaceId) return undefined
   return { tenantId, workspaceId }
+}
+
+type DependencyCheckName = 'database' | 'artifacts' | 'workspace' | 'disk'
+
+async function boundedProbe(
+  name: DependencyCheckName,
+  timeoutMs: number,
+  operation: () => void | Promise<void>,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('PROBE_TIMEOUT')), timeoutMs)
+      }),
+    ])
+    return { name, status: 'ready' as const, code: null }
+  } catch (error) {
+    return {
+      name,
+      status: 'failed' as const,
+      code:
+        error instanceof Error && error.message === 'PROBE_TIMEOUT'
+          ? 'DEPENDENCY_PROBE_TIMEOUT'
+          : `${name.toUpperCase()}_UNAVAILABLE`,
+    }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function withProbeTimeout<T>(
+  timeoutMs: number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('PROBE_TIMEOUT')), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function parseNonNegativeInteger(
@@ -590,85 +645,81 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         code: 'MISSING_SCOPE',
         message: 'x-tenant-id and x-workspace-id headers are required',
       })
-    const preflight = options.preflightChecks ?? []
-    const preflightNames = new Set(preflight.map((check) => check.name))
-    const baseChecks = (['database', 'artifacts', 'workspace'] as const)
-      .filter((name) => !preflightNames.has(name))
-      .map((name) => ({ name, status: 'ready' as const, code: null }))
-    if (
-      preflight.some(
-        (check) =>
-          check.status === 'failed' && check.code !== 'AUTH_CONFIG_MISSING',
-      )
-    ) {
-      return reply.code(503).send(
-        readinessResponseSchema.parse({
-          status: 'degraded',
-          checkedAt: now().toISOString(),
-          checks: [
-            ...preflight,
-            ...baseChecks,
-            {
-              name: 'auth',
-              status: 'failed',
-              code: 'DEPENDENCY_CHECK_BLOCKED',
-            },
-            {
-              name: 'appServer',
-              status: 'failed',
-              code: 'DEPENDENCY_CHECK_BLOCKED',
-            },
-          ],
-          recovery: {
-            code: null,
-            instruction: null,
-            retryable: true,
-            readOnlyAvailable: true,
-          },
-        }),
-      )
+    const timeoutMs = options.readinessProbeTimeoutMs ?? 2_000
+    const cwd =
+      typeof options.workspaceCwd === 'function'
+        ? options.workspaceCwd(scope)
+        : (options.workspaceCwd ?? process.cwd())
+    const dependencyChecksPromise = Promise.all([
+      boundedProbe('database', timeoutMs, () => store.probe()),
+      boundedProbe('artifacts', timeoutMs, () => artifacts.probe()),
+      boundedProbe('workspace', timeoutMs, () => {
+        const stat = lstatSync(cwd)
+        if (!stat.isDirectory() || stat.isSymbolicLink())
+          throw new Error('WORKSPACE_UNAVAILABLE')
+        realpathSync(cwd)
+        accessSync(cwd, constants.R_OK | constants.W_OK | constants.X_OK)
+      }),
+      boundedProbe('disk', timeoutMs, () => {
+        const disk = statfsSync(cwd)
+        if (disk.bavail <= 0 || disk.bsize <= 0)
+          throw new Error('DISK_UNAVAILABLE')
+      }),
+    ])
+    let readiness
+    try {
+      ;[readiness] = await Promise.all([
+        withProbeTimeout(timeoutMs, () =>
+          orchestrator.checkReadiness(
+            scope,
+            request.headers['x-readiness-retry'] === '1',
+          ),
+        ),
+        dependencyChecksPromise,
+      ])
+    } catch {
+      readiness = readinessResponseSchema.parse({
+        status: 'degraded',
+        checkedAt: now().toISOString(),
+        checks: [
+          { name: 'auth', status: 'failed', code: 'AUTH_CHECK_TIMEOUT' },
+        ],
+        recovery: {
+          code: null,
+          instruction: null,
+          retryable: true,
+          readOnlyAvailable: true,
+        },
+      })
     }
-    const readiness = await orchestrator.checkReadiness(
-      scope,
-      request.headers['x-readiness-retry'] === '1',
+    const dependencyChecks = await dependencyChecksPromise
+    const dependencyFailed = dependencyChecks.some(
+      (check) => check.status === 'failed',
     )
-    const requiredChecks = [
-      ...baseChecks,
-      {
-        name: 'appServer' as const,
-        status:
-          readiness.status === 'degraded'
-            ? ('failed' as const)
-            : ('ready' as const),
-        code: readiness.status === 'degraded' ? 'APP_SERVER_NOT_READY' : null,
-      },
-    ]
-    metrics.record('runtime_health', readiness.status === 'ready' ? 1 : 0, {
-      state: readiness.status === 'degraded' ? 'failed' : 'ready',
+    const appServer = {
+      name: 'appServer' as const,
+      status:
+        readiness.status === 'degraded'
+          ? ('failed' as const)
+          : ('ready' as const),
+      code: readiness.status === 'degraded' ? 'APP_SERVER_NOT_READY' : null,
+    }
+    const status = dependencyFailed ? 'degraded' : readiness.status
+    metrics.record('runtime_health', appServer.status === 'ready' ? 1 : 0, {
+      state: appServer.status === 'ready' ? 'ready' : 'failed',
     })
-    metrics.record(
-      'disk_health',
-      preflight.some(
-        (check) =>
-          ['database', 'artifacts'].includes(check.name) &&
-          check.status === 'failed',
-      )
-        ? 0
-        : 1,
-      {
-        state: preflight.some(
-          (check) =>
-            ['database', 'artifacts'].includes(check.name) &&
-            check.status === 'failed',
-        )
-          ? 'failed'
-          : 'ready',
-      },
-    )
-    return reply.code(readiness.status === 'ready' ? 200 : 503).send(
+    const diskReady =
+      dependencyChecks.find((check) => check.name === 'disk')?.status ===
+      'ready'
+    metrics.record('disk_health', diskReady ? 1 : 0, {
+      state: diskReady ? 'ready' : 'failed',
+    })
+    return reply.code(status === 'ready' ? 200 : 503).send(
       readinessResponseSchema.parse({
         ...readiness,
-        checks: [...preflight, ...requiredChecks, ...readiness.checks],
+        status,
+        checkedAt: now().toISOString(),
+        checks: [...dependencyChecks, appServer, ...readiness.checks],
       }),
     )
   })
@@ -977,6 +1028,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           decision: body.data.decision,
           expectedVersion: body.data.expectedVersion,
           userId: body.data.clientContext?.deviceId ?? 'poc-user',
+          ...auditContext(request),
         })
         const safe = approvalSchema.parse(result)
         store.completeIdempotencyKey({
@@ -985,20 +1037,6 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           key,
           status: 'completed',
           response: safe,
-        })
-        store.appendAudit({
-          tenantId: safe.tenantId,
-          workspaceId: safe.workspaceId,
-          sessionId: safe.sessionId,
-          actor: 'user',
-          action: 'approval.decided',
-          outcome: 'success',
-          idempotencyKey: `approval:${safe.approvalId}:${safe.version}`,
-          ...auditContext(request),
-          metadata: {
-            approvalKind: safe.kind,
-            decision: safe.selectedDecision,
-          },
         })
         metrics.record(
           'approval_wait_ms',
@@ -1229,27 +1267,23 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Idempotency-Key header is required',
         })
       try {
-        store.appendAudit({
-          ...scope,
-          actor: 'user',
-          action: 'recovery.started',
-          outcome: 'requested',
-          idempotencyKey: `recovery:${key}:started`,
-          ...auditContext(request),
-          metadata: { operation: 'resume' },
-        })
         const resumed = sessionResponseSchema.parse(
           await orchestrator.resumeSession(scope, key),
         )
         store.appendAudit({
           ...scope,
-          actor: 'system',
-          action: 'recovery.completed',
+          actor: 'runtime',
+          action: 'runtime.restarted',
           outcome: 'success',
-          idempotencyKey: `recovery:${key}:completed`,
+          idempotencyKey: `runtime-recovery:${key}:ready`,
           ...auditContext(request),
-          metadata: { toState: resumed.status },
+          metadata: {
+            runtimeState: 'ready',
+            processGeneration: resumed.runtimeGeneration,
+            operation: 'resume',
+          },
         })
+        metrics.record('app_server_restarts_total', 1, { outcome: 'ready' })
         return resumed
       } catch (error) {
         if (error instanceof StoreNotFoundError)

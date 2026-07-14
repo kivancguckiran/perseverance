@@ -176,46 +176,57 @@ describe('WP10 session navigation and Git API', () => {
 describe('WP11 health, readiness, metrics, and audit API', () => {
   it('keeps liveness dependency-free and reports deterministic dependency recovery', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'wp11-health-'))
-    const checks = [
-      {
-        name: 'database' as const,
-        status: 'failed' as 'ready' | 'failed',
-        code: 'DATABASE_UNAVAILABLE' as string | null,
-      },
-    ]
+    const databaseRoot = join(directory, 'database')
+    const artifactRoot = join(directory, 'artifacts')
+    const workspace = join(directory, 'workspace')
+    mkdirSync(databaseRoot)
+    mkdirSync(workspace)
     const instance = await buildControlPlane({
-      databasePath: join(directory, 'events.sqlite'),
-      artifactRoot: join(directory, 'artifacts'),
+      databasePath: join(databaseRoot, 'events.sqlite'),
+      artifactRoot,
       codexHomeRoot: join(directory, 'homes'),
+      workspaceCwd: workspace,
       runtimeClientFactory: () => new FakeRuntimeClient(),
-      preflightChecks: checks,
       now: () => new Date('2026-07-15T09:00:00.000Z'),
     })
     try {
       expect(
         (await instance.inject({ method: 'GET', url: '/healthz' })).json(),
       ).toEqual({ status: 'ok' })
-      const failed = await instance.inject({
+      const ready = await instance.inject({
         method: 'GET',
         url: '/readyz',
         headers,
       })
-      expect(failed.statusCode).toBe(503)
-      expect(failed.json().checks).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: 'database', status: 'failed' }),
-          expect.objectContaining({ name: 'appServer', status: 'failed' }),
-        ]),
-      )
-      checks[0]!.status = 'ready'
-      checks[0]!.code = null
-      const recovered = await instance.inject({
-        method: 'GET',
-        url: '/readyz',
-        headers,
-      })
-      expect(recovered.statusCode).toBe(200)
-      expect(recovered.json()).toMatchObject({ status: 'ready' })
+      expect(ready.statusCode).toBe(200)
+      for (const [name, path] of [
+        ['database', databaseRoot],
+        ['artifacts', artifactRoot],
+        ['workspace', workspace],
+      ] as const) {
+        const unavailable = `${path}.unavailable`
+        renameSync(path, unavailable)
+        const failed = await instance.inject({
+          method: 'GET',
+          url: '/readyz',
+          headers,
+        })
+        expect(failed.statusCode).toBe(503)
+        expect(failed.json().checks).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ name, status: 'failed' }),
+          ]),
+        )
+        expect(JSON.stringify(failed.json())).not.toContain(path)
+        renameSync(unavailable, path)
+        const recovered = await instance.inject({
+          method: 'GET',
+          url: '/readyz',
+          headers,
+        })
+        expect(recovered.statusCode).toBe(200)
+        expect(recovered.json()).toMatchObject({ status: 'ready' })
+      }
       const metrics = (
         await instance.inject({ method: 'GET', url: '/metrics' })
       ).json()
@@ -230,6 +241,217 @@ describe('WP11 health, readiness, metrics, and audit API', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it('produces ordered audit chains through real control-plane flows and survives reopen', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp11-audit-flow-'))
+    const repository = join(directory, 'workspace')
+    mkdirSync(repository)
+    execFileSync('git', ['init', '-q'], { cwd: repository })
+    execFileSync('git', ['config', 'user.email', 'audit@example.invalid'], {
+      cwd: repository,
+    })
+    execFileSync('git', ['config', 'user.name', 'Audit Fixture'], {
+      cwd: repository,
+    })
+    writeFileSync(join(repository, 'tracked.txt'), 'before\n')
+    execFileSync('git', ['add', 'tracked.txt'], { cwd: repository })
+    execFileSync('git', ['commit', '-qm', 'initial'], { cwd: repository })
+    const databasePath = join(directory, 'events.sqlite')
+    class AuditFlowClient extends FakeRuntimeClient {
+      override async request<TResult>(
+        method: string,
+        params: unknown,
+      ): Promise<TResult> {
+        if (method === 'turn/start') {
+          this.requests.push(method)
+          this.turnStartCalls += 1
+          return {
+            turn: {
+              id: this.fixture.turnId,
+              status: 'inProgress',
+              items: [],
+              error: null,
+            },
+          } as TResult
+        }
+        return super.request(method, params)
+      }
+    }
+    const client = new AuditFlowClient()
+    const scopedHeaders = {
+      'x-tenant-id': 'ten_audit_flow',
+      'x-workspace-id': 'wsp_audit_flow',
+    }
+    const build = () =>
+      buildControlPlane({
+        databasePath,
+        artifactRoot: join(directory, 'artifacts'),
+        codexHomeRoot: join(directory, 'homes'),
+        workspaceCwd: repository,
+        runtimeClientFactory: () => client,
+        runtimeInstanceIdFactory: () => 'runtime_audit_flow',
+        sessionIdFactory: () => 'ses_audit_flow',
+      })
+    let first = await build()
+    try {
+      const created = await first.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: scopedHeaders,
+        payload: {},
+      })
+      expect(created.statusCode).toBe(201)
+      writeFileSync(join(repository, 'tracked.txt'), 'after\n')
+      const turn = await first.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_audit_flow/turns',
+        headers: { ...scopedHeaders, 'idempotency-key': 'audit-turn' },
+        payload: { prompt: 'sensitive fixture prompt' },
+      })
+      expect(turn.statusCode).toBe(202)
+      client.emitNotification({
+        method: 'turn/started',
+        params: {
+          threadId: client.fixture.threadId,
+          turn: {
+            id: client.fixture.turnId,
+            status: 'inProgress',
+            items: [],
+            error: null,
+          },
+        },
+      })
+      client.emitServerRequest({
+        id: 707,
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          threadId: client.fixture.threadId,
+          turnId: client.fixture.turnId,
+          itemId: 'cmd_audit_flow',
+          startedAtMs: 1,
+          approvalId: null,
+          environmentId: null,
+          reason: 'fixture approval',
+          command: 'echo fixture',
+          cwd: '/workspace',
+          commandActions: null,
+          proposedExecpolicyAmendment: null,
+          proposedNetworkPolicyAmendments: null,
+        },
+      })
+      let approval: { approvalId: string; version: number } | undefined
+      for (let attempt = 0; attempt < 50 && !approval; attempt++) {
+        const pending = await first.inject({
+          method: 'GET',
+          url: '/v1/approvals?status=pending',
+          headers: scopedHeaders,
+        })
+        approval = pending.json().approvals[0] as
+          { approvalId: string; version: number } | undefined
+        if (!approval) await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(approval).toBeDefined()
+      const durableApproval = approval as {
+        approvalId: string
+        version: number
+      }
+      const decisions = await Promise.all([
+        first.inject({
+          method: 'POST',
+          url: `/v1/approvals/${durableApproval.approvalId}/decision`,
+          headers: { ...scopedHeaders, 'idempotency-key': 'audit-decision-a' },
+          payload: {
+            decision: 'accept',
+            expectedVersion: durableApproval.version,
+          },
+        }),
+        first.inject({
+          method: 'POST',
+          url: `/v1/approvals/${durableApproval.approvalId}/decision`,
+          headers: { ...scopedHeaders, 'idempotency-key': 'audit-decision-b' },
+          payload: {
+            decision: 'decline',
+            expectedVersion: durableApproval.version,
+          },
+        }),
+      ])
+      expect(decisions.map((reply) => reply.statusCode).sort()).toEqual([
+        200, 409,
+      ])
+      client.emitNotification({
+        method: 'turn/completed',
+        params: {
+          threadId: client.fixture.threadId,
+          turn: {
+            id: client.fixture.turnId,
+            status: 'completed',
+            items: [],
+            error: null,
+          },
+        },
+      })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      const refresh = await first.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_audit_flow/git-snapshots/refresh',
+        headers: { ...scopedHeaders, 'idempotency-key': 'audit-refresh' },
+        payload: {},
+      })
+      expect(refresh.statusCode).toBe(200)
+      const auditReply = await first.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_audit_flow/audit?limit=100',
+        headers: scopedHeaders,
+      })
+      const records = [...auditReply.json().records].reverse() as Array<{
+        action: string
+        outcome: string
+      }>
+      const actions = records.map((record) => record.action)
+      const assertSubsequence = (expected: string[]) => {
+        let cursor = -1
+        for (const action of expected) {
+          cursor = actions.indexOf(action, cursor + 1)
+          expect(
+            cursor,
+            `missing ordered audit action ${action}`,
+          ).toBeGreaterThan(-1)
+        }
+      }
+      assertSubsequence([
+        'session.created',
+        'session.lifecycle_changed',
+        'turn.started',
+        'turn.completed',
+      ])
+      assertSubsequence(['approval.requested', 'approval.decided'])
+      assertSubsequence(['turn.started', 'git.snapshot_refreshed'])
+      expect(
+        records.filter(
+          (record) =>
+            record.action === 'approval.decided' &&
+            record.outcome === 'success',
+        ),
+      ).toHaveLength(1)
+      expect(JSON.stringify(records)).not.toMatch(
+        /sensitive fixture prompt|model output|reasoning|command output|diff --git|credential|Bearer|\/Users\//i,
+      )
+      const beforeReopen = JSON.stringify(records)
+      await first.close()
+      first = await build()
+      const reopened = await first.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_audit_flow/audit?limit=100',
+        headers: scopedHeaders,
+      })
+      expect(JSON.stringify([...reopened.json().records].reverse())).toBe(
+        beforeReopen,
+      )
+    } finally {
+      await first.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 30_000)
 })
 
 describe('WP9 auth readiness and recovery', () => {
@@ -2192,11 +2414,13 @@ describe('WP6 session resume and recovery', () => {
 
   it('keeps transient recovery failures retryable and distinct', async () => {
     class TransientClient extends FakeRuntimeClient {
+      readFailures = 1
       override async request<TResult>(
         method: string,
         params: unknown,
       ): Promise<TResult> {
-        if (method === 'thread/read') throw new Error('temporary upstream')
+        if (method === 'thread/read' && this.readFailures-- > 0)
+          throw new Error('temporary upstream')
         return super.request(method, params)
       }
     }
@@ -2225,6 +2449,31 @@ describe('WP6 session resume and recovery', () => {
       status: 'recovering',
       recoveryOptions: ['retry_resume', 'view_read_only'],
     })
+    const retried = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_transient/resume',
+      headers: { ...scoped, 'idempotency-key': 'transient-retry' },
+    })
+    expect(retried.statusCode).toBe(200)
+    const audit = await app!.inject({
+      method: 'GET',
+      url: '/v1/sessions/ses_transient/audit?limit=100',
+      headers: scoped,
+    })
+    const actions = [...audit.json().records]
+      .reverse()
+      .map((record: { action: string }) => record.action)
+    expect(
+      actions.filter((action) => action === 'recovery.started'),
+    ).toHaveLength(2)
+    const failureIndex = actions.indexOf('recovery.failed')
+    expect(failureIndex).toBeGreaterThan(actions.indexOf('recovery.started'))
+    expect(actions.lastIndexOf('recovery.started')).toBeGreaterThan(
+      failureIndex,
+    )
+    expect(actions.indexOf('recovery.completed')).toBeGreaterThan(
+      actions.lastIndexOf('recovery.started'),
+    )
   })
 
   it.each([
@@ -2552,7 +2801,13 @@ describe('WP4 restart-safe ingest regression', () => {
     }
   })
 })
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

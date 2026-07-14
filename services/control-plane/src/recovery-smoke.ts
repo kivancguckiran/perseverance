@@ -17,6 +17,7 @@ const runtimeRoot = mkdtempSync(join(tmpdir(), 'persistent-recovery-smoke-'))
 const workspaceCwd = join(runtimeRoot, 'workspace')
 const databasePath = join(runtimeRoot, 'events.sqlite')
 const codexHomeRoot = join(runtimeRoot, 'codex-homes')
+const artifactRoot = join(runtimeRoot, 'artifacts')
 const provisioningSource =
   process.env.CODEX_PROVISIONING_SOURCE ??
   process.env.CODEX_HOME ??
@@ -47,6 +48,7 @@ async function pollEvents(
 const build = () =>
   buildControlPlane({
     databasePath,
+    artifactRoot,
     workspaceCwd,
     codexHomeRoot,
     codexProvisioningSource: provisioningSource,
@@ -176,6 +178,60 @@ try {
     throw new Error('Duplicate event id detected')
   if (finalReplay.highWaterSequence <= firstHighWater)
     throw new Error('Sequence did not advance after restart')
+  const readiness = await secondApp.inject({
+    method: 'GET',
+    url: '/readyz',
+    headers,
+  })
+  if (readiness.statusCode !== 200)
+    throw new Error(`Recovered runtime is not ready: ${readiness.body}`)
+  const auditReply = await secondApp.inject({
+    method: 'GET',
+    url: `/v1/sessions/${session.sessionId}/audit?limit=100`,
+    headers,
+  })
+  const auditRecords = auditReply.json().records as Array<{
+    action: string
+    outcome: string
+  }>
+  const auditActions = auditRecords.map((record) => record.action)
+  for (const required of [
+    'recovery.started',
+    'recovery.completed',
+    'runtime.restarted',
+  ])
+    if (!auditActions.includes(required))
+      throw new Error(`Missing restart audit action: ${required}`)
+  if (
+    auditActions.filter((action) => action === 'runtime.restarted').length !== 2
+  )
+    throw new Error('Restart audit actions were duplicated or missing')
+  const metrics = (
+    await secondApp.inject({ method: 'GET', url: '/metrics' })
+  ).json() as {
+    series: Array<{
+      name: string
+      labels: Record<string, string>
+      value: number
+    }>
+  }
+  const restartMetric = metrics.series.find(
+    (series) =>
+      series.name === 'app_server_restarts_total' &&
+      series.labels.outcome === 'ready',
+  )
+  if (!restartMetric || restartMetric.value !== 2)
+    throw new Error(
+      'Restart metric did not record both bounded recovery resumes',
+    )
+  if (
+    metrics.series.some((series) =>
+      Object.keys(series.labels).some((label) =>
+        /tenant|workspace|session|turn|request|path|prompt/i.test(label),
+      ),
+    )
+  )
+    throw new Error('Restart metrics contain unbounded labels')
   evidence = {
     ok: true,
     sessionId: session.sessionId,
@@ -193,8 +249,13 @@ try {
     uniqueEventIds: true,
     firstFinalObserved: true,
     secondFinalObserved: true,
+    readinessReady: true,
+    recoveryAuditVerified: true,
+    restartAuditCount: 2,
+    boundedRestartMetric: true,
     databasePath,
     codexHomeRoot,
+    artifactRoot,
   }
 } finally {
   await firstApp?.close().catch(() => undefined)
@@ -209,6 +270,8 @@ if (evidence)
         ...evidence,
         databaseCleaned: !existsSync(String(evidence.databasePath)),
         codexHomeRootCleaned: !existsSync(String(evidence.codexHomeRoot)),
+        artifactRootCleaned: !existsSync(String(evidence.artifactRoot)),
+        runtimeRootCleaned: !existsSync(runtimeRoot),
       },
       null,
       2,

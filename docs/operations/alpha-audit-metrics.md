@@ -3,7 +3,7 @@
 ## Yüzeyler
 
 - `GET /healthz`: yalnız control-plane process liveness; dependency kontrolü yapmaz.
-- `GET /readyz`: `x-tenant-id` ve `x-workspace-id` ile database, artifacts, workspace, auth ve app-server check'lerini döndürür. Hazır değilse HTTP 503 üretir.
+- `GET /readyz`: `x-tenant-id` ve `x-workspace-id` ile database, artifacts, workspace/disk, auth ve app-server check'lerini her istekte yeniden probe eder. Probe timeout'u varsayılan iki saniyedir. Başlangıç preflight sonucu bu endpoint için cache veya doğruluk kaynağı değildir. Hazır değilse HTTP 503 üretir; dependency geri geldiğinde bir sonraki gerçek probe HTTP 200 döndürür.
 - `GET /metrics`: bounded JSON aggregate. Harici exporter veya scrape kurulumu gerektirmez.
 - `GET /v1/sessions/:sessionId/audit?limit=25&cursor=...`: scope zorunlu, keyset-cursor sayfalı durable audit.
 
@@ -21,3 +21,9 @@ Varsayılan audit sınırı 30 gün, 10.000 kayıt ve toplam 8 MiB metadata'dır
 - database/artifacts/disk failed: yeni yazma etkileri durdurulur ve dependency düzeldikten sonra readiness deterministik olarak tekrar `ready` olur.
 
 Metrics process restart'ında sıfırlanan operasyon aggregate'larıdır; durable doğruluk kaynağı audit ve domain store'dur.
+
+## SQLite contention
+
+Store WAL modunda `busy_timeout=5000` kullanır ve audit/domain transaction'larını `BEGIN IMMEDIATE` ile serialize eder. Aynı SQLite dosyasını kullanan iki alfa instance'ı kısa writer yarışlarında bekler; aynı idempotency key yalnız bir audit kaydı üretir. Beş saniyeye yaklaşan lock beklemesi kapasite/operasyon hatasıdır: ikinci aktif control-plane'i durdur, uzun transaction sahibini tespit et ve readiness düzelmeden trafik verme. SQLite dosyasını NFS benzeri paylaşımlı storage üzerinde kullanma.
+
+Approval resolve, session create/status ve recovery lifecycle state değişiklikleri audit ile atomiktir. App-server'a gönderilmiş response, runtime health callback'i, Git subprocess sonucu ve artifact filesystem okuması SQLite transaction'ına alınamaz; bu sınırlar allowlist metadata ve idempotency key ile ayrı kayıtlanır.

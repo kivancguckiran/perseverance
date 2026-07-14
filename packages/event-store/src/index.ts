@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { accessSync, constants, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
@@ -450,6 +450,8 @@ export class SqliteEventStore {
   readonly #approvalListeners = new Set<ApprovalListener>()
   readonly #now: () => Date
   readonly #auditRetention: AuditRetentionPolicy
+  readonly #databasePath: string
+  readonly #beforeAtomicAuditCommit: ((action: AuditAction) => void) | undefined
   #closed = false
 
   constructor(
@@ -457,6 +459,7 @@ export class SqliteEventStore {
     options: {
       now?: () => Date
       auditRetention?: Partial<AuditRetentionPolicy>
+      beforeAtomicAuditCommit?: (action: AuditAction) => void
     } = {},
   ) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
@@ -465,6 +468,8 @@ export class SqliteEventStore {
       ...DEFAULT_AUDIT_RETENTION,
       ...options.auditRetention,
     }
+    this.#databasePath = path
+    this.#beforeAtomicAuditCommit = options.beforeAtomicAuditCommit
     this.#database = new DatabaseSync(path)
     this.#database.exec(`
       PRAGMA journal_mode = WAL;
@@ -490,6 +495,17 @@ export class SqliteEventStore {
 
   #timestamp(): string {
     return this.#now().toISOString()
+  }
+
+  probe(): void {
+    if (this.#closed) throw new StoreError('STORE_CLOSED', 'Store is closed')
+    if (this.#databasePath !== ':memory:') {
+      accessSync(dirname(this.#databasePath), constants.R_OK | constants.W_OK)
+      accessSync(this.#databasePath, constants.R_OK | constants.W_OK)
+    }
+    const row = this.#database.prepare('SELECT 1 AS ok').get() as { ok: number }
+    if (row.ok !== 1)
+      throw new StoreError('DATABASE_PROBE_FAILED', 'Database probe failed')
   }
 
   appendAudit(input: AppendAuditInput): AuditRecord {
@@ -663,6 +679,26 @@ export class SqliteEventStore {
     }
   }
 
+  listWorkspaceAudit(
+    scope: Pick<StoreScope, 'tenantId' | 'workspaceId'>,
+    limit = 100,
+  ): AuditRecord[] {
+    assertIdentifier(scope.tenantId, 'tenantId')
+    assertIdentifier(scope.workspaceId, 'workspaceId')
+    const boundedLimit = Math.min(Math.max(limit, 1), 100)
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM audit_records WHERE tenant_id=? AND workspace_id=?
+         ORDER BY audit_id DESC LIMIT ?`,
+      )
+      .all(
+        scope.tenantId,
+        scope.workspaceId,
+        boundedLimit,
+      ) as unknown as AuditRow[]
+    return rows.map(auditFromRow)
+  }
+
   getAuditStats(): { records: number; metadataBytes: number } {
     const row = this.#database
       .prepare(
@@ -691,6 +727,41 @@ export class SqliteEventStore {
         timestamp,
         timestamp,
       )
+    return this.getSession(input)
+  }
+
+  createSessionWithAudit(
+    input: CreateSessionInput,
+    audit: AppendAuditInput,
+  ): SessionRecord {
+    assertScope(input)
+    const status = input.status ?? 'active'
+    assertIdentifier(status, 'status')
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      this.#database
+        .prepare(
+          `INSERT OR IGNORE INTO sessions (
+            tenant_id, workspace_id, session_id, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          status,
+          timestamp,
+          timestamp,
+        )
+      this.#insertAudit(audit, timestamp)
+      this.#pruneAudit(timestamp)
+      this.#beforeAtomicAuditCommit?.(audit.action)
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
     return this.getSession(input)
   }
 
@@ -1014,6 +1085,40 @@ export class SqliteEventStore {
     return this.getSession(scope)
   }
 
+  updateSessionStatusWithAudit(
+    scope: StoreScope,
+    status: string,
+    audit: AppendAuditInput,
+  ): SessionRecord {
+    assertScope(scope)
+    assertIdentifier(status, 'status')
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.#database
+        .prepare(
+          `UPDATE sessions SET status = ?, updated_at = ?
+           WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+        )
+        .run(
+          status,
+          timestamp,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+        )
+      if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+      this.#insertAudit(audit, timestamp)
+      this.#pruneAudit(timestamp)
+      this.#beforeAtomicAuditCommit?.(audit.action)
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+    return this.getSession(scope)
+  }
+
   updateSessionRecovery(
     scope: StoreScope,
     input: {
@@ -1043,6 +1148,49 @@ export class SqliteEventStore {
         scope.sessionId,
       )
     if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+    return this.getSession(scope)
+  }
+
+  updateSessionRecoveryWithAudit(
+    scope: StoreScope,
+    input: {
+      status: 'active' | 'recovering' | 'recovery_required' | 'failed'
+      recoveryErrorCode?: string | null
+      runtimeGeneration?: number | null
+      resumed?: boolean
+    },
+    audit: AppendAuditInput,
+  ): SessionRecord {
+    assertScope(scope)
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.#database
+        .prepare(
+          `UPDATE sessions SET status = ?, recovery_error_code = ?,
+           runtime_generation = ?, last_resumed_at = CASE WHEN ? THEN ? ELSE last_resumed_at END,
+           updated_at = ? WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+        )
+        .run(
+          input.status,
+          input.recoveryErrorCode ?? null,
+          input.runtimeGeneration ?? null,
+          input.resumed ? 1 : 0,
+          timestamp,
+          timestamp,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+        )
+      if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+      this.#insertAudit(audit, timestamp)
+      this.#pruneAudit(timestamp)
+      this.#beforeAtomicAuditCommit?.(audit.action)
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
     return this.getSession(scope)
   }
 
@@ -1643,6 +1791,48 @@ export class SqliteEventStore {
       )
     if (Number(result.changes) !== 1)
       return this.getApproval(input, input.approvalId)
+    const record = this.getApproval(input, input.approvalId)
+    for (const listener of this.#approvalListeners) listener(record)
+    return record
+  }
+
+  finishApprovalWithAudit(
+    input: Pick<StoreScope, 'tenantId' | 'workspaceId'> & {
+      approvalId: string
+      upstreamResponseStatus: ApprovalRecord['upstreamResponseStatus']
+    },
+    audit: AppendAuditInput,
+  ): ApprovalRecord {
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.#database
+        .prepare(
+          `UPDATE approvals SET status = 'resolved', upstream_response_status = ?,
+           resolved_at = ?, version = version + 1
+           WHERE tenant_id = ? AND workspace_id = ? AND approval_id = ?
+             AND status = 'resolving'`,
+        )
+        .run(
+          input.upstreamResponseStatus,
+          timestamp,
+          input.tenantId,
+          input.workspaceId,
+          input.approvalId,
+        )
+      if (Number(result.changes) !== 1)
+        throw new StoreConflictError(
+          'APPROVAL_ALREADY_RESOLVED',
+          'Approval was resolved concurrently',
+        )
+      this.#insertAudit(audit, timestamp)
+      this.#pruneAudit(timestamp)
+      this.#beforeAtomicAuditCommit?.(audit.action)
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
     const record = this.getApproval(input, input.approvalId)
     for (const listener of this.#approvalListeners) listener(record)
     return record

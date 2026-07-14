@@ -5,6 +5,8 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  accessSync,
+  constants,
   readFileSync,
   readdirSync,
   readSync,
@@ -56,6 +58,7 @@ export interface AppendInput {
   sourceKey?: string
 }
 export interface ArtifactStorage {
+  probe(): void
   create(
     scope: ArtifactScope,
     kind?: ArtifactMetadata['kind'],
@@ -148,6 +151,12 @@ export class LocalArtifactStorage implements ArtifactStorage {
     mkdirSync(root, { recursive: true })
     this.#root = realpathSync(root)
     this.recover()
+  }
+  probe(): void {
+    const stat = lstatSync(this.#root)
+    if (!stat.isDirectory() || stat.isSymbolicLink())
+      throw new Error('ARTIFACT_STORAGE_UNAVAILABLE')
+    accessSync(this.#root, constants.R_OK | constants.W_OK | constants.X_OK)
   }
   #dir(scope: ArtifactScope) {
     return join(

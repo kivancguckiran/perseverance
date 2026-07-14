@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { Worker } from 'node:worker_threads'
+import { once } from 'node:events'
 import { ingestRawCodexEnvelope } from '@persistent-codex/codex-event-adapter'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { describe, expect, it } from 'vitest'
@@ -160,16 +162,94 @@ describe('SqliteEventStore atomic ingest', () => {
         expect.objectContaining({ code: 'APPROVAL_ALREADY_RESOLVED' }),
       )
       expect(
-        store.finishApproval({
-          ...scope,
-          approvalId: 'apr_1',
-          upstreamResponseStatus: 'sent',
-        }),
+        store.finishApprovalWithAudit(
+          {
+            ...scope,
+            approvalId: 'apr_1',
+            upstreamResponseStatus: 'sent',
+          },
+          {
+            ...scope,
+            actor: 'user',
+            action: 'approval.decided',
+            outcome: 'success',
+            idempotencyKey: 'approval:apr_1:resolved',
+            metadata: {
+              approvalKind: 'command_execution',
+              decision: 'decline',
+            },
+          },
+        ),
       ).toMatchObject({ status: 'resolved', version: 3 })
+      expect(
+        store
+          .listAudit(scope)
+          .records.filter((record) => record.action === 'approval.decided'),
+      ).toHaveLength(1)
       expect(() =>
         store.getApproval({ ...scope, tenantId: 'other' }, 'apr_1'),
       ).toThrowError(expect.objectContaining({ code: 'APPROVAL_NOT_FOUND' }))
     })
+  })
+
+  it('rolls back approval resolution and audit together on injected failure', () => {
+    const store = new SqliteEventStore(':memory:', {
+      beforeAtomicAuditCommit: (action) => {
+        if (action === 'approval.decided') throw new Error('injected crash')
+      },
+    })
+    store.createSession(scope)
+    store.ingest(
+      ingestInput('approval-crash', 'evt_approval_crash', {
+        approval: {
+          ...scope,
+          approvalId: 'apr_crash',
+          turnId: 'turn_crash',
+          itemId: 'item_crash',
+          requestId: 8,
+          runtimeInstanceId: 'runtime_1',
+          processGeneration: 1,
+          kind: 'file_change',
+          context: {},
+          availableDecisions: ['accept', 'decline'],
+          requestedAt: '2026-07-14T00:00:00.000Z',
+        },
+      }),
+    )
+    store.beginApprovalResolution({
+      ...scope,
+      approvalId: 'apr_crash',
+      expectedVersion: 1,
+      decision: 'accept',
+      userId: 'user_1',
+    })
+    expect(() =>
+      store.finishApprovalWithAudit(
+        {
+          ...scope,
+          approvalId: 'apr_crash',
+          upstreamResponseStatus: 'sent',
+        },
+        {
+          ...scope,
+          actor: 'user',
+          action: 'approval.decided',
+          outcome: 'success',
+          idempotencyKey: 'approval:apr_crash:resolved',
+          metadata: { approvalKind: 'file_change', decision: 'accept' },
+        },
+      ),
+    ).toThrow('injected crash')
+    expect(store.getApproval(scope, 'apr_crash')).toMatchObject({
+      status: 'resolving',
+      version: 2,
+    })
+    expect(
+      store
+        .listAudit(scope)
+        .records.filter((record) => record.action === 'approval.decided'),
+    ).toHaveLength(0)
+    store.close()
   })
 
   it('allocates unique monotonic workspace sequences across connections', async () => {
@@ -645,6 +725,26 @@ describe('WP11 durable audit', () => {
     ...overrides,
   })
 
+  it('rolls back session lifecycle state when its audit cannot commit', () => {
+    const store = new SqliteEventStore(':memory:', {
+      beforeAtomicAuditCommit: (action) => {
+        if (action === 'session.lifecycle_changed')
+          throw new Error('injected lifecycle failure')
+      },
+    })
+    store.createSession(scope)
+    expect(() =>
+      store.updateSessionStatusWithAudit(
+        scope,
+        'failed',
+        audit('lifecycle-failure'),
+      ),
+    ).toThrow('injected lifecycle failure')
+    expect(store.getSession(scope).status).toBe('active')
+    expect(store.listAudit(scope).records).toHaveLength(0)
+    store.close()
+  })
+
   it('is idempotent, scoped, cursor-paginated, and rejects unsafe metadata', () => {
     withStore((store) => {
       store.createSession({ ...scope, sessionId: 'ses_other' })
@@ -727,6 +827,46 @@ describe('WP11 durable audit', () => {
       expect(store.getAuditStats().metadataBytes).toBeLessThanOrEqual(100)
     } finally {
       store.close()
+    }
+  })
+
+  it('serializes two store instances under WAL contention and preserves idempotency', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'event-store-contention-'))
+    const path = join(directory, 'events.sqlite')
+    const first = new SqliteEventStore(path)
+    const second = new SqliteEventStore(path)
+    first.createSession(scope)
+    const worker = new Worker(
+      `
+        const { parentPort, workerData } = require('node:worker_threads')
+        const { DatabaseSync } = require('node:sqlite')
+        const database = new DatabaseSync(workerData.path)
+        database.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE')
+        database.prepare('UPDATE sessions SET updated_at=updated_at WHERE tenant_id=? AND workspace_id=? AND session_id=?').run('ten_test','wsp_test','ses_test')
+        parentPort.postMessage('locked')
+        setTimeout(() => {
+          database.exec('COMMIT')
+          database.close()
+          parentPort.postMessage('released')
+        }, 150)
+      `,
+      { eval: true, workerData: { path } },
+    )
+    try {
+      expect((await once(worker, 'message'))[0]).toBe('locked')
+      const startedAt = Date.now()
+      const inserted = second.appendAudit(audit('contended'))
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100)
+      expect(first.appendAudit(audit('contended')).auditId).toBe(
+        inserted.auditId,
+      )
+      expect(first.getAuditStats().records).toBe(1)
+      await once(worker, 'exit')
+    } finally {
+      await worker.terminate()
+      first.close()
+      second.close()
+      rmSync(directory, { recursive: true, force: true })
     }
   })
 })

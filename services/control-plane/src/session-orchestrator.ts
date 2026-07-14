@@ -452,15 +452,17 @@ export class SessionOrchestrator {
       ...input,
       sessionId: this.#sessionIdFactory(),
     }
-    this.#store.createSession({ ...scope, status: 'starting' })
-    this.#store.appendAudit({
-      ...scope,
-      actor: 'system',
-      action: 'session.created',
-      outcome: 'success',
-      idempotencyKey: `session:${scope.sessionId}:created`,
-      metadata: { toState: 'starting' },
-    })
+    this.#store.createSessionWithAudit(
+      { ...scope, status: 'starting' },
+      {
+        ...scope,
+        actor: 'system',
+        action: 'session.created',
+        outcome: 'success',
+        idempotencyKey: `session:${scope.sessionId}:created`,
+        metadata: { toState: 'starting' },
+      },
+    )
     const cwd =
       typeof this.#workspaceCwd === 'function'
         ? this.#workspaceCwd(input)
@@ -484,23 +486,25 @@ export class SessionOrchestrator {
       )
       const codexThreadId = response.thread.id
       this.#store.bindCodexThread(scope, codexThreadId)
-      this.#store.updateSessionRecovery(scope, {
-        status: 'active',
-        runtimeGeneration: runtime.client.processGeneration,
-      })
-      this.#store.appendAudit({
-        ...scope,
-        actor: 'system',
-        action: 'session.lifecycle_changed',
-        outcome: 'success',
-        idempotencyKey: `session:${scope.sessionId}:active`,
-        metadata: { fromState: 'starting', toState: 'active' },
-      })
+      this.#store.updateSessionRecoveryWithAudit(
+        scope,
+        {
+          status: 'active',
+          runtimeGeneration: runtime.client.processGeneration,
+        },
+        {
+          ...scope,
+          actor: 'system',
+          action: 'session.lifecycle_changed',
+          outcome: 'success',
+          idempotencyKey: `session:${scope.sessionId}:active`,
+          metadata: { fromState: 'starting', toState: 'active' },
+        },
+      )
       this.#threadScopes.set(this.#threadKey(input, codexThreadId), scope)
       return this.getSession(scope)
     } catch (error) {
-      this.#store.updateSessionStatus(scope, 'failed')
-      this.#store.appendAudit({
+      this.#store.updateSessionStatusWithAudit(scope, 'failed', {
         ...scope,
         actor: 'system',
         action: 'session.lifecycle_changed',
@@ -723,15 +727,18 @@ export class SessionOrchestrator {
     keyScope: string,
     key: string,
   ): Promise<SessionResponse> {
-    this.#store.updateSessionRecovery(scope, { status: 'recovering' })
-    this.#store.appendAudit({
-      ...scope,
-      actor: 'system',
-      action: 'recovery.started',
-      outcome: 'requested',
-      idempotencyKey: `recovery:${key}:started`,
-      metadata: { operation: 'resume' },
-    })
+    this.#store.updateSessionRecoveryWithAudit(
+      scope,
+      { status: 'recovering' },
+      {
+        ...scope,
+        actor: 'system',
+        action: 'recovery.started',
+        outcome: 'requested',
+        idempotencyKey: `recovery:${key}:started`,
+        metadata: { operation: 'resume' },
+      },
+    )
     try {
       const cwd =
         typeof this.#workspaceCwd === 'function'
@@ -771,20 +778,23 @@ export class SessionOrchestrator {
           sessionId: scope.sessionId,
           turnId: active.id,
         })
-      const record = this.#store.updateSessionRecovery(scope, {
-        status: 'active',
-        runtimeGeneration: runtime.client.processGeneration,
-        resumed: true,
-      })
+      const record = this.#store.updateSessionRecoveryWithAudit(
+        scope,
+        {
+          status: 'active',
+          runtimeGeneration: runtime.client.processGeneration,
+          resumed: true,
+        },
+        {
+          ...scope,
+          actor: 'system',
+          action: 'recovery.completed',
+          outcome: 'success',
+          idempotencyKey: `recovery:${key}:completed`,
+          metadata: { toState: 'active' },
+        },
+      )
       const response = this.getSession(record)
-      this.#store.appendAudit({
-        ...scope,
-        actor: 'system',
-        action: 'recovery.completed',
-        outcome: 'success',
-        idempotencyKey: `recovery:${key}:completed`,
-        metadata: { toState: 'active' },
-      })
       this.#store.completeIdempotencyKey({
         ...scope,
         scope: keyScope,
@@ -795,27 +805,30 @@ export class SessionOrchestrator {
       return response
     } catch (error) {
       const failure = classifyRecoveryError(error)
-      this.#store.updateSessionRecovery(scope, {
-        status: failure.permanent ? 'recovery_required' : 'recovering',
-        recoveryErrorCode: failure.code,
-      })
+      this.#store.updateSessionRecoveryWithAudit(
+        scope,
+        {
+          status: failure.permanent ? 'recovery_required' : 'recovering',
+          recoveryErrorCode: failure.code,
+        },
+        {
+          ...scope,
+          actor: 'system',
+          action: 'recovery.failed',
+          outcome: 'failure',
+          idempotencyKey: `recovery:${key}:failed`,
+          metadata: {
+            recoveryCode: failure.code,
+            toState: failure.permanent ? 'recovery_required' : 'recovering',
+          },
+        },
+      )
       this.#store.completeIdempotencyKey({
         ...scope,
         scope: keyScope,
         key,
         status: 'failed',
         response: failure,
-      })
-      this.#store.appendAudit({
-        ...scope,
-        actor: 'system',
-        action: 'recovery.failed',
-        outcome: 'failure',
-        idempotencyKey: `recovery:${key}:failed`,
-        metadata: {
-          recoveryCode: failure.code,
-          toState: failure.permanent ? 'recovery_required' : 'recovering',
-        },
       })
       throw new OrchestrationError(
         failure.code,
@@ -1200,6 +1213,9 @@ export class SessionOrchestrator {
     decision: ApprovalDecision
     expectedVersion: number
     userId: string
+    correlationId?: string | null
+    requestId?: string | null
+    traceId?: string | null
   }): Promise<ApprovalRecord> {
     const approval = this.#store.getApproval(input, input.approvalId)
     if (!approval.availableDecisions.includes(input.decision)) {
@@ -1252,10 +1268,32 @@ export class SessionOrchestrator {
         503,
       )
     }
-    return this.#store.finishApproval({
-      ...input,
-      upstreamResponseStatus: 'sent',
-    })
+    return this.#store.finishApprovalWithAudit(
+      {
+        ...input,
+        upstreamResponseStatus: 'sent',
+      },
+      {
+        tenantId: approval.tenantId,
+        workspaceId: approval.workspaceId,
+        sessionId: approval.sessionId,
+        actor: 'user',
+        action: 'approval.decided',
+        outcome: 'success',
+        idempotencyKey: `approval:${approval.approvalId}:resolved`,
+        ...(input.correlationId !== undefined
+          ? { correlationId: input.correlationId }
+          : {}),
+        ...(input.requestId !== undefined
+          ? { requestId: input.requestId }
+          : {}),
+        ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
+        metadata: {
+          approvalKind: approval.kind,
+          decision: input.decision,
+        },
+      },
+    )
   }
 
   async #startReservedTurn(
