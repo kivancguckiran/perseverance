@@ -44,7 +44,14 @@ WP8 kabul edildi: `pnpm demo:smoke` arıza regresyonlarını ve aynı-thread
 restart/resume'u; üç `pnpm demo:golden:*` komutu gerçek app-server görevlerini ve tek
 kazananlı concurrent approval yarışını doğruladı. Generator deterministik kaldı,
 cleanup kontrolleri geçti ve desktop/mobil browser görünümü taşmasız, temiz console ile
-açıldı. Faz 0 tamamlandı; mevcut planda WP9 yoktur.
+açıldı. Faz 0 tamamlandı ve yeni işler Faz 1 planına taşındı.
+
+## Sonraki faz
+
+Faz 1 tek kiracılı alfa kapsamı WP9–WP12 olarak
+`docs/planning/phase-1-alpha-plan.md` içinde tanımlanmıştır. Yalnız WP9 aktiftir;
+Faz 0'da tamamlanan supervisor, replay/resume, WebSocket, artifact ve responsive
+timeline yeniden uygulanmayacaktır.
 
 ## Uygulama sırası
 

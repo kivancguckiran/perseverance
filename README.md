@@ -10,7 +10,11 @@ Faz 0 protokol kanıtı şu soruyu cevaplar:
 
 > Pinli bir `codex app-server` sürümünden gelen mesaj, plan, reasoning summary, komut, çıktı, diff ve approval olaylarını kayıpsız normalize edip browser yeniden bağlandığında aynı thread'i sürdürebiliyor muyuz?
 
-Ana uygulama planı [PoC uygulama planında](docs/planning/poc-implementation-plan.md), özet sıra ve güncel durum [PoC yol haritasında](docs/planning/poc-roadmap.md), app-server kararı [ADR-0001](docs/architecture/adr-0001-app-server-integration.md), PoC teknoloji yığını ise [ADR-0002](docs/architecture/adr-0002-poc-technology-stack.md) içinde tutulur.
+Faz 0 planı [PoC uygulama planında](docs/planning/poc-implementation-plan.md), aktif Faz 1
+iş paketleri [tek kiracılı alfa planında](docs/planning/phase-1-alpha-plan.md), özet sıra ve
+geçmiş durum [PoC yol haritasında](docs/planning/poc-roadmap.md), app-server kararı
+[ADR-0001](docs/architecture/adr-0001-app-server-integration.md), teknoloji yığını ise
+[ADR-0002](docs/architecture/adr-0002-poc-technology-stack.md) içinde tutulur.
 
 İş paketlerinin tek-aktif-paket kuralı, teslimat denetimi ve uygulama task'larına verilecek prompt formatı [İş Paketi Yönetim Protokolünde](docs/planning/work-package-management.md) tanımlanır.
 
@@ -50,8 +54,8 @@ pnpm verify
 pnpm dev
 ```
 
-WP8 kabul adayı, üç gerçek golden görevi ve dört arıza senaryosunu redakte kanıtla
-çalıştıran birleşik smoke komutuna sahiptir:
+Tamamlanan Faz 0'ın üç gerçek golden görevi ve dört arıza senaryosunu redakte kanıtla
+çalıştıran birleşik smoke komutları şunlardır:
 
 ```bash
 pnpm demo:smoke
@@ -61,8 +65,8 @@ pnpm demo:golden:approval
 ```
 
 Temiz kurulum, browser adımları, beklenen semantik timeline kartları, cleanup ve sorun
-giderme için [PoC demo rehberine](docs/demo/poc-demo.md) bakın. WP8 uygulaması
-tamamlanmış ancak bağımsız kabul beklemektedir.
+giderme için [PoC demo rehberine](docs/demo/poc-demo.md) bakın. Faz 1'in aktif paketi
+WP9'dur: alfa başlatma ve auth bootstrap.
 
 - Web: `http://localhost:3000`
 - Control plane: `http://127.0.0.1:3100`

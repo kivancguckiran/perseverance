@@ -2,7 +2,8 @@
 
 - Belge durumu: Aktif
 - Başlangıç tarihi: 14 Temmuz 2026
-- Yönetim kaynağı: `docs/planning/poc-implementation-plan.md`
+- Yönetim kaynakları: `docs/planning/poc-implementation-plan.md` ve
+  `docs/planning/phase-1-alpha-plan.md`
 
 ## Bu task'ın rolü
 
@@ -59,6 +60,10 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
 | WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
 | WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı               |
+| WP9 — Alfa başlatma ve auth bootstrap        | Aktif      | Güvenli provisioning, readiness ve actionable auth recovery uygulanacak                                     |
+| WP10 — Workspace ve Git görünürlüğü          | Bekliyor   | Yakın session navigasyonu ile salt-okunur Git status/diff/log yüzeyi                                        |
+| WP11 — Audit ve temel metrics                | Bekliyor   | Durable audit, liveness/readiness ve bounded operasyon metrikleri                                           |
+| WP12 — Alfa hardening ve kabul               | Bekliyor   | Tek kiracılı alfa runbook, soak/canary ve release gate                                                      |
 
 ## WP1 nihai denetim sonucu
 
@@ -501,3 +506,10 @@ Uygulama commit'i: `7e1d913` (`feat: complete WP8 golden PoC demo`).
 
 Faz 0 tamamlandı. Mevcut planda WP9 tanımlı değildir; yeni paket ancak Faz 1 kapsamı
 kararlaştırıldıktan sonra açılabilir.
+
+## Faz 1 plan aktivasyonu
+
+Faz 1 tek kiracılı alfa planı `docs/planning/phase-1-alpha-plan.md` içinde WP9–WP12
+olarak tanımlandı. Faz 0'da tamamlanan supervisor, replay/resume, WebSocket, artifact ve
+responsive timeline kapsamları tekrarlanmadı. WP9 tek aktif pakettir; WP10–WP12
+bağımlılık sırasıyla beklemektedir.

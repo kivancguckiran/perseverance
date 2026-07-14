@@ -461,6 +461,6 @@ Bir iş paketi ancak şu koşullarda tamamlandı sayılır:
 
 ## 14. Güncel sonraki adım
 
-Faz 0, WP8 kabulüyle tamamlanmıştır. Mevcut planda WP9 tanımlı değildir. Yeni bir iş
-paketi açılmadan önce Faz 1 hedefi, kapsamı ve kabul kriterleri ayrıca planlanmalıdır.
-Güncel denetim `docs/planning/work-package-management.md` içinde tutulur.
+Faz 0, WP8 kabulüyle tamamlanmıştır. Faz 1 hedefi, WP9–WP12 kapsamı ve kabul kriterleri
+`docs/planning/phase-1-alpha-plan.md` içinde tanımlanmıştır. Güncel denetim
+`docs/planning/work-package-management.md` içinde tutulur.
