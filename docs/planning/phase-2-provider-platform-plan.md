@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 15 Temmuz 2026
-- Aktif iş paketi: WP14
+- Aktif iş paketi: WP15
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
@@ -94,8 +94,8 @@ conversation başlığı ikinci kullanıcı mesajından sonra `luna` model polit
 | Paket | Durum      | Hedef                                                                         |
 | ----- | ---------- | ----------------------------------------------------------------------------- |
 | WP13  | Tamamlandı | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
-| WP14  | Aktif      | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
-| WP15  | Bekliyor   | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
+| WP14  | Tamamlandı | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
+| WP15  | Aktif      | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
 | WP16  | Bekliyor   | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
 
 ## 5. WP13 — Platform sözleşmesi ve maliyet temeli
@@ -176,6 +176,15 @@ disconnect/reconnect, crash/restart recovery, explicit interrupt ve terminal usa
 finalization uygulanır. Browser kapanıp yeniden açıldığında aynı turn'ün devam ettiği ve
 sonucun replay edildiği; failed/interrupted turn'lerde kısmi usage'ın korunduğu gerçek
 integration senaryolarıyla doğrulanır.
+
+### Kabul sonucu
+
+WP14 bağımsız olarak kabul edildi. Uygulama commit'i `0d75a1e` üzerinde ADR-0013,
+schema v10 `durable_runs`, session başına database seviyesinde tek aktif run, explicit
+interrupt, reconnect snapshot/replay ve terminal accounting doğrulandı. Güncel HEAD'de
+format, bütün typecheck'ler, 14 test dosyasında 164 test, production build, SSR HTTP
+smoke ve dört aşamalı gerçek Codex alfa canary geçti. İzole güncel web instance'ında
+1280×720 ve 390×844 görünümleri taşmasız ve console hatasızdı. WP15 tek aktif pakettir.
 
 ## 7. WP15 — Çok sağlayıcılı adapter, model seçimi ve başlık
 

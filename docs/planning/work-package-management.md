@@ -66,8 +66,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP11 — Audit ve temel metrics                | Tamamlandı | Atomik durable audit, dinamik readiness, bounded metrics ve contention davranışı doğrulandı                 |
 | WP12 — Alfa hardening ve kabul               | Tamamlandı | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                        |
 | WP13 — Platform ve usage ledger temeli       | Tamamlandı | Provider-neutral sözleşme, schema v9, model politikası ve append-only usage ledger doğrulandı               |
-| WP14 — Durable detached execution            | Aktif      | Browser'dan bağımsız çalışma, recovery ve terminal accounting uygulanacak                                   |
-| WP15 — Çok sağlayıcılı conversation          | Bekliyor   | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
+| WP14 — Durable detached execution            | Tamamlandı | Schema v10 durable run, disconnect/replay, explicit interrupt, recovery ve accounting doğrulandı            |
+| WP15 — Çok sağlayıcılı conversation          | Aktif      | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
 | WP16 — PWA ve Faz 2 kabulü                   | Bekliyor   | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlanacak                                    |
 
 ## WP1 nihai denetim sonucu
@@ -707,3 +707,37 @@ foundation`) mevcut ve WP13 kapsamını taşıyor.
 Uygulama commit'i: `f2cde59` (`feat: add provider platform and usage ledger foundation`).
 
 Aktif iş paketi WP14'tür. WP14 tamamlanmadan WP15'e geçilemez.
+
+## WP14 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Uygulama commit'i `0d75a1e` (`feat: add durable detached turn execution`) mevcut ve
+  WP14 kapsamını taşıyor.
+- ADR-0013 ile browser/WebSocket subscription ömrü server-owned execution'dan ayrıldı;
+  browser disconnect provider interrupt üretmiyor, yalnız explicit Durdur kararı
+  idempotent interrupt akışını başlatıyor.
+- Schema v10 `durable_runs` tablosu ve partial unique index session başına tek
+  queued/running/interrupting run'ı transaction sınırında koruyor.
+- Delayed provider integration testi WebSocket kapandıktan sonra aynı run/turn'ün
+  tamamlandığını, reconnect snapshot/replay ile terminal çıktının geldiğini ve usage
+  ledger'ın duplicate üretmediğini doğruluyor.
+- Restart reconcile aynı persistent thread'i okuyor/resume ediyor; belirsiz upstream
+  sonuç otomatik prompt tekrarı yerine `recovery_required` oluyor.
+- Completed/failed/interrupted terminal accounting ölçülmüş kullanımı koruyor; eksik
+  terminal usage `partial/unreconciled` kalıyor.
+- Güncel HEAD üzerinde Prettier, bütün package typecheck'leri, 14 test dosyasında 164
+  test, production build ve izinli localhost'ta SSR HTTP smoke geçti.
+- Gerçek pinli Codex alfa canary read-only, file change + targeted test + Git, tek
+  approval ve restart/resume/readiness/audit/metrics aşamalarını cleanup ile geçti.
+- Güncel HEAD'den açılan izole web instance'ında 1280×720 ve 390×844 görünümleri yatay
+  taşma veya o instance'a ait console warning/error üretmedi. Önceden açık 3000 dev
+  sürecindeki stale HMR import hatası izole instance'ta tekrarlanmadı.
+- Kabul sonunda geçici browser tab'ı, viewport override ve izole dev process kapatıldı;
+  çalışma ağacı temiz kaldı.
+
+Uygulama commit'i: `0d75a1e` (`feat: add durable detached turn execution`).
+
+Aktif iş paketi WP15'tir. WP15 tamamlanmadan WP16'ya geçilemez.
