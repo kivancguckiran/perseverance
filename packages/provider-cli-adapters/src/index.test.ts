@@ -5,6 +5,8 @@ import {
   ClaudeCodeRuntimeAdapter,
   GeminiCliRuntimeAdapter,
   normalizeCliEnvelope,
+  SpawnCliProcessRunner,
+  type CliRunResult,
   type CliProcessRunner,
 } from './index'
 import type { ProviderModelCatalog } from '@persistent-codex/provider-platform'
@@ -75,7 +77,9 @@ class FixtureRunner implements CliProcessRunner {
     this.lines = lines
     this.exitCode = exitCode
   }
-  async run(input: { onLine(line: string): void | Promise<void> }) {
+  async run(input: {
+    onLine(line: string): void | Promise<void>
+  }): Promise<CliRunResult> {
     for (const line of this.lines) await input.onLine(line)
     return {
       exitCode: this.interrupted ? null : this.exitCode,
@@ -91,6 +95,38 @@ class FixtureRunner implements CliProcessRunner {
   }
   async probe() {
     return { exitCode: 0, stdout: '{"loggedIn":true}', stderr: '' }
+  }
+}
+
+class ControlledRunner extends FixtureRunner {
+  #onLine: ((line: string) => void | Promise<void>) | undefined
+  #resolve: ((result: CliRunResult) => void) | undefined
+  readonly started = Promise.withResolvers<void>()
+  interruptCalls = 0
+
+  constructor() {
+    super([])
+  }
+
+  override async run(input: { onLine(line: string): void | Promise<void> }) {
+    this.#onLine = input.onLine
+    this.started.resolve()
+    return await new Promise<CliRunResult>((resolve) => {
+      this.#resolve = resolve
+    })
+  }
+
+  async emit(envelope: unknown) {
+    await this.#onLine?.(JSON.stringify(envelope))
+  }
+
+  finish(result: CliRunResult) {
+    this.#resolve?.(result)
+  }
+
+  override interrupt() {
+    this.interruptCalls += 1
+    return true
   }
 }
 
@@ -391,5 +427,166 @@ describe('provider-specific effort and readiness', () => {
     })
     expect(JSON.stringify(terminal)).not.toMatch(/stack|secret-token/)
     expect(runner.attempts).toBe(3)
+  })
+})
+
+describe('provider interrupt and timeout races', () => {
+  const turnInput = {
+    sessionId: null,
+    prompt: 'fixture',
+    cwd: '.',
+    modelId: 'claude-fixture-model',
+    reasoningEffort: 'none' as const,
+  }
+  const interruptInput = {
+    schemaVersion: 1 as const,
+    sessionId: 'fixture-session',
+    turnId: 'fixture-turn',
+    reason: 'user' as const,
+  }
+
+  it('preserves authoritative completion observed before interrupt', async () => {
+    const runner = new ControlledRunner()
+    const adapter = new ClaudeCodeRuntimeAdapter({
+      catalog: catalog('claude'),
+      context: context(),
+      runner,
+    })
+    const turn = adapter.startTurn!(turnInput, () => undefined)
+    await runner.started.promise
+    await runner.emit({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'fixture-session',
+    })
+    await adapter.interrupt(interruptInput)
+    runner.finish({
+      exitCode: null,
+      signal: 'SIGINT',
+      interruptRequested: true,
+    })
+    await expect(turn).resolves.toMatchObject({ outcome: 'completed' })
+  })
+
+  it('finalizes interrupted when accepted interrupt precedes completion', async () => {
+    const runner = new ControlledRunner()
+    const adapter = new ClaudeCodeRuntimeAdapter({
+      catalog: catalog('claude'),
+      context: context(),
+      runner,
+    })
+    const turn = adapter.startTurn!(turnInput, () => undefined)
+    await runner.started.promise
+    await adapter.interrupt(interruptInput)
+    await runner.emit({
+      type: 'result',
+      subtype: 'success',
+      session_id: 'fixture-session',
+    })
+    runner.finish({ exitCode: 0, signal: null, interruptRequested: true })
+    await expect(turn).resolves.toMatchObject({ outcome: 'interrupted' })
+  })
+
+  it('treats provider error-after-interrupt as interrupted', async () => {
+    const runner = new ControlledRunner()
+    const adapter = new ClaudeCodeRuntimeAdapter({
+      catalog: catalog('claude'),
+      context: context(),
+      runner,
+    })
+    const turn = adapter.startTurn!(turnInput, () => undefined)
+    await runner.started.promise
+    await adapter.interrupt(interruptInput)
+    await runner.emit({
+      type: 'result',
+      subtype: 'error_during_execution',
+      is_error: true,
+      session_id: 'fixture-session',
+    })
+    runner.finish({ exitCode: 0, signal: null, interruptRequested: true })
+    await expect(turn).resolves.toMatchObject({ outcome: 'interrupted' })
+  })
+
+  it('returns a typed timeout terminal', async () => {
+    const runner = new ControlledRunner()
+    const adapter = new ClaudeCodeRuntimeAdapter({
+      catalog: catalog('claude'),
+      context: context(),
+      runner,
+    })
+    const turn = adapter.startTurn!(turnInput, () => undefined)
+    await runner.started.promise
+    runner.finish({ exitCode: null, signal: 'SIGKILL', timedOut: true })
+    await expect(turn).resolves.toMatchObject({
+      outcome: 'failed',
+      error: { code: 'timeout', retryable: true, upstreamCode: 'TURN_TIMEOUT' },
+    })
+  })
+
+  it('interrupts an active process and keeps repeated interrupt idempotent', async () => {
+    const runner = new SpawnCliProcessRunner({
+      turnTimeoutMs: 2_000,
+      interruptGraceMs: 100,
+      terminateGraceMs: 100,
+    })
+    const lifecycle = fileURLToPath(
+      new URL('../test/fixtures/process-lifecycle.mjs', import.meta.url),
+    )
+    const started = Promise.withResolvers<void>()
+    const running = runner.run({
+      binary: process.execPath,
+      args: [lifecycle, 'interrupt-exit'],
+      cwd: '.',
+      onLine: () => started.resolve(),
+    })
+    await started.promise
+    expect(runner.interrupt()).toBe(true)
+    expect(runner.interrupt()).toBe(true)
+    await expect(running).resolves.toMatchObject({ interruptRequested: true })
+    expect(runner.active).toBe(false)
+  })
+
+  it('escalates a SIGINT-catching process after grace', async () => {
+    const runner = new SpawnCliProcessRunner({
+      turnTimeoutMs: 2_000,
+      interruptGraceMs: 20,
+      terminateGraceMs: 20,
+    })
+    const lifecycle = fileURLToPath(
+      new URL('../test/fixtures/process-lifecycle.mjs', import.meta.url),
+    )
+    const started = Promise.withResolvers<void>()
+    const running = runner.run({
+      binary: process.execPath,
+      args: [lifecycle, 'ignore-signals'],
+      cwd: '.',
+      onLine: () => started.resolve(),
+    })
+    await started.promise
+    expect(runner.interrupt()).toBe(true)
+    await expect(running).resolves.toMatchObject({
+      signal: 'SIGKILL',
+      interruptRequested: true,
+    })
+    expect(runner.active).toBe(false)
+  })
+
+  it('times out, closes readers, and leaves no active child', async () => {
+    const runner = new SpawnCliProcessRunner({
+      turnTimeoutMs: 250,
+      interruptGraceMs: 10,
+      terminateGraceMs: 20,
+    })
+    const lifecycle = fileURLToPath(
+      new URL('../test/fixtures/process-lifecycle.mjs', import.meta.url),
+    )
+    const result = await runner.run({
+      binary: process.execPath,
+      args: [lifecycle, 'ignore-signals'],
+      cwd: '.',
+      onLine: () => undefined,
+    })
+    expect(result).toMatchObject({ timedOut: true, signal: 'SIGKILL' })
+    expect(runner.active).toBe(false)
   })
 })

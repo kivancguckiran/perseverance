@@ -11,6 +11,7 @@ import {
   providerNormalizedEventSchema,
   type ProviderApprovalResolution,
   type ProviderIdentity,
+  type ProviderError,
   ProviderConfigurationError,
   type ProviderInterrupt,
   type ProviderModelCatalog,
@@ -48,10 +49,15 @@ function safeErrorMessage(value: unknown): string {
   return text.split(/\r?\n/)[0]?.slice(0, 500) || 'Provider process failed'
 }
 
+type ClassifiedProviderFailure = Omit<
+  ProviderError,
+  'schemaVersion' | 'provider'
+>
+
 function classifyProviderFailure(
   provider: 'claude' | 'gemini',
   value: unknown,
-) {
+): ClassifiedProviderFailure {
   const message = safeErrorMessage(value)
   if (
     value instanceof ProviderConfigurationError &&
@@ -109,6 +115,8 @@ function canonical(value: unknown): string {
 export interface CliRunResult {
   exitCode: number | null
   signal: NodeJS.Signals | null
+  interruptRequested?: boolean
+  timedOut?: boolean
 }
 export interface CliProcessRunner {
   run(input: {
@@ -126,8 +134,68 @@ export interface CliProcessRunner {
   }>
 }
 
+interface ActiveCliProcess {
+  child: ChildProcessWithoutNullStreams
+  interruptRequested: boolean
+  timedOut: boolean
+  timers: Set<NodeJS.Timeout>
+}
+
 export class SpawnCliProcessRunner implements CliProcessRunner {
-  #active: ChildProcessWithoutNullStreams | null = null
+  readonly #limits: {
+    turnTimeoutMs: number
+    interruptGraceMs: number
+    terminateGraceMs: number
+  }
+  #active: ActiveCliProcess | undefined
+
+  constructor(
+    limits: Partial<{
+      turnTimeoutMs: number
+      interruptGraceMs: number
+      terminateGraceMs: number
+    }> = {},
+  ) {
+    this.#limits = {
+      turnTimeoutMs: limits.turnTimeoutMs ?? 120_000,
+      interruptGraceMs: limits.interruptGraceMs ?? 1_000,
+      terminateGraceMs: limits.terminateGraceMs ?? 1_000,
+    }
+  }
+
+  get active(): boolean {
+    return this.#active !== undefined
+  }
+
+  #schedule(active: ActiveCliProcess, callback: () => void, delay: number) {
+    const timer = setTimeout(callback, delay)
+    timer.unref()
+    active.timers.add(timer)
+  }
+
+  #escalate(active: ActiveCliProcess, firstSignal: 'SIGINT' | 'SIGTERM') {
+    if (active.child.exitCode !== null || active.child.signalCode !== null)
+      return false
+    const sent = active.child.kill(firstSignal)
+    this.#schedule(
+      active,
+      () => {
+        if (active.child.exitCode === null && active.child.signalCode === null)
+          active.child.kill('SIGTERM')
+      },
+      firstSignal === 'SIGINT' ? this.#limits.interruptGraceMs : 0,
+    )
+    this.#schedule(
+      active,
+      () => {
+        if (active.child.exitCode === null && active.child.signalCode === null)
+          active.child.kill('SIGKILL')
+      },
+      (firstSignal === 'SIGINT' ? this.#limits.interruptGraceMs : 0) +
+        this.#limits.terminateGraceMs,
+    )
+    return sent
+  }
 
   async run(input: {
     binary: string
@@ -142,7 +210,21 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     child.stdin.end()
-    this.#active = child
+    const active = {
+      child,
+      interruptRequested: false,
+      timedOut: false,
+      timers: new Set<NodeJS.Timeout>(),
+    }
+    this.#active = active
+    this.#schedule(
+      active,
+      () => {
+        active.timedOut = true
+        this.#escalate(active, 'SIGTERM')
+      },
+      this.#limits.turnTimeoutMs,
+    )
     let stderr = ''
     child.stderr.on('data', (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString('utf8')}`.slice(-8192)
@@ -155,19 +237,40 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
     try {
       const result = await new Promise<CliRunResult>((resolve, reject) => {
         child.once('error', reject)
-        child.once('exit', (exitCode, signal) => resolve({ exitCode, signal }))
+        child.once('exit', (exitCode, signal) =>
+          resolve({
+            exitCode,
+            signal,
+            interruptRequested: active.interruptRequested,
+            timedOut: active.timedOut,
+          }),
+        )
       })
       await Promise.all(pending)
-      if (result.exitCode && stderr)
+      if (
+        result.exitCode &&
+        stderr &&
+        !result.interruptRequested &&
+        !result.timedOut
+      )
         throw new Error(redactText(stderr).replace(/\s+/g, ' ').trim())
       return result
     } finally {
-      this.#active = null
+      for (const timer of active.timers) clearTimeout(timer)
+      lines.close()
+      child.stdout.destroy()
+      child.stderr.destroy()
+      if (this.#active === active) this.#active = undefined
     }
   }
 
   interrupt(): boolean {
-    return this.#active?.kill('SIGINT') ?? false
+    const active = this.#active
+    if (!active) return false
+    if (active.interruptRequested) return true
+    if (!this.#escalate(active, 'SIGINT')) return false
+    active.interruptRequested = true
+    return true
   }
 
   async version(binary: string): Promise<string | null> {
@@ -439,6 +542,13 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
   readonly binary: string
   readonly provider: 'claude' | 'gemini'
   readonly pinnedVersion: string
+  #activeTurn:
+    | {
+        completionObserved: boolean
+        interruptAccepted: boolean
+        completionBeforeInterrupt: boolean
+      }
+    | undefined
 
   constructor(
     provider: 'claude' | 'gemini',
@@ -484,8 +594,13 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     }).normalized
   }
   async interrupt(_input: ProviderInterrupt) {
+    const state = this.#activeTurn
     if (!this.runner.interrupt())
       throw new Error('No active provider turn to interrupt')
+    if (state && !state.interruptAccepted) {
+      state.interruptAccepted = true
+      state.completionBeforeInterrupt = state.completionObserved
+    }
   }
   async resolveApproval(_input: ProviderApprovalResolution) {
     throw new Error(
@@ -569,7 +684,13 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     let providerTurnId = `turn_${randomUUID()}`
     let terminal: 'completed' | 'failed' | 'interrupted' | undefined
     let terminalUsage: UsageReport | undefined
-    let terminalFailure: ReturnType<typeof classifyProviderFailure> | undefined
+    let terminalFailure: ClassifiedProviderFailure | undefined
+    const turnState = {
+      completionObserved: false,
+      interruptAccepted: false,
+      completionBeforeInterrupt: false,
+    }
+    this.#activeTurn = turnState
     try {
       const result = await this.runner.run({
         binary: this.binary,
@@ -608,21 +729,52 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
             context: this.context,
             sourceVersion: this.pinnedVersion,
           })
-          if (normalized.normalized.event.type === 'turn.completed')
+          if (normalized.normalized.event.type === 'turn.completed') {
+            turnState.completionObserved = true
             terminal = normalized.normalized.event.payload.status as
               'completed' | 'failed'
+          }
           if (terminal === 'failed')
             terminalFailure ??= classifyProviderFailure(this.provider, envelope)
           if (normalized.usage) terminalUsage = normalized.usage
           await onEvent(normalized)
         },
       })
-      if (result.signal === 'SIGINT' && !terminalFailure)
+      if (result.timedOut) {
+        terminal = 'failed'
+        terminalFailure = {
+          code: 'timeout',
+          message: `${this.provider} turn timed out and was terminated.`,
+          retryable: true,
+          upstreamCode: 'TURN_TIMEOUT',
+        }
+      } else if (
+        turnState.interruptAccepted &&
+        !turnState.completionBeforeInterrupt
+      ) {
         terminal = 'interrupted'
-      else if (result.exitCode !== 0) terminal = 'failed'
+        terminalFailure = undefined
+      } else if (
+        result.signal === 'SIGINT' &&
+        !turnState.completionBeforeInterrupt &&
+        !terminalFailure
+      )
+        terminal = 'interrupted'
+      else if (result.exitCode !== null && result.exitCode !== 0)
+        terminal = 'failed'
       else terminal ??= 'completed'
     } catch (error) {
+      if (turnState.interruptAccepted && !turnState.completionBeforeInterrupt) {
+        if (this.#activeTurn === turnState) this.#activeTurn = undefined
+        return {
+          providerSessionId: providerSessionId ?? `session_${randomUUID()}`,
+          providerTurnId,
+          outcome: 'interrupted',
+          ...(terminalUsage ? { usage: terminalUsage } : {}),
+        }
+      }
       const failure = classifyProviderFailure(this.provider, error)
+      if (this.#activeTurn === turnState) this.#activeTurn = undefined
       return {
         providerSessionId: providerSessionId ?? `session_${randomUUID()}`,
         providerTurnId,
@@ -635,6 +787,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
         },
       }
     }
+    if (this.#activeTurn === turnState) this.#activeTurn = undefined
     return {
       providerSessionId: providerSessionId ?? `session_${randomUUID()}`,
       providerTurnId,
