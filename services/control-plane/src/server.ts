@@ -1196,6 +1196,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
     return providerCatalogListResponseSchema.parse({
       catalogs: await orchestrator.listProviderCatalogs(scope),
+      readiness: await orchestrator.listProviderReadiness(scope),
     })
   })
 

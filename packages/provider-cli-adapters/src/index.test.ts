@@ -89,6 +89,9 @@ class FixtureRunner implements CliProcessRunner {
   async version() {
     return 'fixture-version'
   }
+  async probe() {
+    return { exitCode: 0, stdout: '{"loggedIn":true}', stderr: '' }
+  }
 }
 
 describe.each([
@@ -111,7 +114,7 @@ describe.each([
         prompt: 'fixture',
         cwd: '.',
         modelId: `${provider}-fixture-model`,
-        reasoningEffort: 'medium',
+        reasoningEffort: provider === 'gemini' ? 'none' : 'medium',
       },
       (event) => {
         events.push(event.normalized.event.type)
@@ -126,6 +129,47 @@ describe.each([
     })
     if (provider === 'gemini')
       expect(terminal.usage?.counters.cachedInputTokens).toBe(7)
+  })
+
+  it('builds exact machine-readable model, effort, and resume arguments', () => {
+    const adapter = new Adapter({
+      catalog: catalog(provider),
+      context: context(),
+      runner: new FixtureRunner([]),
+    })
+    const args = adapter.args({
+      sessionId: 'upstream-session',
+      prompt: 'next',
+      cwd: '.',
+      modelId: `${provider}-fixture-model`,
+      reasoningEffort: provider === 'gemini' ? 'none' : 'high',
+    })
+    expect(args).toEqual(
+      provider === 'claude'
+        ? [
+            '-p',
+            'next',
+            '--output-format',
+            'stream-json',
+            '--verbose',
+            '--model',
+            'claude-fixture-model',
+            '--effort',
+            'high',
+            '--resume',
+            'upstream-session',
+          ]
+        : [
+            '-p',
+            'next',
+            '--output-format',
+            'stream-json',
+            '--model',
+            'gemini-fixture-model',
+            '--resume',
+            'upstream-session',
+          ],
+    )
   })
 
   it('supports resume arguments and interrupt without emulating approvals', async () => {
@@ -192,5 +236,160 @@ describe.each([
     })
     expect(unknown.normalized.event.type).toBe('provider.unknown')
     expect(JSON.stringify(unknown)).not.toContain('never-store-me')
+  })
+})
+
+describe('provider-specific effort and readiness', () => {
+  it('maps Claude efforts and rejects minimal before spawning', async () => {
+    const runner = new FixtureRunner([])
+    const adapter = new ClaudeCodeRuntimeAdapter({
+      catalog: catalog('claude'),
+      context: context(),
+      runner,
+    })
+    expect(
+      adapter.args({
+        sessionId: null,
+        prompt: 'x',
+        cwd: '.',
+        modelId: 'm',
+        reasoningEffort: 'none',
+      }),
+    ).not.toContain('--effort')
+    expect(
+      adapter.args({
+        sessionId: null,
+        prompt: 'x',
+        cwd: '.',
+        modelId: 'm',
+        reasoningEffort: 'xhigh',
+      }),
+    ).toContain('max')
+    for (const effort of ['low', 'medium', 'high'] as const)
+      expect(
+        adapter.args({
+          sessionId: null,
+          prompt: 'x',
+          cwd: '.',
+          modelId: 'm',
+          reasoningEffort: effort,
+        }),
+      ).toEqual(expect.arrayContaining(['--effort', effort]))
+    await expect(
+      adapter.startTurn!(
+        {
+          sessionId: null,
+          prompt: 'x',
+          cwd: '.',
+          modelId: 'm',
+          reasoningEffort: 'minimal',
+        },
+        () => undefined,
+      ),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      error: {
+        code: 'capability_unsupported',
+        upstreamCode: 'REASONING_EFFORT_UNSUPPORTED',
+      },
+    })
+  })
+
+  it('limits Gemini discovery to none and rejects overrides before spawning', async () => {
+    const runner = new FixtureRunner([])
+    const adapter = new GeminiCliRuntimeAdapter({
+      catalog: catalog('gemini'),
+      context: context(),
+      runner,
+    })
+    expect((await adapter.discoverModelCatalog()).models[0]).toMatchObject({
+      reasoningEfforts: ['none'],
+      defaultReasoningEffort: 'none',
+    })
+    await expect(
+      adapter.startTurn!(
+        {
+          sessionId: null,
+          prompt: 'x',
+          cwd: '.',
+          modelId: 'm',
+          reasoningEffort: 'medium',
+        },
+        () => undefined,
+      ),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      error: {
+        code: 'capability_unsupported',
+        upstreamCode: 'REASONING_EFFORT_UNSUPPORTED',
+      },
+    })
+  })
+
+  it('uses Claude auth status and models Gemini auth as unknown', async () => {
+    class ReadyRunner extends FixtureRunner {
+      override async version() {
+        return '2.1.109 0.25.0'
+      }
+      override async probe() {
+        return { exitCode: 1, stdout: '{"loggedIn":false}', stderr: '' }
+      }
+    }
+    const claude = new ClaudeCodeRuntimeAdapter({
+      catalog: catalog('claude'),
+      context: context(),
+      runner: new ReadyRunner([]),
+    })
+    expect(await claude.checkReadiness()).toMatchObject({
+      ready: false,
+      authReady: false,
+      authStatus: 'required',
+      code: 'auth_required',
+    })
+    const gemini = new GeminiCliRuntimeAdapter({
+      catalog: catalog('gemini'),
+      context: context(),
+      runner: new ReadyRunner([]),
+    })
+    expect(await gemini.checkReadiness()).toMatchObject({
+      ready: true,
+      authReady: null,
+      authStatus: 'unknown',
+      code: 'auth_unknown',
+    })
+  })
+
+  it('normalizes Gemini capacity without leaking stack or secrets', async () => {
+    class CapacityRunner extends FixtureRunner {
+      attempts = 0
+      override async run(): Promise<never> {
+        this.attempts += 1
+        throw new Error(
+          '429 RESOURCE_EXHAUSTED\nstack bearer secret-token-value',
+        )
+      }
+    }
+    const runner = new CapacityRunner([])
+    const adapter = new GeminiCliRuntimeAdapter({
+      catalog: catalog('gemini'),
+      context: context(),
+      runner,
+    })
+    const terminal = await adapter.startTurn!(
+      {
+        sessionId: null,
+        prompt: 'x',
+        cwd: '.',
+        modelId: 'm',
+        reasoningEffort: 'none',
+      },
+      () => undefined,
+    )
+    expect(terminal).toMatchObject({
+      outcome: 'failed',
+      error: { code: 'capacity_exhausted', retryable: true },
+    })
+    expect(JSON.stringify(terminal)).not.toMatch(/stack|secret-token/)
+    expect(runner.attempts).toBe(3)
   })
 })

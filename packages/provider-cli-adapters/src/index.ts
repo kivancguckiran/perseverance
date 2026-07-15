@@ -11,6 +11,7 @@ import {
   providerNormalizedEventSchema,
   type ProviderApprovalResolution,
   type ProviderIdentity,
+  ProviderConfigurationError,
   type ProviderInterrupt,
   type ProviderModelCatalog,
   type ProviderNormalizedEvent,
@@ -34,6 +35,54 @@ const homePath = /(?:\/Users|\/home)\/[^/\s]+/g
 
 function redactText(value: string): string {
   return value.replace(secretValue, '[REDACTED]').replace(homePath, '[HOME]')
+}
+
+function safeErrorMessage(value: unknown): string {
+  const text = redactText(
+    value instanceof Error
+      ? value.message
+      : typeof value === 'object'
+        ? JSON.stringify(redact(value))
+        : String(value),
+  )
+  return text.split(/\r?\n/)[0]?.slice(0, 500) || 'Provider process failed'
+}
+
+function classifyProviderFailure(
+  provider: 'claude' | 'gemini',
+  value: unknown,
+) {
+  const message = safeErrorMessage(value)
+  if (
+    value instanceof ProviderConfigurationError &&
+    value.code === 'REASONING_EFFORT_UNSUPPORTED'
+  )
+    return {
+      code: 'capability_unsupported' as const,
+      message,
+      retryable: false,
+      upstreamCode: 'REASONING_EFFORT_UNSUPPORTED',
+    }
+  if (/429|resource[_ ]exhausted|capacity|quota/i.test(message))
+    return {
+      code: 'capacity_exhausted' as const,
+      message: `${provider} capacity is currently exhausted; retry later.`,
+      retryable: true,
+      upstreamCode: /429/.test(message) ? '429' : 'RESOURCE_EXHAUSTED',
+    }
+  if (/auth|login|credential|unauthor/i.test(message))
+    return {
+      code: 'unauthorized' as const,
+      message: `${provider} authentication is required.`,
+      retryable: false,
+      upstreamCode: null,
+    }
+  return {
+    code: 'process_failed' as const,
+    message,
+    retryable: false,
+    upstreamCode: null,
+  }
 }
 
 function redact(value: unknown, key?: string): unknown {
@@ -70,6 +119,11 @@ export interface CliProcessRunner {
   }): Promise<CliRunResult>
   interrupt(): boolean
   version(binary: string): Promise<string | null>
+  probe(input: { binary: string; args: string[] }): Promise<{
+    exitCode: number | null
+    stdout: string
+    stderr: string
+  }>
 }
 
 export class SpawnCliProcessRunner implements CliProcessRunner {
@@ -128,6 +182,54 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
       )
       child.once('error', () => resolve(null))
       child.once('exit', (code) => resolve(code === 0 ? output.trim() : null))
+    })
+  }
+
+  async probe(input: { binary: string; args: string[] }) {
+    return await new Promise<{
+      exitCode: number | null
+      stdout: string
+      stderr: string
+    }>((resolve) => {
+      const child = spawn(input.binary, input.args, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let stdout = ''
+      let stderr = ''
+      let settled = false
+      const finish = (result: {
+        exitCode: number | null
+        stdout: string
+        stderr: string
+      }) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        resolve(result)
+      }
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL')
+        child.stdout.destroy()
+        child.stderr.destroy()
+        finish({ exitCode: null, stdout: '', stderr: 'probe timeout' })
+      }, 5_000)
+      timeout.unref()
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout = `${stdout}${chunk.toString('utf8')}`.slice(-8192)
+      })
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr = `${stderr}${chunk.toString('utf8')}`.slice(-8192)
+      })
+      child.once('error', () =>
+        finish({ exitCode: null, stdout: '', stderr: '' }),
+      )
+      child.once('exit', (exitCode) =>
+        finish({
+          exitCode,
+          stdout: redactText(stdout),
+          stderr: redactText(stderr),
+        }),
+      )
     })
   }
 }
@@ -344,7 +446,18 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     defaults: { binary: string; version: string; adapter: string },
   ) {
     this.provider = provider
-    this.catalog = providerModelCatalogSchema.parse(options.catalog)
+    const configuredCatalog = providerModelCatalogSchema.parse(options.catalog)
+    this.catalog =
+      provider === 'gemini'
+        ? providerModelCatalogSchema.parse({
+            ...configuredCatalog,
+            models: configuredCatalog.models.map((model) => ({
+              ...model,
+              reasoningEfforts: ['none'],
+              defaultReasoningEffort: 'none',
+            })),
+          })
+        : configuredCatalog
     if (this.catalog.identity.provider !== provider)
       throw new Error(`Catalog provider must be ${provider}`)
     this.context = options.context
@@ -386,16 +499,47 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
         ready: false,
         version: null,
         authReady: false,
+        authStatus: 'required',
         code: 'binary_missing',
         instruction: this.installInstruction(),
       }
     const matches = output.includes(this.pinnedVersion)
+    if (!matches)
+      return {
+        ready: false,
+        version: output,
+        authReady: false,
+        authStatus: 'required',
+        code: 'version_mismatch',
+        instruction: this.installInstruction(),
+      }
+    if (this.provider === 'gemini')
+      return {
+        ready: true,
+        version: output,
+        authReady: null,
+        authStatus: 'unknown',
+        code: 'auth_unknown',
+        instruction:
+          'Gemini CLI authentication cannot be checked without starting a request; run a provider smoke before relying on it.',
+      }
+    const auth = await this.runner.probe({
+      binary: this.binary,
+      args: ['auth', 'status', '--json'],
+    })
+    let loggedIn = false
+    try {
+      loggedIn = record(JSON.parse(auth.stdout))?.loggedIn === true
+    } catch {
+      loggedIn = false
+    }
     return {
-      ready: matches,
+      ready: loggedIn,
       version: output,
-      authReady: matches,
-      code: matches ? 'ready' : 'version_mismatch',
-      instruction: matches ? null : this.installInstruction(),
+      authReady: loggedIn,
+      authStatus: loggedIn ? 'ready' : 'required',
+      code: loggedIn ? 'ready' : 'auth_required',
+      instruction: loggedIn ? null : 'Run `claude auth login`, then retry.',
     }
   }
 
@@ -406,10 +550,26 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     input: ProviderTurnStartInput,
     onEvent: (event: ProviderTurnStreamEvent) => void | Promise<void>,
   ): Promise<ProviderTurnTerminal> {
+    const attempts = this.provider === 'gemini' ? 3 : 1
+    let terminal: ProviderTurnTerminal | undefined
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      terminal = await this.startTurnOnce(input, onEvent)
+      if (terminal.error?.code !== 'capacity_exhausted') return terminal
+      if (attempt < attempts)
+        await new Promise((resolve) => setTimeout(resolve, attempt * 250))
+    }
+    return terminal!
+  }
+
+  private async startTurnOnce(
+    input: ProviderTurnStartInput,
+    onEvent: (event: ProviderTurnStreamEvent) => void | Promise<void>,
+  ): Promise<ProviderTurnTerminal> {
     let providerSessionId = input.sessionId
     let providerTurnId = `turn_${randomUUID()}`
     let terminal: 'completed' | 'failed' | 'interrupted' | undefined
     let terminalUsage: UsageReport | undefined
+    let terminalFailure: ReturnType<typeof classifyProviderFailure> | undefined
     try {
       const result = await this.runner.run({
         binary: this.binary,
@@ -423,6 +583,19 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
             envelope = { type: 'malformed', line }
           }
           const parsed = record(envelope)
+          if (
+            parsed?.type === 'system' &&
+            parsed.subtype === 'api_retry' &&
+            (parsed.error_status === 401 ||
+              parsed.error === 'authentication_failed')
+          ) {
+            terminal = 'failed'
+            terminalFailure = classifyProviderFailure(
+              this.provider,
+              'authentication_failed',
+            )
+            this.runner.interrupt()
+          }
           const discoveredSession = parsed?.session_id ?? parsed?.sessionId
           if (typeof discoveredSession === 'string')
             providerSessionId = discoveredSession
@@ -438,15 +611,18 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
           if (normalized.normalized.event.type === 'turn.completed')
             terminal = normalized.normalized.event.payload.status as
               'completed' | 'failed'
+          if (terminal === 'failed')
+            terminalFailure ??= classifyProviderFailure(this.provider, envelope)
           if (normalized.usage) terminalUsage = normalized.usage
           await onEvent(normalized)
         },
       })
-      if (result.signal === 'SIGINT') terminal = 'interrupted'
+      if (result.signal === 'SIGINT' && !terminalFailure)
+        terminal = 'interrupted'
       else if (result.exitCode !== 0) terminal = 'failed'
       else terminal ??= 'completed'
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const failure = classifyProviderFailure(this.provider, error)
       return {
         providerSessionId: providerSessionId ?? `session_${randomUUID()}`,
         providerTurnId,
@@ -455,12 +631,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
         error: {
           schemaVersion: 1,
           provider: this.provider,
-          code: /auth|login|credential|unauthor/i.test(message)
-            ? 'unauthorized'
-            : 'process_failed',
-          message,
-          retryable: false,
-          upstreamCode: null,
+          ...failure,
         },
       }
     }
@@ -469,6 +640,19 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
       providerTurnId,
       outcome: terminal,
       ...(terminalUsage ? { usage: terminalUsage } : {}),
+      ...(terminal === 'failed'
+        ? {
+            error: {
+              schemaVersion: 1 as const,
+              provider: this.provider,
+              ...(terminalFailure ??
+                classifyProviderFailure(
+                  this.provider,
+                  'Provider result error',
+                )),
+            },
+          }
+        : {}),
     }
   }
 }
@@ -485,6 +669,13 @@ export class ClaudeCodeRuntimeAdapter extends CliProviderAdapter {
     return `npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && claude login`
   }
   args(input: ProviderTurnStartInput) {
+    const effort =
+      input.reasoningEffort === 'xhigh' ? 'max' : input.reasoningEffort
+    if (effort === 'minimal')
+      throw new ProviderConfigurationError(
+        'REASONING_EFFORT_UNSUPPORTED',
+        'Claude Code does not support reasoning effort minimal; choose none, low, medium, high, or xhigh (mapped to max).',
+      )
     return [
       '-p',
       input.prompt,
@@ -493,6 +684,7 @@ export class ClaudeCodeRuntimeAdapter extends CliProviderAdapter {
       '--verbose',
       '--model',
       input.modelId,
+      ...(effort === 'none' ? [] : ['--effort', effort]),
       ...(input.sessionId ? ['--resume', input.sessionId] : []),
     ]
   }
@@ -510,6 +702,11 @@ export class GeminiCliRuntimeAdapter extends CliProviderAdapter {
     return `npm install -g @google/gemini-cli@${GEMINI_CLI_VERSION} && gemini`
   }
   args(input: ProviderTurnStartInput) {
+    if (input.reasoningEffort !== 'none')
+      throw new ProviderConfigurationError(
+        'REASONING_EFFORT_UNSUPPORTED',
+        `Gemini CLI ${GEMINI_CLI_VERSION} does not support reasoning effort overrides; choose none.`,
+      )
     return [
       '-p',
       input.prompt,

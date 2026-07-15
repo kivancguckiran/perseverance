@@ -282,6 +282,23 @@ export const sessionListResponseSchema = z.object({
 
 export const providerCatalogListResponseSchema = z.object({
   catalogs: z.array(providerModelCatalogSchema),
+  readiness: z.partialRecord(
+    providerIdSchema,
+    z.object({
+      ready: z.boolean(),
+      version: z.string().nullable(),
+      authReady: z.boolean().nullable(),
+      authStatus: z.enum(['ready', 'required', 'unknown']),
+      code: z.enum([
+        'ready',
+        'binary_missing',
+        'version_mismatch',
+        'auth_required',
+        'auth_unknown',
+      ]),
+      instruction: z.string().nullable(),
+    }),
+  ),
 })
 
 export const conversationFolderSchema = scopeSchema
