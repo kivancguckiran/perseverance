@@ -5,7 +5,14 @@ import {
   runAlphaPreflight,
   type AlphaConfig,
 } from '@persistent-codex/workspace-agent'
-import { providerModelCatalogSchema } from '@persistent-codex/provider-platform'
+import {
+  createAnthropicCostReconciliationPort,
+  createOpenAiCostReconciliationPort,
+  priceCatalogSchema,
+  providerModelCatalogSchema,
+  type ProviderCostReconciliationPort,
+  type ProviderId,
+} from '@persistent-codex/provider-platform'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -44,6 +51,51 @@ const providerCatalogs = (() => {
     throw new Error('PERSISTENT_PROVIDER_CATALOGS_JSON must be a JSON array')
   return parsed.map((catalog) => providerModelCatalogSchema.parse(catalog))
 })()
+const priceCatalog = process.env.PERSISTENT_PRICE_CATALOG_JSON
+  ? priceCatalogSchema.parse(
+      JSON.parse(process.env.PERSISTENT_PRICE_CATALOG_JSON) as unknown,
+    )
+  : undefined
+const costReconciliationPorts = (() => {
+  const ports: Partial<Record<ProviderId, ProviderCostReconciliationPort>> = {}
+  if (process.env.PERSISTENT_RECONCILIATION_DEDICATED_SCOPE !== '1')
+    return ports
+  const openAiAdminKey = process.env.OPENAI_ADMIN_KEY
+  if (openAiAdminKey) {
+    if (
+      openAiAdminKey === process.env.OPENAI_API_KEY ||
+      openAiAdminKey === process.env.CODEX_API_KEY
+    )
+      throw new Error(
+        'OPENAI_ADMIN_KEY must be separate from the normal inference credential',
+      )
+    ports.codex = createOpenAiCostReconciliationPort({
+      adminApiKey: openAiAdminKey,
+      ...(process.env.OPENAI_RECONCILIATION_PROJECT_ID
+        ? { projectIds: [process.env.OPENAI_RECONCILIATION_PROJECT_ID] }
+        : {}),
+      ...(process.env.OPENAI_RECONCILIATION_API_KEY_ID
+        ? { apiKeyIds: [process.env.OPENAI_RECONCILIATION_API_KEY_ID] }
+        : {}),
+    })
+  }
+  const anthropicAdminKey = process.env.ANTHROPIC_ADMIN_KEY
+  if (anthropicAdminKey) {
+    if (anthropicAdminKey === process.env.ANTHROPIC_API_KEY)
+      throw new Error(
+        'ANTHROPIC_ADMIN_KEY must be separate from the normal inference credential',
+      )
+    ports.claude = createAnthropicCostReconciliationPort({
+      adminApiKey: anthropicAdminKey,
+      ...(process.env.ANTHROPIC_RECONCILIATION_WORKSPACE_ID
+        ? {
+            workspaceIds: [process.env.ANTHROPIC_RECONCILIATION_WORKSPACE_ID],
+          }
+        : {}),
+    })
+  }
+  return ports
+})()
 const provisioningReady = !preflightChecks.some(
   (check) =>
     check.name === 'provisioning' &&
@@ -57,6 +109,10 @@ const app = await buildControlPlane({
   artifactRoot: config.artifactRoot,
   preflightChecks,
   ...(providerCatalogs.length > 0 ? { providerCatalogs } : {}),
+  ...(priceCatalog ? { priceCatalog } : {}),
+  ...(Object.keys(costReconciliationPorts).length > 0
+    ? { costReconciliationPorts }
+    : {}),
   ...(provisioningSource && provisioningReady
     ? {
         codexProvisioningSource: provisioningSource,

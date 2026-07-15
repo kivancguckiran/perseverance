@@ -67,3 +67,10 @@ model ID veya sıfır maliyet tahmin etmez.
 WP14 accounting finalization ADR-0013 ile eklenmiştir: cumulative Codex snapshot'ları
 `tokenUsage.total` üzerinden stable ingest key ile yazılır; durable run terminal geçişi,
 turn sonucu ve terminal ledger kaydı aynı transaction'da finalize edilir.
+
+WP16 uygulama notu: Provider-neutral reconciliation portunun OpenAI organization Costs
+ve Anthropic Usage & Cost adapter'ları eklendi. Bu adapter'lar yalnız ayrı admin
+credential ve açık dedicated attribution scope ile server tarafında kurulabilir; normal
+inference key admin key yerine kullanılamaz. Gemini resmi turn-level cost kaynağı
+sunmadığından estimated/unreconciled kalır. Organization-level zaman bucket'ını güvenli
+attribution olmadan turn'lere dağıtmak bu ADR'ye aykırıdır.

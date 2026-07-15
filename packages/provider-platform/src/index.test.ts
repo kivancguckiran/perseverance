@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_CONVERSATION_POLICY,
   ProviderConfigurationError,
+  createAnthropicCostReconciliationPort,
+  createOpenAiCostReconciliationPort,
   estimateUsageCostMicros,
   resolveModelPolicy,
   resolveModelSelection,
@@ -198,5 +200,91 @@ describe('provider-neutral reconciliation port', () => {
     expect(JSON.stringify(data)).not.toMatch(
       /api.?key|bearer|prompt|model response|credential/i,
     )
+  })
+
+  it('maps OpenAI organization cost dollars with an admin-only credential', async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                results: [{ amount: { value: 0.012345, currency: 'usd' } }],
+              },
+            ],
+            has_more: false,
+            next_page: null,
+          }),
+        ),
+    )
+    const result = await createOpenAiCostReconciliationPort({
+      adminApiKey: 'admin-secret-fixture',
+      projectIds: ['project-fixture'],
+      fetcher: fetcher as unknown as typeof fetch,
+    }).reconcile({
+      provider: 'codex',
+      tenantId: 'ten',
+      workspaceId: 'wsp',
+      sessionId: 'ses',
+      turnId: 'turn',
+      from: '2026-07-15T00:00:00.000Z',
+      to: '2026-07-15T00:01:00.000Z',
+    })
+    expect(result).toMatchObject([{ officialCostMicros: 12_345 }])
+    const [url, init] = (
+      fetcher as unknown as { mock: { calls: Array<[unknown, unknown]> } }
+    ).mock.calls[0]!
+    expect(String(url)).toContain('/v1/organization/costs')
+    expect(String(url)).toContain('project_ids%5B%5D=project-fixture')
+    expect(JSON.stringify(result)).not.toContain('admin-secret-fixture')
+    expect(JSON.stringify(init)).toContain('admin-secret-fixture')
+  })
+
+  it('maps Anthropic fractional cents and paginates without exposing the key', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [{ results: [{ amount: '1.25', currency: 'USD' }] }],
+            has_more: true,
+            next_page: 'next-fixture',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: [{ results: [{ amount: '0.75', currency: 'USD' }] }],
+            has_more: false,
+            next_page: null,
+          }),
+        ),
+      )
+    const result = await createAnthropicCostReconciliationPort({
+      adminApiKey: 'anthropic-admin-fixture',
+      workspaceIds: ['workspace-fixture'],
+      fetcher: fetcher as unknown as typeof fetch,
+    }).reconcile({
+      provider: 'claude',
+      tenantId: 'ten',
+      workspaceId: 'wsp',
+      sessionId: 'ses',
+      turnId: 'turn',
+      from: '2026-07-15T00:00:00.000Z',
+      to: '2026-07-15T00:01:00.000Z',
+    })
+    expect(result).toMatchObject([{ officialCostMicros: 20_000 }])
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(
+      String(
+        (
+          fetcher as unknown as {
+            mock: { calls: Array<[unknown, unknown]> }
+          }
+        ).mock.calls[1]![0],
+      ),
+    ).toContain('page=next-fixture')
+    expect(JSON.stringify(result)).not.toContain('anthropic-admin-fixture')
   })
 })

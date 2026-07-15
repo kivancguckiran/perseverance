@@ -17,6 +17,7 @@ import {
   gitSnapshotSchema,
   auditListResponseSchema,
   providerCatalogListResponseSchema,
+  conversationUsageCostSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
@@ -28,11 +29,14 @@ import {
   type SessionSummary,
   type DurableRun,
   type ProviderCatalogListResponse,
+  type ConversationUsageCost,
+  type UsageCostSummary,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useOnlineStatus } from './pwa-runtime'
 
 interface PlatformMeta {
   service: string
@@ -113,6 +117,145 @@ async function readProviderCatalogs(): Promise<ProviderCatalogListResponse> {
   })
   if (!response.ok) throw await apiError(response)
   return providerCatalogListResponseSchema.parse(await response.json())
+}
+
+async function readUsage(sessionId: string): Promise<ConversationUsageCost> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/usage`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return conversationUsageCostSchema.parse(await response.json())
+}
+
+export function formatUsageCost(summary: UsageCostSummary | undefined) {
+  if (!summary)
+    return { amount: 'Maliyet bekleniyor', detail: 'usage henüz alınmadı' }
+  const micros =
+    summary.reconciliationStatus === 'reconciled'
+      ? summary.officialCostMicros
+      : summary.estimatedCostMicros
+  const amount =
+    micros === null
+      ? 'Maliyet ölçülemedi'
+      : new Intl.NumberFormat('en-US', {
+          style: 'currency',
+          currency: summary.currency,
+          minimumFractionDigits: 4,
+          maximumFractionDigits: 6,
+        }).format(micros / 1_000_000)
+  return {
+    amount,
+    detail:
+      summary.reconciliationStatus === 'reconciled'
+        ? `resmî · reconciled · ${summary.completeness}`
+        : `${micros === null ? 'fiyat bekleniyor' : 'tahmini'} · unreconciled · ${summary.completeness}`,
+  }
+}
+
+type OfflineHistorySession = Pick<
+  SessionSummary,
+  | 'sessionId'
+  | 'title'
+  | 'status'
+  | 'provider'
+  | 'resolvedModel'
+  | 'reasoningEffort'
+> & { folderId: null; updatedAt: string }
+
+export function parseOfflineHistory(
+  raw: string | null,
+): OfflineHistorySession[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw) as { version?: unknown; sessions?: unknown }
+    if (parsed.version !== 1 || !Array.isArray(parsed.sessions)) return []
+    return parsed.sessions.flatMap((value) => {
+      if (!value || typeof value !== 'object') return []
+      const item = value as Record<string, unknown>
+      return typeof item.sessionId === 'string' &&
+        typeof item.title === 'string' &&
+        typeof item.status === 'string' &&
+        (item.provider === 'codex' ||
+          item.provider === 'claude' ||
+          item.provider === 'gemini') &&
+        typeof item.resolvedModel === 'string' &&
+        typeof item.reasoningEffort === 'string' &&
+        typeof item.updatedAt === 'string'
+        ? [
+            {
+              sessionId: item.sessionId,
+              title: item.title,
+              status: item.status as OfflineHistorySession['status'],
+              provider: item.provider,
+              resolvedModel: item.resolvedModel,
+              reasoningEffort:
+                item.reasoningEffort as OfflineHistorySession['reasoningEffort'],
+              folderId: null,
+              updatedAt: item.updatedAt,
+            },
+          ]
+        : []
+    })
+  } catch {
+    return []
+  }
+}
+
+interface OfflineConversationSnapshot {
+  version: 1
+  sessionId: string
+  savedAt: string
+  messages: ConversationMessage[]
+}
+
+function offlineConversationKey(sessionId: string) {
+  return `offline-conversation-v1:${sessionId}`
+}
+
+export function parseOfflineConversation(
+  raw: string | null,
+  expectedSessionId: string,
+): OfflineConversationSnapshot | undefined {
+  if (!raw) return undefined
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>
+    if (
+      value.version !== 1 ||
+      value.sessionId !== expectedSessionId ||
+      typeof value.savedAt !== 'string' ||
+      !Array.isArray(value.messages)
+    )
+      return undefined
+    const messages = value.messages.flatMap((candidate) => {
+      if (!candidate || typeof candidate !== 'object') return []
+      const item = candidate as Record<string, unknown>
+      if (
+        typeof item.key !== 'string' ||
+        (item.role !== 'user' && item.role !== 'assistant') ||
+        typeof item.text !== 'string' ||
+        typeof item.sequence !== 'number'
+      )
+        return []
+      return [
+        {
+          key: item.key,
+          role: item.role,
+          text: item.text,
+          sequence: item.sequence,
+          ...(typeof item.turnId === 'string' ? { turnId: item.turnId } : {}),
+        } satisfies ConversationMessage,
+      ]
+    })
+    return {
+      version: 1,
+      sessionId: expectedSessionId,
+      savedAt: value.savedAt,
+      messages,
+    }
+  } catch {
+    return undefined
+  }
 }
 
 async function apiError(response: Response): Promise<Error> {
@@ -1254,12 +1397,18 @@ function ApprovalCard({
   )
 }
 
+type HistorySession = Pick<
+  SessionSummary,
+  'sessionId' | 'folderId' | 'title' | 'status'
+>
+
 function ConversationHistory({
   folders,
   sessions,
   activeSessionId,
   folderName,
   folderPending,
+  readOnly,
   folderActionPending,
   onFolderNameChange,
   onCreateFolder,
@@ -1271,10 +1420,11 @@ function ConversationHistory({
   onDeleteFolder,
 }: {
   folders: ConversationFolder[]
-  sessions: SessionSummary[]
+  sessions: HistorySession[]
   activeSessionId?: string
   folderName: string
   folderPending: boolean
+  readOnly: boolean
   folderActionPending?: string
   onFolderNameChange(value: string): void
   onCreateFolder(): void
@@ -1307,6 +1457,7 @@ function ConversationHistory({
         <button
           className="new-conversation-button"
           type="button"
+          disabled={readOnly}
           onClick={() => onNewConversation(null)}
         >
           <span aria-hidden="true">＋</span> Yeni sohbet
@@ -1314,6 +1465,7 @@ function ConversationHistory({
         <button
           className="new-folder-button"
           type="button"
+          disabled={readOnly}
           aria-expanded={creatingFolder}
           onClick={() => setCreatingFolder((open) => !open)}
         >
@@ -1337,10 +1489,11 @@ function ConversationHistory({
             onChange={(event) => onFolderNameChange(event.target.value)}
             placeholder="Folder adı"
             maxLength={80}
+            disabled={readOnly}
           />
           <button
             type="submit"
-            disabled={!folderName.trim() || folderPending}
+            disabled={readOnly || !folderName.trim() || folderPending}
             aria-label="Folder oluştur"
           >
             {folderPending ? '…' : 'Ekle'}
@@ -1368,6 +1521,7 @@ function ConversationHistory({
                   <span className="history-folder-actions">
                     <button
                       type="button"
+                      disabled={readOnly}
                       aria-label={`${group.name} içinde yeni sohbet`}
                       title="Yeni sohbet"
                       onClick={(event) => {
@@ -1380,7 +1534,9 @@ function ConversationHistory({
                     </button>
                     <button
                       type="button"
-                      disabled={folderActionPending === group.folderId}
+                      disabled={
+                        readOnly || folderActionPending === group.folderId
+                      }
                       aria-label={`${group.name} folder'ını arşivle`}
                       title="Arşivle"
                       onClick={(event) => {
@@ -1432,7 +1588,9 @@ function ConversationHistory({
                   </div>
                   <button
                     type="button"
-                    disabled={folderActionPending === folder.folderId}
+                    disabled={
+                      readOnly || folderActionPending === folder.folderId
+                    }
                     onClick={() => onRestoreFolder(folder)}
                   >
                     Geri al
@@ -1440,7 +1598,9 @@ function ConversationHistory({
                   <button
                     className="danger-button"
                     type="button"
-                    disabled={folderActionPending === folder.folderId}
+                    disabled={
+                      readOnly || folderActionPending === folder.folderId
+                    }
                     onClick={() => onDeleteFolder(folder)}
                   >
                     Sil
@@ -1537,13 +1697,16 @@ export function providerAuthMessage(
 
 export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const navigate = useNavigate()
+  const online = useOnlineStatus()
   const meta = useQuery({
     queryKey: ['platform-meta'],
     queryFn: readPlatformMeta,
+    enabled: online,
   })
   const readiness = useQuery({
     queryKey: ['readiness'],
     queryFn: () => readReadiness(),
+    enabled: online,
     refetchInterval: (query) =>
       query.state.data?.status === 'ready' ? false : 5_000,
   })
@@ -1551,6 +1714,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const providerCatalogs = useQuery({
     queryKey: ['provider-catalogs'],
     queryFn: readProviderCatalogs,
+    enabled: online,
     staleTime: 60_000,
   })
   const recentSessions = useInfiniteQuery({
@@ -1558,22 +1722,30 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryFn: ({ pageParam }) => readRecentSessions(pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled: online,
   })
+  const [offlineHistory, setOfflineHistory] = useState<OfflineHistorySession[]>(
+    [],
+  )
+  const [offlineMessages, setOfflineMessages] = useState<ConversationMessage[]>(
+    [],
+  )
   const conversationFolders = useQuery({
     queryKey: ['conversation-folders'],
     queryFn: readConversationFolders,
+    enabled: online,
   })
   const gitSnapshots = useQuery({
     queryKey: ['git-snapshots', sessionId],
     queryFn: () => readGitSnapshots(sessionId!),
-    enabled: Boolean(sessionId),
+    enabled: Boolean(sessionId) && online,
   })
   const audit = useInfiniteQuery({
     queryKey: ['session-audit', sessionId],
     queryFn: ({ pageParam }) => readAudit(sessionId!, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
-    enabled: Boolean(sessionId),
+    enabled: Boolean(sessionId) && online,
     staleTime: 30_000,
   })
   const [session, setSession] = useState<SessionResponse>()
@@ -1601,15 +1773,80 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [attachmentPending, setAttachmentPending] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<
     'codex' | 'claude' | 'gemini'
-  >(() => readStoredProviderSelection().provider)
-  const [selectedModelId, setSelectedModelId] = useState(
-    () => readStoredProviderSelection().modelId,
-  )
+  >('codex')
+  const [selectedModelId, setSelectedModelId] = useState('')
   const [selectedEffort, setSelectedEffort] = useState<
     'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-  >(() => readStoredProviderSelection().effort)
+  >('medium')
+  const [providerSelectionHydrated, setProviderSelectionHydrated] =
+    useState(false)
+
+  const syncedHistory = useMemo(
+    () => recentSessions.data?.pages.flatMap((page) => page.sessions) ?? [],
+    [recentSessions.data],
+  )
+  const historySessions: HistorySession[] = syncedHistory.length
+    ? syncedHistory
+    : online
+      ? []
+      : offlineHistory
 
   useEffect(() => {
+    setOfflineHistory(
+      parseOfflineHistory(
+        window.localStorage.getItem('offline-workspace-history-v1'),
+      ),
+    )
+  }, [online])
+
+  useEffect(() => {
+    const stored = readStoredProviderSelection()
+    setSelectedProvider(stored.provider)
+    setSelectedModelId(stored.modelId)
+    setSelectedEffort(stored.effort)
+    setProviderSelectionHydrated(true)
+  }, [])
+
+  useEffect(() => {
+    if (!syncedHistory.length) return
+    const minimized: OfflineHistorySession[] = syncedHistory
+      .slice(0, 24)
+      .map((item) => ({
+        sessionId: item.sessionId,
+        title: item.title,
+        status: item.status,
+        provider: item.provider,
+        resolvedModel: item.resolvedModel,
+        reasoningEffort: item.reasoningEffort,
+        folderId: null,
+        updatedAt: item.updatedAt,
+      }))
+    setOfflineHistory(minimized)
+    window.localStorage.setItem(
+      'offline-workspace-history-v1',
+      JSON.stringify({
+        version: 1,
+        savedAt: new Date().toISOString(),
+        sessions: minimized,
+      }),
+    )
+  }, [syncedHistory])
+
+  useEffect(() => {
+    if (!sessionId) {
+      setOfflineMessages([])
+      return
+    }
+    setOfflineMessages(
+      parseOfflineConversation(
+        window.localStorage.getItem(offlineConversationKey(sessionId)),
+        sessionId,
+      )?.messages ?? [],
+    )
+  }, [online, sessionId])
+
+  useEffect(() => {
+    if (!providerSelectionHydrated) return
     window.localStorage.setItem(
       'provider-selection-v1',
       JSON.stringify({
@@ -1618,7 +1855,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         effort: selectedEffort,
       }),
     )
-  }, [selectedEffort, selectedModelId, selectedProvider])
+  }, [
+    providerSelectionHydrated,
+    selectedEffort,
+    selectedModelId,
+    selectedProvider,
+  ])
   const lastSequence = useRef(0)
   const timelineRef = useRef<HTMLDivElement>(null)
   const chatSurfaceRef = useRef<HTMLElement>(null)
@@ -1642,7 +1884,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   }
 
   useEffect(() => {
-    if (!sessionId) return
+    if (!sessionId || !online) return
     let active = true
     const scopedCursor = sessionScopedCursor(
       session?.sessionId,
@@ -1676,7 +1918,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     return () => {
       active = false
     }
-  }, [sessionId])
+  }, [online, sessionId])
 
   useEffect(() => {
     if (!session) return
@@ -1848,6 +2090,36 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       ),
     [events],
   )
+  const displayedChatFeed =
+    chatFeed.length > 0 || online ? chatFeed : offlineMessages
+
+  useEffect(() => {
+    if (!online || !sessionId) return
+    const messages = chatFeed
+      .filter(
+        (item): item is ConversationMessage =>
+          item.role === 'user' || item.role === 'assistant',
+      )
+      .slice(-200)
+      .map(({ key, role, text, sequence, turnId }) => ({
+        key,
+        role,
+        text,
+        sequence,
+        ...(turnId ? { turnId } : {}),
+      }))
+    if (!messages.length) return
+    setOfflineMessages(messages)
+    window.localStorage.setItem(
+      offlineConversationKey(sessionId),
+      JSON.stringify({
+        version: 1,
+        sessionId,
+        savedAt: new Date().toISOString(),
+        messages,
+      } satisfies OfflineConversationSnapshot),
+    )
+  }, [chatFeed, online, sessionId])
   const virtualizer = useVirtualizer({
     count: masterExpanded ? cards.length : 0,
     getScrollElement: () => timelineRef.current,
@@ -1869,6 +2141,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       session?.activeRun?.status === 'interrupting'
     )
   }, [events, session?.activeRun?.status])
+  const usage = useQuery({
+    queryKey: ['session-usage', sessionId],
+    queryFn: () => readUsage(sessionId!),
+    enabled: Boolean(sessionId) && online,
+    staleTime: turnActive ? 0 : 5_000,
+    refetchInterval: turnActive ? 2_000 : false,
+  })
+  const usageDisplay = formatUsageCost(usage.data?.total)
+  const offlineSelected = offlineHistory.find(
+    (item) => item.sessionId === sessionId,
+  )
 
   useEffect(() => {
     if (!followChatRef.current && !forceChatScrollRef.current) return
@@ -1882,7 +2165,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       forceChatScrollRef.current = false
     })
     return () => cancelAnimationFrame(frame)
-  }, [chatFeed])
+  }, [displayedChatFeed])
 
   useEffect(() => {
     const content = chatContentRef.current
@@ -1894,7 +2177,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     })
     observer.observe(content)
     return () => observer.disconnect()
-  }, [chatFeed.length > 0, sessionId])
+  }, [displayedChatFeed.length > 0, sessionId])
 
   const selectedCatalog = providerCatalogs.data?.catalogs.find(
     (catalog) => catalog.identity.provider === selectedProvider,
@@ -2150,6 +2433,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       (!trimmed && attachments.length === 0) ||
       turnPending ||
       turnActive ||
+      !online ||
       (!authReady && session.provider === 'codex')
     )
       return
@@ -2243,6 +2527,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
 
   return (
     <main className="workspace-shell" data-session-id={sessionId}>
+      {!online ? (
+        <p className="offline-banner" role="status">
+          Çevrimdışı · Son senkronize conversation history read-only
+          gösteriliyor. Yeni prompt kuyruğa alınmaz.
+        </p>
+      ) : null}
       <header className="topbar">
         <div>
           <p className="eyebrow">FAZ 0 · CANLI CODEX AKIŞI</p>
@@ -2250,7 +2540,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         </div>
         <div className={`status-pill status-${meta.status}`}>
           <span className="status-dot" aria-hidden="true" />
-          {meta.isSuccess ? 'Control plane bağlı' : 'Control plane bekleniyor'}
+          {!online
+            ? 'Çevrimdışı'
+            : meta.isSuccess
+              ? 'Control plane bağlı'
+              : 'Control plane bekleniyor'}
         </div>
       </header>
 
@@ -2260,12 +2554,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         <aside className={`project-panel ${historyOpen ? 'is-open' : ''}`}>
           <ConversationHistory
             folders={conversationFolders.data?.folders ?? []}
-            sessions={
-              recentSessions.data?.pages.flatMap((page) => page.sessions) ?? []
-            }
+            sessions={historySessions}
             {...(sessionId ? { activeSessionId: sessionId } : {})}
             folderName={folderName}
             folderPending={folderPending}
+            readOnly={!online}
             {...(folderActionPending ? { folderActionPending } : {})}
             onFolderNameChange={setFolderName}
             onCreateFolder={() => void createFolder()}
@@ -2302,7 +2595,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               <dd>{realtimeState}</dd>
             </div>
           </dl>
-          <fieldset className="provider-picker" disabled={sessionPending}>
+          <fieldset
+            className="provider-picker"
+            disabled={sessionPending || !online}
+          >
             <legend>Yeni conversation modeli</legend>
             <label>
               Provider
@@ -2403,6 +2699,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             type="button"
             disabled={
               sessionPending ||
+              !online ||
               (!authReady && selectedProvider === 'codex') ||
               !selectedModel ||
               !availableEfforts.includes(selectedEffort) ||
@@ -2442,24 +2739,22 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             {recentSessions.isError ? (
               <span>Session listesi alınamadı.</span>
             ) : null}
-            {recentSessions.data?.pages
-              .flatMap((page) => page.sessions)
-              .map((item) => (
-                <button
-                  type="button"
-                  key={item.sessionId}
-                  className={item.sessionId === sessionId ? 'is-active' : ''}
-                  onClick={() =>
-                    void navigate({
-                      to: '/sessions/$sessionId',
-                      params: { sessionId: item.sessionId },
-                    })
-                  }
-                >
-                  <span>{item.sessionId}</span>
-                  <small>{item.status}</small>
-                </button>
-              ))}
+            {historySessions.map((item) => (
+              <button
+                type="button"
+                key={item.sessionId}
+                className={item.sessionId === sessionId ? 'is-active' : ''}
+                onClick={() =>
+                  void navigate({
+                    to: '/sessions/$sessionId',
+                    params: { sessionId: item.sessionId },
+                  })
+                }
+              >
+                <span>{item.sessionId}</span>
+                <small>{item.status}</small>
+              </button>
+            ))}
             {recentSessions.hasNextPage ? (
               <button
                 type="button"
@@ -2500,13 +2795,72 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             </button>
             <div>
               <p className="section-label">Conversation</p>
-              <h1 id="chat-title">{session?.title ?? 'Yeni konuşma'}</h1>
+              <h1 id="chat-title">
+                {session?.title ?? offlineSelected?.title ?? 'Yeni konuşma'}
+              </h1>
             </div>
+            {sessionId ? (
+              <details className="usage-summary">
+                <summary aria-live="polite">
+                  <strong>{usageDisplay.amount}</strong>
+                  <small>{usageDisplay.detail}</small>
+                  {usage.data ? (
+                    <small>
+                      {usage.data.total.counters.inputTokens} in ·{' '}
+                      {usage.data.total.counters.outputTokens} out
+                    </small>
+                  ) : null}
+                </summary>
+                <div className="usage-breakdown">
+                  <h2>Conversation kullanımı</h2>
+                  <p>
+                    Toplam; conversation turn’leri ile otomatik başlık işini
+                    birlikte içerir. Eksik usage sıfır maliyet sayılmaz.
+                  </p>
+                  {usage.data?.items.length ? (
+                    <ul>
+                      {usage.data.items.map((item) => {
+                        const display = formatUsageCost(item)
+                        return (
+                          <li key={`${item.turnId}:${item.purpose}`}>
+                            <div>
+                              <strong>
+                                {item.purpose === 'conversation_title'
+                                  ? 'Otomatik başlık'
+                                  : `Turn ${item.turnId}`}
+                              </strong>
+                              <span>{display.amount}</span>
+                            </div>
+                            <small>
+                              {item.provider} · {item.modelId} ·{' '}
+                              {item.outcome ?? 'job'} · {display.detail}
+                            </small>
+                            <small>
+                              input {item.counters.inputTokens} · cached{' '}
+                              {item.counters.cachedInputTokens} · output{' '}
+                              {item.counters.outputTokens} · reasoning{' '}
+                              {item.counters.reasoningTokens} · tool{' '}
+                              {item.counters.toolUnits}
+                            </small>
+                            <small>
+                              {item.currency} · price catalog:{' '}
+                              {item.priceCatalogVersions.join(', ') || 'yok'}
+                            </small>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : (
+                    <p>Henüz ölçülmüş usage yok.</p>
+                  )}
+                </div>
+              </details>
+            ) : null}
             <label>
               <span>Folder</span>
               <select
                 value={session?.folderId ?? ''}
-                disabled={!session}
+                disabled={!session || !online}
                 onChange={(event) =>
                   void moveConversation(event.target.value || null)
                 }
@@ -2569,9 +2923,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     }
                   />
                 ))}
-              {chatFeed.length > 0 ? (
+              {displayedChatFeed.length > 0 ? (
                 <div className="chat-messages">
-                  {chatFeed.map((item) =>
+                  {displayedChatFeed.map((item) =>
                     item.role === 'work' ? (
                       <ConversationWorkBlock work={item} key={item.key} />
                     ) : (
@@ -2887,6 +3241,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   accept="image/png,image/jpeg,image/webp,image/gif,text/plain,text/markdown,application/json,application/pdf,.md,.txt,.json,.pdf"
                   disabled={
                     !session ||
+                    !online ||
                     turnPending ||
                     turnActive ||
                     readOnly ||
@@ -2921,6 +3276,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 rows={2}
                 disabled={
                   !session ||
+                  !online ||
                   turnPending ||
                   readOnly ||
                   (!authReady && session.provider === 'codex')
@@ -2930,6 +3286,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 type="submit"
                 disabled={
                   !session ||
+                  !online ||
                   (!prompt.trim() && attachments.length === 0) ||
                   turnPending ||
                   attachmentPending ||
@@ -2940,7 +3297,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               >
                 {turnPending ? 'Gönderiliyor…' : 'Gönder'}
               </button>
-              {turnActive && !readOnly ? (
+              {turnActive && !readOnly && online ? (
                 <>
                   <button
                     type="button"

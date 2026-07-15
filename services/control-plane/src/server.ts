@@ -41,6 +41,8 @@ import {
   gitSnapshotListResponseSchema,
   metricsResponseSchema,
   providerCatalogListResponseSchema,
+  conversationUsageCostSchema,
+  usageReconciliationResponseSchema,
   usageCostSummarySchema,
   serverMessageSchema,
   type ServerMessage,
@@ -50,6 +52,8 @@ import {
 import type {
   ModelAliasConfig,
   PriceCatalog,
+  ProviderCostReconciliationPort,
+  ProviderId,
   ProviderModelCatalog,
 } from '@persistent-codex/provider-platform'
 import { createHash } from 'node:crypto'
@@ -120,6 +124,9 @@ export interface ControlPlaneOptions {
   readinessProbeTimeoutMs?: number
   modelAliases?: ModelAliasConfig
   priceCatalog?: PriceCatalog
+  costReconciliationPorts?: Partial<
+    Record<ProviderId, ProviderCostReconciliationPort>
+  >
   providerCatalogs?: ProviderModelCatalog[]
   providerAdapterFactory?: SessionOrchestratorOptions['providerAdapterFactory']
   titleGenerator?: SessionOrchestratorOptions['titleGenerator']
@@ -1417,7 +1424,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       try {
         store.getSession(scope)
-        return usageCostSummarySchema.parse(store.getUsageSummary(scope))
+        return conversationUsageCostSchema.parse(
+          store.getConversationUsageCost(scope),
+        )
       } catch (error) {
         if (error instanceof StoreNotFoundError)
           return reply
@@ -1448,6 +1457,98 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             .code(404)
             .send({ code: error.code, message: error.message })
         throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/usage/reconcile',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        const session = store.getSession(scope)
+        const candidates = store.listUsageReconciliationCandidates(scope)
+        if (candidates.length === 0)
+          return usageReconciliationResponseSchema.parse({
+            status:
+              store.getUsageSummary(scope).reconciliationStatus === 'reconciled'
+                ? 'reconciled'
+                : session.provider === 'gemini'
+                  ? 'unsupported'
+                  : 'unavailable',
+            provider: session.provider,
+            reconciledItems: 0,
+            message:
+              store.getUsageSummary(scope).reconciliationStatus === 'reconciled'
+                ? 'All measured usage is already reconciled'
+                : 'No measured usage is ready for reconciliation',
+          })
+        const port = options.costReconciliationPorts?.[session.provider]
+        if (!port)
+          return usageReconciliationResponseSchema.parse({
+            status:
+              session.provider === 'gemini' ? 'unsupported' : 'unavailable',
+            provider: session.provider,
+            reconciledItems: 0,
+            message:
+              session.provider === 'gemini'
+                ? 'Gemini does not expose a provider cost source with turn-safe attribution'
+                : 'A separate server-side admin/usage credential and dedicated attribution scope are required',
+          })
+        let reconciledItems = 0
+        for (const candidate of candidates) {
+          const results = await port.reconcile({
+            provider: candidate.provider,
+            tenantId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+            sessionId: scope.sessionId,
+            turnId: candidate.turnId,
+            from: candidate.from,
+            to: candidate.to,
+          })
+          for (const result of results) {
+            const sourceHash = createHash('sha256')
+              .update(result.sourceReference)
+              .digest('hex')
+            store.appendUsageReconciliation({
+              ...scope,
+              turnId: candidate.turnId,
+              provider: candidate.provider,
+              modelId: candidate.modelId,
+              purpose: candidate.purpose,
+              dedupeKey: `official:${candidate.provider}:${candidate.turnId}:${sourceHash}`,
+              result,
+            })
+          }
+          reconciledItems += 1
+        }
+        return usageReconciliationResponseSchema.parse({
+          status: 'reconciled',
+          provider: session.provider,
+          reconciledItems,
+          message: 'Official provider cost records were appended idempotently',
+        })
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        request.log.warn(
+          { code: 'PROVIDER_COST_RECONCILIATION_FAILED' },
+          'provider cost reconciliation failed',
+        )
+        return usageReconciliationResponseSchema.parse({
+          status: 'unavailable',
+          provider: null,
+          reconciledItems: 0,
+          message:
+            'Official provider cost is currently unavailable; estimated usage remains authoritative',
+        })
       }
     },
   )

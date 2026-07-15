@@ -91,12 +91,12 @@ conversation başlığı ikinci kullanıcı mesajından sonra `luna` model polit
 
 ## 4. İş paketi özeti
 
-| Paket | Durum      | Hedef                                                                         |
-| ----- | ---------- | ----------------------------------------------------------------------------- |
-| WP13  | Tamamlandı | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
-| WP14  | Tamamlandı | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
-| WP15  | Tamamlandı | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
-| WP16  | Aktif      | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
+| Paket | Durum                      | Hedef                                                                         |
+| ----- | -------------------------- | ----------------------------------------------------------------------------- |
+| WP13  | Tamamlandı                 | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
+| WP14  | Tamamlandı                 | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
+| WP15  | Tamamlandı                 | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
+| WP16  | Uygulandı / kabul bekliyor | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
 
 ## 5. WP13 — Platform sözleşmesi ve maliyet temeli
 
@@ -210,6 +210,14 @@ shell/history, online reconciliation, turn/conversation maliyet görünümü ve
 estimated/partial/reconciled ayrımı tamamlanır. Codex/Claude/Gemini, browser close/reopen,
 interrupt, failed usage, title/model policy ve desktop/mobil PWA senaryolarını kapsayan
 birleşik Faz 2 acceptance gate hazırlanır.
+
+### Uygulama durumu
+
+**Uygulandı / kabul bekliyor.** Installable manifest ve ikonlar, versioned ve
+user-activated Service Worker güncellemesi, güvenli offline read-only history,
+conversation/turn/title cost kırılımı, server-only OpenAI/Anthropic reconciliation
+portları ve deterministic `pnpm phase2:accept` gate'i eklendi. Bu kayıt WP16'yı kabul
+edilmiş veya Faz 2'yi kapanmış saymaz; bağımsız kabul kararı beklenir.
 
 ## 9. Paket geçiş ve commit kuralı
 

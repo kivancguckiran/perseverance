@@ -274,6 +274,7 @@ select {
   display: none;
 }
 .chat-header {
+  position: relative;
   display: flex;
   min-height: 74px;
   padding: 15px 28px;
@@ -298,6 +299,114 @@ select {
 .chat-header h1 {
   font-size: 1rem;
   letter-spacing: -0.01em;
+}
+.usage-summary {
+  min-width: 150px;
+  margin-left: auto;
+  color: #8ca299;
+  text-align: right;
+}
+.usage-summary > summary {
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+  list-style: none;
+}
+.usage-summary > summary::-webkit-details-marker {
+  display: none;
+}
+.usage-summary > summary strong {
+  color: #bdebd8;
+  font-size: 0.78rem;
+}
+.usage-summary > summary small {
+  font-size: 0.62rem;
+}
+.usage-breakdown {
+  position: absolute;
+  z-index: 15;
+  top: calc(100% - 8px);
+  right: 16px;
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(560px, calc(100vh - 120px));
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid #29483d;
+  border-radius: 10px;
+  background: #0d1714;
+  box-shadow: 0 16px 44px #0009;
+  text-align: left;
+}
+.usage-breakdown h2 {
+  margin: 0 0 6px;
+  color: #e6f5ef;
+  font-size: 0.88rem;
+}
+.usage-breakdown p {
+  margin: 0 0 12px;
+  color: #8ca299;
+  font-size: 0.7rem;
+}
+.usage-breakdown ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.usage-breakdown li {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #20362e;
+  border-radius: 8px;
+  background: #101d19;
+}
+.usage-breakdown li div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.usage-breakdown li strong,
+.usage-breakdown li span,
+.usage-breakdown li small {
+  overflow-wrap: anywhere;
+}
+.offline-banner {
+  position: fixed;
+  inset: 8px 50% auto auto;
+  z-index: 20;
+  width: min(620px, calc(100vw - 24px));
+  margin: 0;
+  padding: 8px 12px;
+  transform: translateX(50%);
+  border: 1px solid #745f32;
+  border-radius: 8px;
+  color: #f0d99d;
+  background: #2a2416;
+  text-align: center;
+  font-size: 0.72rem;
+}
+.pwa-update-banner {
+  position: fixed;
+  inset: auto 16px 16px auto;
+  z-index: 30;
+  display: flex;
+  max-width: min(520px, calc(100vw - 32px));
+  gap: 12px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #3b6757;
+  border-radius: 10px;
+  color: #dcebe5;
+  background: #14231e;
+  box-shadow: 0 12px 36px #0009;
+  align-items: center;
+  font-size: 0.72rem;
+}
+.pwa-update-banner button {
+  flex: 0 0 auto;
 }
 .chat-header label {
   display: flex;
@@ -786,8 +895,15 @@ select {
   }
   .chat-header {
     padding: 12px 16px;
+    gap: 10px;
   }
   .chat-header label span {
+    display: none;
+  }
+  .usage-summary {
+    min-width: 0;
+  }
+  .usage-summary > summary small:last-child {
     display: none;
   }
   .chat-surface {

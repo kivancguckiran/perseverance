@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
 import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   ProcessHealth,
   WorkspaceRuntimeClient,
@@ -143,7 +143,18 @@ describe('WP13 scoped usage and cost API', () => {
       outcome: 'failed',
       completeness: 'complete',
     })
-    const app = await buildControlPlane({ eventStore: store })
+    const reconcile = vi.fn(async () => [
+      {
+        sourceReference: 'fixture:official-cost:turn_usage_api',
+        officialCostMicros: 100,
+        currency: 'USD' as const,
+        reconciledAt: '2026-07-15T01:00:00.000Z',
+      },
+    ])
+    const app = await buildControlPlane({
+      eventStore: store,
+      costReconciliationPorts: { codex: { reconcile } },
+    })
     try {
       const response = await app.inject({
         method: 'GET',
@@ -165,7 +176,53 @@ describe('WP13 scoped usage and cost API', () => {
         url: '/v1/sessions/ses_test/usage',
         headers,
       })
-      expect(sessionUsage.json().counters.inputTokens).toBe(123)
+      expect(sessionUsage.json()).toMatchObject({
+        total: { counters: { inputTokens: 123 } },
+        items: [
+          {
+            turnId: 'turn_usage_api',
+            purpose: 'conversation_turn',
+            outcome: 'failed',
+          },
+        ],
+      })
+      const reconciled = await app.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_test/usage/reconcile',
+        headers,
+      })
+      expect(reconciled.json()).toMatchObject({
+        status: 'reconciled',
+        provider: 'codex',
+        reconciledItems: 1,
+      })
+      const repeated = await app.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_test/usage/reconcile',
+        headers,
+      })
+      expect(repeated.json()).toMatchObject({
+        status: 'reconciled',
+        reconciledItems: 0,
+      })
+      expect(reconcile).toHaveBeenCalledOnce()
+      const official = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_test/usage',
+        headers,
+      })
+      expect(official.json()).toMatchObject({
+        total: {
+          reconciliationStatus: 'reconciled',
+          officialCostMicros: 100,
+        },
+        items: [
+          {
+            reconciliationStatus: 'reconciled',
+            officialCostMicros: 100,
+          },
+        ],
+      })
       const hidden = await app.inject({
         method: 'GET',
         url: '/v1/sessions/ses_test/usage',

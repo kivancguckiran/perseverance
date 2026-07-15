@@ -18,6 +18,9 @@ import {
   readStoredProviderSelection,
   providerPickerSelection,
   providerAuthMessage,
+  formatUsageCost,
+  parseOfflineConversation,
+  parseOfflineHistory,
   parseStoredProviderSelection,
   sessionScopedCursor,
   serverOwnedRunLabel,
@@ -57,6 +60,118 @@ function delta(sequence: number, text: string): TimelineEvent {
   })
 }
 describe('bounded browser timeline state', () => {
+  it('distinguishes estimated, partial, and reconciled cost labels', () => {
+    const baseUsage = {
+      tenantId: 'ten',
+      workspaceId: 'wsp',
+      sessionId: 'ses',
+      turnId: null,
+      counters: {
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 2,
+        reasoningTokens: 0,
+        toolUnits: 0,
+      },
+      outcome: 'completed' as const,
+      completeness: 'complete' as const,
+      reconciliationStatus: 'unreconciled' as const,
+      estimatedCostMicros: 1250,
+      officialCostMicros: null,
+      currency: 'USD' as const,
+      priceCatalogVersions: ['v1'],
+    }
+    expect(formatUsageCost(baseUsage)).toMatchObject({
+      detail: 'tahmini · unreconciled · complete',
+    })
+    expect(
+      formatUsageCost({
+        ...baseUsage,
+        completeness: 'partial',
+        estimatedCostMicros: null,
+      }),
+    ).toMatchObject({
+      amount: 'Maliyet ölçülemedi',
+      detail: 'fiyat bekleniyor · unreconciled · partial',
+    })
+    expect(
+      formatUsageCost({
+        ...baseUsage,
+        reconciliationStatus: 'reconciled',
+        officialCostMicros: 1000,
+      }),
+    ).toMatchObject({ detail: 'resmî · reconciled · complete' })
+  })
+
+  it('keeps only versioned minimized offline history metadata', () => {
+    expect(
+      parseOfflineHistory(
+        JSON.stringify({
+          version: 1,
+          sessions: [
+            {
+              sessionId: 'ses',
+              title: 'Başlık',
+              status: 'active',
+              provider: 'codex',
+              resolvedModel: 'model',
+              reasoningEffort: 'medium',
+              updatedAt: '2026-07-15T00:00:00.000Z',
+              secret: 'discard',
+            },
+          ],
+        }),
+      ),
+    ).toEqual([
+      {
+        sessionId: 'ses',
+        title: 'Başlık',
+        status: 'active',
+        provider: 'codex',
+        resolvedModel: 'model',
+        reasoningEffort: 'medium',
+        folderId: null,
+        updatedAt: '2026-07-15T00:00:00.000Z',
+      },
+    ])
+  })
+
+  it('keeps only bounded read-only conversation message fields offline', () => {
+    expect(
+      parseOfflineConversation(
+        JSON.stringify({
+          version: 1,
+          sessionId: 'ses',
+          savedAt: '2026-07-15T00:00:00.000Z',
+          messages: [
+            {
+              key: 'message-1',
+              role: 'assistant',
+              text: 'Redacted final answer',
+              sequence: 4,
+              turnId: 'turn-1',
+              attachmentBody: 'discard',
+              authorization: 'discard',
+            },
+          ],
+        }),
+        'ses',
+      ),
+    ).toEqual({
+      version: 1,
+      sessionId: 'ses',
+      savedAt: '2026-07-15T00:00:00.000Z',
+      messages: [
+        {
+          key: 'message-1',
+          role: 'assistant',
+          text: 'Redacted final answer',
+          sequence: 4,
+          turnId: 'turn-1',
+        },
+      ],
+    })
+  })
   it('defaults provider selection to Codex + sol + medium during SSR', () => {
     expect(readStoredProviderSelection()).toEqual({
       provider: 'codex',
