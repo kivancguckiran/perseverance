@@ -294,6 +294,7 @@ export const providerErrorSchema = z.object({
   code: z.enum([
     'unauthorized',
     'capacity_exhausted',
+    'timeout',
     'rate_limited',
     'model_unavailable',
     'capability_unsupported',
