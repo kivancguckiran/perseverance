@@ -6,6 +6,20 @@ import {
   parseTimelineEvent,
   type TimelineEvent,
 } from '@persistent-codex/domain-events'
+import {
+  estimateUsageCostMicros,
+  modelPolicySchema,
+  capabilityMatrixSchema,
+  usageCountersSchema,
+  type CapabilityMatrix,
+  type ModelPolicy,
+  type PriceCatalog,
+  type ProviderCostReconciliationResult,
+  type ProviderId,
+  type ReasoningEffort,
+  type UsageCounters,
+  type UsageReport,
+} from '@persistent-codex/provider-platform'
 import { bootstrapSchema } from './schema'
 
 export interface StoreScope {
@@ -116,6 +130,11 @@ export interface ArtifactRecord extends StoreScope {
 }
 
 export interface SessionRecord extends StoreScope {
+  provider: ProviderId
+  requestedPolicy: ModelPolicy
+  resolvedModel: string | null
+  reasoningEffort: ReasoningEffort | null
+  capabilitySnapshot: CapabilityMatrix | null
   codexThreadId: string | null
   status: string
   recoveryErrorCode: string | null
@@ -128,6 +147,57 @@ export interface SessionRecord extends StoreScope {
 
 export interface CreateSessionInput extends StoreScope {
   status?: string
+  provider?: ProviderId
+  requestedPolicy?: ModelPolicy
+  resolvedModel?: string | null
+  reasoningEffort?: ReasoningEffort | null
+  capabilitySnapshot?: CapabilityMatrix | null
+}
+
+export interface TurnRecord extends StoreScope {
+  turnId: string
+  providerTurnId: string | null
+  provider: ProviderId
+  requestedPolicy: ModelPolicy
+  resolvedModel: string
+  reasoningEffort: ReasoningEffort
+  capabilitySnapshot: CapabilityMatrix
+  status: 'in_progress' | 'completed' | 'failed' | 'interrupted'
+  startedAt: string
+  completedAt: string | null
+}
+
+export interface UsageLedgerRecord extends StoreScope {
+  ledgerId: number
+  turnId: string
+  requestId: string | null
+  provider: ProviderId
+  modelId: string
+  entryKind: 'usage' | 'terminal' | 'reconciliation'
+  reportKind: 'delta' | 'cumulative' | null
+  dedupeKey: string
+  reported: UsageCounters
+  effective: UsageCounters
+  outcome: 'completed' | 'failed' | 'interrupted' | null
+  completeness: 'complete' | 'partial'
+  reconciliationStatus: 'unreconciled' | 'reconciled'
+  priceCatalogVersion: string | null
+  estimatedCostMicros: number | null
+  officialCostMicros: number | null
+  sourceReference: string | null
+  occurredAt: string
+}
+
+export interface UsageSummary extends StoreScope {
+  turnId: string | null
+  counters: UsageCounters
+  outcome: 'completed' | 'failed' | 'interrupted' | null
+  completeness: 'complete' | 'partial'
+  reconciliationStatus: 'unreconciled' | 'reconciled'
+  estimatedCostMicros: number | null
+  officialCostMicros: number | null
+  currency: 'USD'
+  priceCatalogVersions: string[]
 }
 
 export interface GitSnapshotRecord extends StoreScope {
@@ -287,6 +357,11 @@ interface SessionRow {
   tenant_id: string
   workspace_id: string
   session_id: string
+  provider: ProviderId
+  requested_policy_json: string
+  resolved_model: string | null
+  reasoning_effort: ReasoningEffort | null
+  capability_snapshot_json: string | null
   codex_thread_id: string | null
   status: string
   recovery_error_code: string | null
@@ -295,6 +370,46 @@ interface SessionRow {
   last_sequence: number
   created_at: string
   updated_at: string
+}
+
+interface TurnRow {
+  tenant_id: string
+  workspace_id: string
+  session_id: string
+  turn_id: string
+  provider_turn_id: string | null
+  provider: ProviderId
+  requested_policy_json: string
+  resolved_model: string
+  reasoning_effort: ReasoningEffort
+  capability_snapshot_json: string
+  status: TurnRecord['status']
+  started_at: string
+  completed_at: string | null
+}
+
+interface UsageLedgerRow {
+  ledger_id: number
+  tenant_id: string
+  workspace_id: string
+  session_id: string
+  turn_id: string
+  request_id: string | null
+  provider: ProviderId
+  model_id: string
+  entry_kind: UsageLedgerRecord['entryKind']
+  report_kind: UsageLedgerRecord['reportKind']
+  dedupe_key: string
+  reported_json: string
+  effective_json: string
+  outcome: UsageLedgerRecord['outcome']
+  completeness: UsageLedgerRecord['completeness']
+  reconciliation_status: UsageLedgerRecord['reconciliationStatus']
+  price_catalog_version: string | null
+  estimated_cost_micros: number | null
+  official_cost_micros: number | null
+  source_reference: string | null
+  occurred_at: string
 }
 
 interface EventRow {
@@ -377,6 +492,18 @@ function sessionFromRow(row: SessionRow): SessionRecord {
     tenantId: row.tenant_id,
     workspaceId: row.workspace_id,
     sessionId: row.session_id,
+    provider: row.provider,
+    requestedPolicy: modelPolicySchema.parse(
+      JSON.parse(row.requested_policy_json),
+    ),
+    resolvedModel: row.resolved_model,
+    reasoningEffort: row.reasoning_effort,
+    capabilitySnapshot:
+      row.capability_snapshot_json === null
+        ? null
+        : capabilityMatrixSchema.parse(
+            JSON.parse(row.capability_snapshot_json),
+          ),
     codexThreadId: row.codex_thread_id,
     status: row.status,
     recoveryErrorCode: row.recovery_error_code,
@@ -386,6 +513,81 @@ function sessionFromRow(row: SessionRow): SessionRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+function turnFromRow(row: TurnRow): TurnRecord {
+  return {
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    turnId: row.turn_id,
+    providerTurnId: row.provider_turn_id,
+    provider: row.provider,
+    requestedPolicy: modelPolicySchema.parse(
+      JSON.parse(row.requested_policy_json),
+    ),
+    resolvedModel: row.resolved_model,
+    reasoningEffort: row.reasoning_effort,
+    capabilitySnapshot: capabilityMatrixSchema.parse(
+      JSON.parse(row.capability_snapshot_json),
+    ),
+    status: row.status,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+  }
+}
+
+function usageFromRow(row: UsageLedgerRow): UsageLedgerRecord {
+  return {
+    ledgerId: row.ledger_id,
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    turnId: row.turn_id,
+    requestId: row.request_id,
+    provider: row.provider,
+    modelId: row.model_id,
+    entryKind: row.entry_kind,
+    reportKind: row.report_kind,
+    dedupeKey: row.dedupe_key,
+    reported: usageCountersSchema.parse(JSON.parse(row.reported_json)),
+    effective: usageCountersSchema.parse(JSON.parse(row.effective_json)),
+    outcome: row.outcome,
+    completeness: row.completeness,
+    reconciliationStatus: row.reconciliation_status,
+    priceCatalogVersion: row.price_catalog_version,
+    estimatedCostMicros: row.estimated_cost_micros,
+    officialCostMicros: row.official_cost_micros,
+    sourceReference: row.source_reference,
+    occurredAt: row.occurred_at,
+  }
+}
+
+const USAGE_COUNTER_KEYS = [
+  'inputTokens',
+  'cachedInputTokens',
+  'outputTokens',
+  'reasoningTokens',
+  'toolUnits',
+] as const
+
+function zeroUsageCounters(): UsageCounters {
+  return {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    toolUnits: 0,
+  }
+}
+
+function addUsageCounters(
+  left: UsageCounters,
+  right: UsageCounters,
+): UsageCounters {
+  return Object.fromEntries(
+    USAGE_COUNTER_KEYS.map((key) => [key, left[key] + right[key]]),
+  ) as unknown as UsageCounters
 }
 
 function idempotencyFromRow(row: IdempotencyRow): IdempotencyRecord {
@@ -711,18 +913,35 @@ export class SqliteEventStore {
   createSession(input: CreateSessionInput): SessionRecord {
     assertScope(input)
     const status = input.status ?? 'active'
+    const requestedPolicy = modelPolicySchema.parse(
+      input.requestedPolicy ?? {
+        alias: 'sol',
+        reasoningEffort: 'medium',
+      },
+    )
     assertIdentifier(status, 'status')
     const timestamp = this.#timestamp()
     this.#database
       .prepare(
         `INSERT OR IGNORE INTO sessions (
-          tenant_id, workspace_id, session_id, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
+          tenant_id, workspace_id, session_id, provider,
+          requested_policy_json, resolved_model, reasoning_effort,
+          capability_snapshot_json, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.tenantId,
         input.workspaceId,
         input.sessionId,
+        input.provider ?? 'codex',
+        JSON.stringify(requestedPolicy),
+        input.resolvedModel ?? null,
+        input.reasoningEffort ?? null,
+        input.capabilitySnapshot
+          ? JSON.stringify(
+              capabilityMatrixSchema.parse(input.capabilitySnapshot),
+            )
+          : null,
         status,
         timestamp,
         timestamp,
@@ -736,6 +955,12 @@ export class SqliteEventStore {
   ): SessionRecord {
     assertScope(input)
     const status = input.status ?? 'active'
+    const requestedPolicy = modelPolicySchema.parse(
+      input.requestedPolicy ?? {
+        alias: 'sol',
+        reasoningEffort: 'medium',
+      },
+    )
     assertIdentifier(status, 'status')
     const timestamp = this.#timestamp()
     this.#database.exec('BEGIN IMMEDIATE')
@@ -743,13 +968,24 @@ export class SqliteEventStore {
       this.#database
         .prepare(
           `INSERT OR IGNORE INTO sessions (
-            tenant_id, workspace_id, session_id, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            tenant_id, workspace_id, session_id, provider,
+            requested_policy_json, resolved_model, reasoning_effort,
+            capability_snapshot_json, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.tenantId,
           input.workspaceId,
           input.sessionId,
+          input.provider ?? 'codex',
+          JSON.stringify(requestedPolicy),
+          input.resolvedModel ?? null,
+          input.reasoningEffort ?? null,
+          input.capabilitySnapshot
+            ? JSON.stringify(
+                capabilityMatrixSchema.parse(input.capabilitySnapshot),
+              )
+            : null,
           status,
           timestamp,
           timestamp,
@@ -854,6 +1090,425 @@ export class SqliteEventStore {
       SessionRow | undefined
     if (!row) throw new StoreNotFoundError()
     return sessionFromRow(row)
+  }
+
+  createTurn(
+    input: Omit<TurnRecord, 'startedAt' | 'completedAt'> & {
+      startedAt?: string
+    },
+  ): TurnRecord {
+    assertScope(input)
+    assertIdentifier(input.turnId, 'turnId')
+    const startedAt = input.startedAt ?? this.#timestamp()
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO turns (
+          tenant_id, workspace_id, session_id, turn_id, provider_turn_id,
+          provider, requested_policy_json, resolved_model, reasoning_effort,
+          capability_snapshot_json, status, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.turnId,
+        input.providerTurnId,
+        input.provider,
+        JSON.stringify(modelPolicySchema.parse(input.requestedPolicy)),
+        input.resolvedModel,
+        input.reasoningEffort,
+        JSON.stringify(capabilityMatrixSchema.parse(input.capabilitySnapshot)),
+        input.status,
+        startedAt,
+      )
+    return this.getTurn(input, input.turnId)
+  }
+
+  getTurn(scope: StoreScope, turnId: string): TurnRecord {
+    assertScope(scope)
+    assertIdentifier(turnId, 'turnId')
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM turns WHERE tenant_id=? AND workspace_id=? AND session_id=? AND turn_id=?`,
+      )
+      .get(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        turnId,
+      ) as unknown as TurnRow | undefined
+    if (!row)
+      throw new StoreNotFoundError('Turn not found in the requested scope')
+    return turnFromRow(row)
+  }
+
+  completeTurn(
+    scope: StoreScope,
+    turnId: string,
+    outcome: 'completed' | 'failed' | 'interrupted',
+    completedAt = this.#timestamp(),
+  ): TurnRecord {
+    const result = this.#database
+      .prepare(
+        `UPDATE turns SET status=?, completed_at=?
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND turn_id=?`,
+      )
+      .run(
+        outcome,
+        completedAt,
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        turnId,
+      )
+    if (Number(result.changes) !== 1)
+      throw new StoreNotFoundError('Turn not found in the requested scope')
+    return this.getTurn(scope, turnId)
+  }
+
+  appendUsage(
+    input: StoreScope & {
+      turnId: string
+      modelId: string
+      report: UsageReport
+      priceCatalog?: PriceCatalog
+    },
+  ): UsageLedgerRecord {
+    assertScope(input)
+    assertIdentifier(input.turnId, 'turnId')
+    assertIdentifier(input.modelId, 'modelId')
+    const report = input.report
+    const counters = usageCountersSchema.parse(report.counters)
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const duplicate = this.#database
+        .prepare(
+          `SELECT * FROM usage_ledger
+           WHERE tenant_id=? AND workspace_id=? AND session_id=? AND dedupe_key=?`,
+        )
+        .get(
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          report.dedupeKey,
+        ) as unknown as UsageLedgerRow | undefined
+      if (duplicate) {
+        if (
+          duplicate.turn_id !== input.turnId ||
+          duplicate.request_id !== report.requestId ||
+          duplicate.provider !== report.provider ||
+          duplicate.model_id !== input.modelId ||
+          duplicate.report_kind !== report.kind ||
+          duplicate.reported_json !== JSON.stringify(counters)
+        )
+          throw new StoreConflictError(
+            'USAGE_DEDUPE_CONFLICT',
+            'Usage dedupe key was reused with different reported usage',
+          )
+        this.#database.exec('COMMIT')
+        return usageFromRow(duplicate)
+      }
+      const cursor = this.#database
+        .prepare(
+          `SELECT accounted_json, provider, model_id FROM usage_cursors
+           WHERE tenant_id=? AND workspace_id=? AND session_id=? AND turn_id=? AND request_id=?`,
+        )
+        .get(
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          input.turnId,
+          report.requestId,
+        ) as
+        | { accounted_json: string; provider: string; model_id: string }
+        | undefined
+      if (
+        cursor &&
+        (cursor.provider !== report.provider ||
+          cursor.model_id !== input.modelId)
+      )
+        throw new StoreConflictError(
+          'USAGE_IDENTITY_CONFLICT',
+          'Usage request identity changed provider or model',
+        )
+      const accounted = cursor
+        ? usageCountersSchema.parse(JSON.parse(cursor.accounted_json))
+        : zeroUsageCounters()
+      const effective = usageCountersSchema.parse(
+        Object.fromEntries(
+          USAGE_COUNTER_KEYS.map((key) => [
+            key,
+            report.kind === 'delta'
+              ? counters[key]
+              : Math.max(0, counters[key] - accounted[key]),
+          ]),
+        ),
+      )
+      const nextAccounted = addUsageCounters(accounted, effective)
+      const estimate = input.priceCatalog
+        ? estimateUsageCostMicros({
+            provider: report.provider,
+            modelId: input.modelId,
+            counters: effective,
+            catalog: input.priceCatalog,
+          })
+        : null
+      this.#database
+        .prepare(
+          `INSERT INTO usage_ledger (
+            tenant_id, workspace_id, session_id, turn_id, request_id,
+            provider, model_id, entry_kind, report_kind, dedupe_key,
+            reported_json, effective_json, completeness,
+            reconciliation_status, price_catalog_version,
+            estimated_cost_micros, occurred_at, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'usage', ?, ?, ?, ?, ?,
+                    'unreconciled', ?, ?, ?, ?)`,
+        )
+        .run(
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          input.turnId,
+          report.requestId,
+          report.provider,
+          input.modelId,
+          report.kind,
+          report.dedupeKey,
+          JSON.stringify(counters),
+          JSON.stringify(effective),
+          report.completeness,
+          estimate?.priceCatalogVersion ?? null,
+          estimate?.amountMicros ?? null,
+          report.occurredAt,
+          timestamp,
+        )
+      this.#database
+        .prepare(
+          `INSERT INTO usage_cursors (
+            tenant_id, workspace_id, session_id, turn_id, request_id,
+            provider, model_id, accounted_json, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(tenant_id,workspace_id,session_id,turn_id,request_id)
+          DO UPDATE SET accounted_json=excluded.accounted_json,
+                        updated_at=excluded.updated_at`,
+        )
+        .run(
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          input.turnId,
+          report.requestId,
+          report.provider,
+          input.modelId,
+          JSON.stringify(nextAccounted),
+          timestamp,
+        )
+      const row = this.#database
+        .prepare(
+          `SELECT * FROM usage_ledger WHERE ledger_id=last_insert_rowid()`,
+        )
+        .get() as unknown as UsageLedgerRow
+      this.#database.exec('COMMIT')
+      return usageFromRow(row)
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  appendUsageOutcome(
+    input: StoreScope & {
+      turnId: string
+      provider: ProviderId
+      modelId: string
+      dedupeKey: string
+      outcome: 'completed' | 'failed' | 'interrupted'
+      completeness: 'complete' | 'partial'
+      occurredAt?: string
+    },
+  ): UsageLedgerRecord {
+    const timestamp = this.#timestamp()
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO usage_ledger (
+          tenant_id, workspace_id, session_id, turn_id, provider, model_id,
+          entry_kind, dedupe_key, reported_json, effective_json, outcome,
+          completeness, reconciliation_status, occurred_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'terminal', ?, ?, ?, ?, ?,
+                  'unreconciled', ?, ?)`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.turnId,
+        input.provider,
+        input.modelId,
+        input.dedupeKey,
+        JSON.stringify(zeroUsageCounters()),
+        JSON.stringify(zeroUsageCounters()),
+        input.outcome,
+        input.completeness,
+        input.occurredAt ?? timestamp,
+        timestamp,
+      )
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM usage_ledger
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND dedupe_key=?`,
+      )
+      .get(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.dedupeKey,
+      ) as unknown as UsageLedgerRow
+    return usageFromRow(row)
+  }
+
+  appendUsageReconciliation(
+    input: StoreScope & {
+      turnId: string
+      provider: ProviderId
+      modelId: string
+      dedupeKey: string
+      result: ProviderCostReconciliationResult
+    },
+  ): UsageLedgerRecord {
+    const timestamp = this.#timestamp()
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO usage_ledger (
+          tenant_id, workspace_id, session_id, turn_id, provider, model_id,
+          entry_kind, dedupe_key, reported_json, effective_json,
+          completeness, reconciliation_status, official_cost_micros,
+          source_reference, occurred_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'reconciliation', ?, ?, ?, 'complete',
+                  'reconciled', ?, ?, ?, ?)`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.turnId,
+        input.provider,
+        input.modelId,
+        input.dedupeKey,
+        JSON.stringify(zeroUsageCounters()),
+        JSON.stringify(zeroUsageCounters()),
+        input.result.officialCostMicros,
+        input.result.sourceReference,
+        input.result.reconciledAt,
+        timestamp,
+      )
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM usage_ledger
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND dedupe_key=?`,
+      )
+      .get(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.dedupeKey,
+      ) as unknown as UsageLedgerRow
+    return usageFromRow(row)
+  }
+
+  getUsageSummary(scope: StoreScope, turnId?: string): UsageSummary {
+    assertScope(scope)
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM usage_ledger
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?
+           AND (? IS NULL OR turn_id=?) ORDER BY ledger_id`,
+      )
+      .all(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        turnId ?? null,
+        turnId ?? null,
+      ) as unknown as UsageLedgerRow[]
+    const records = rows.map(usageFromRow)
+    const usage = records.filter((record) => record.entryKind === 'usage')
+    const terminals = records.filter(
+      (record) => record.entryKind === 'terminal',
+    )
+    const terminal = terminals.at(-1)
+    const reconciliations = records.filter(
+      (record) => record.entryKind === 'reconciliation',
+    )
+    const counters = usage.reduce(
+      (total, record) => addUsageCounters(total, record.effective),
+      zeroUsageCounters(),
+    )
+    const pricedUsage = usage.filter(
+      (record) => record.estimatedCostMicros !== null,
+    )
+    const estimatedCostMicros =
+      pricedUsage.length === 0
+        ? null
+        : pricedUsage.reduce(
+            (total, record) => total + (record.estimatedCostMicros ?? 0),
+            0,
+          )
+    const measuredTurns = new Set(usage.map((record) => record.turnId))
+    const terminalByTurn = new Map(
+      terminals.map((record) => [record.turnId, record]),
+    )
+    const reconciledTurns = new Set(
+      reconciliations.map((record) => record.turnId),
+    )
+    const complete =
+      measuredTurns.size > 0 &&
+      pricedUsage.length === usage.length &&
+      [...measuredTurns].every(
+        (id) => terminalByTurn.get(id)?.completeness === 'complete',
+      )
+    return {
+      ...scope,
+      turnId: turnId ?? null,
+      counters,
+      outcome: terminal?.outcome ?? null,
+      completeness: complete ? 'complete' : 'partial',
+      reconciliationStatus:
+        measuredTurns.size > 0 &&
+        [...measuredTurns].every((id) => reconciledTurns.has(id))
+          ? 'reconciled'
+          : 'unreconciled',
+      estimatedCostMicros,
+      officialCostMicros:
+        reconciliations.length === 0
+          ? null
+          : reconciliations.reduce(
+              (total, record) => total + (record.officialCostMicros ?? 0),
+              0,
+            ),
+      currency: 'USD',
+      priceCatalogVersions: [
+        ...new Set(
+          usage.flatMap((record) =>
+            record.priceCatalogVersion ? [record.priceCatalogVersion] : [],
+          ),
+        ),
+      ],
+    }
+  }
+
+  hasUsage(scope: StoreScope, turnId: string): boolean {
+    assertScope(scope)
+    return Boolean(
+      this.#database
+        .prepare(
+          `SELECT 1 FROM usage_ledger
+           WHERE tenant_id=? AND workspace_id=? AND session_id=?
+             AND turn_id=? AND entry_kind='usage' LIMIT 1`,
+        )
+        .get(scope.tenantId, scope.workspaceId, scope.sessionId, turnId),
+    )
   }
 
   listWorkspaceSessions(scope: {

@@ -13,6 +13,7 @@
     "@persistent-codex/artifact-storage": "workspace:*",
     "@persistent-codex/codex-protocol-generated": "workspace:*",
     "@persistent-codex/domain-events": "workspace:*",
+    "@persistent-codex/provider-platform": "workspace:*",
     "ajv": "^8.20.0"
   }
 }

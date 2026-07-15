@@ -555,7 +555,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 6,
+        user_version: 9,
       })
       database.close()
     } finally {
@@ -799,7 +799,7 @@ describe('WP11 durable audit', () => {
       expect(reopened.listAudit(scope).records).toHaveLength(1)
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
-        user_version: 6,
+        user_version: 9,
       })
       database.close()
     } finally {
@@ -868,5 +868,208 @@ describe('WP11 durable audit', () => {
       second.close()
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+})
+
+describe('WP13 provider persistence and append-only usage ledger', () => {
+  const capabilities = {
+    streaming: 'supported' as const,
+    reasoningSummary: 'supported' as const,
+    commandExecution: 'supported' as const,
+    fileChanges: 'supported' as const,
+    approvals: 'supported' as const,
+    interrupt: 'supported' as const,
+    resume: 'supported' as const,
+    toolCalls: 'supported' as const,
+    imageInput: 'supported' as const,
+  }
+  const prices = {
+    version: 'fixture-prices-v1',
+    currency: 'USD' as const,
+    effectiveAt: '2026-07-15T00:00:00.000Z',
+    models: [
+      {
+        provider: 'codex' as const,
+        modelId: 'fixture-model',
+        inputPerMillionMicros: 1_000_000,
+        cachedInputPerMillionMicros: 100_000,
+        outputPerMillionMicros: 4_000_000,
+        reasoningPerMillionMicros: 4_000_000,
+        toolUnitMicros: 25_000,
+      },
+    ],
+  }
+  const createProviderSession = (store: SqliteEventStore) => {
+    store.createSession({
+      ...scope,
+      provider: 'codex',
+      requestedPolicy: { alias: 'sol', reasoningEffort: 'medium' },
+      resolvedModel: 'fixture-model',
+      reasoningEffort: 'medium',
+      capabilitySnapshot: capabilities,
+    })
+  }
+  const createTurn = (store: SqliteEventStore, turnId: string) =>
+    store.createTurn({
+      ...scope,
+      turnId,
+      providerTurnId: turnId,
+      provider: 'codex',
+      requestedPolicy: { alias: 'sol', reasoningEffort: 'medium' },
+      resolvedModel: 'fixture-model',
+      reasoningEffort: 'medium',
+      capabilitySnapshot: capabilities,
+      status: 'in_progress',
+    })
+  const usage = (
+    store: SqliteEventStore,
+    turnId: string,
+    dedupeKey: string,
+    kind: 'delta' | 'cumulative',
+    inputTokens: number,
+  ) =>
+    store.appendUsage({
+      ...scope,
+      turnId,
+      modelId: 'fixture-model',
+      priceCatalog: prices,
+      report: {
+        schemaVersion: 1,
+        kind,
+        provider: 'codex',
+        requestId: `request-${turnId}`,
+        dedupeKey,
+        counters: {
+          inputTokens,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          toolUnits: 0,
+        },
+        completeness: kind === 'cumulative' ? 'complete' : 'partial',
+        occurredAt: '2026-07-15T00:00:00.000Z',
+      },
+    })
+
+  it('deduplicates mixed cumulative/delta reports across replay and reopen', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'usage-reopen-'))
+    const path = join(directory, 'events.sqlite')
+    const first = new SqliteEventStore(path)
+    createProviderSession(first)
+    createTurn(first, 'turn_mix')
+    usage(first, 'turn_mix', 'delta-1', 'delta', 100)
+    usage(first, 'turn_mix', 'cumulative-1', 'cumulative', 150)
+    expect(
+      usage(first, 'turn_mix', 'cumulative-1', 'cumulative', 150).effective,
+    ).toMatchObject({ inputTokens: 50 })
+    expect(() =>
+      usage(first, 'turn_mix', 'cumulative-1', 'cumulative', 151),
+    ).toThrowError(/dedupe key was reused/)
+    usage(first, 'turn_mix', 'delta-2', 'delta', 10)
+    usage(first, 'turn_mix', 'cumulative-2', 'cumulative', 160)
+    expect(first.getUsageSummary(scope, 'turn_mix').counters.inputTokens).toBe(
+      160,
+    )
+    first.close()
+    const reopened = new SqliteEventStore(path)
+    try {
+      expect(
+        usage(reopened, 'turn_mix', 'replayed-lower', 'cumulative', 160)
+          .effective.inputTokens,
+      ).toBe(0)
+      expect(
+        reopened.getUsageSummary(scope, 'turn_mix').counters.inputTokens,
+      ).toBe(160)
+    } finally {
+      reopened.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['completed', 'failed', 'interrupted'] as const)(
+    'preserves measured usage for %s turns',
+    (outcome) => {
+      const store = new SqliteEventStore(':memory:')
+      createProviderSession(store)
+      createTurn(store, `turn-${outcome}`)
+      usage(store, `turn-${outcome}`, `usage-${outcome}`, 'cumulative', 25)
+      store.completeTurn(scope, `turn-${outcome}`, outcome)
+      store.appendUsageOutcome({
+        ...scope,
+        turnId: `turn-${outcome}`,
+        provider: 'codex',
+        modelId: 'fixture-model',
+        dedupeKey: `terminal-${outcome}`,
+        outcome,
+        completeness: 'complete',
+      })
+      expect(store.getUsageSummary(scope, `turn-${outcome}`)).toMatchObject({
+        outcome,
+        completeness: 'complete',
+        counters: { inputTokens: 25 },
+        estimatedCostMicros: 25,
+      })
+      store.close()
+    },
+  )
+
+  it('keeps missing terminal usage partial/unreconciled and never presents zero cost', () => {
+    const store = new SqliteEventStore(':memory:')
+    createProviderSession(store)
+    createTurn(store, 'turn_partial')
+    store.appendUsageOutcome({
+      ...scope,
+      turnId: 'turn_partial',
+      provider: 'codex',
+      modelId: 'fixture-model',
+      dedupeKey: 'terminal-partial',
+      outcome: 'failed',
+      completeness: 'partial',
+    })
+    expect(store.getUsageSummary(scope, 'turn_partial')).toMatchObject({
+      completeness: 'partial',
+      reconciliationStatus: 'unreconciled',
+      estimatedCostMicros: null,
+    })
+    store.close()
+  })
+
+  it('appends official reconciliation without overwriting the versioned estimate', () => {
+    const store = new SqliteEventStore(':memory:')
+    createProviderSession(store)
+    createTurn(store, 'turn_reconciled')
+    usage(store, 'turn_reconciled', 'usage-reconciled', 'cumulative', 100)
+    store.appendUsageOutcome({
+      ...scope,
+      turnId: 'turn_reconciled',
+      provider: 'codex',
+      modelId: 'fixture-model',
+      dedupeKey: 'terminal-reconciled',
+      outcome: 'completed',
+      completeness: 'complete',
+    })
+    store.appendUsageReconciliation({
+      ...scope,
+      turnId: 'turn_reconciled',
+      provider: 'codex',
+      modelId: 'fixture-model',
+      dedupeKey: 'official-fixture-1',
+      result: {
+        sourceReference: 'provider-export-fixture-1',
+        officialCostMicros: 111,
+        currency: 'USD',
+        reconciledAt: '2026-07-15T01:00:00.000Z',
+      },
+    })
+    expect(store.getUsageSummary(scope, 'turn_reconciled')).toMatchObject({
+      estimatedCostMicros: 100,
+      officialCostMicros: 111,
+      reconciliationStatus: 'reconciled',
+      priceCatalogVersions: ['fixture-prices-v1'],
+    })
+    expect(JSON.stringify(store.getUsageSummary(scope))).not.toMatch(
+      /prompt|credential|Bearer|model response/i,
+    )
+    store.close()
   })
 })

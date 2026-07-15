@@ -1,4 +1,12 @@
 import { timelineEventSchema } from '@persistent-codex/domain-events'
+import {
+  capabilityMatrixSchema,
+  modelPolicySchema,
+  providerIdSchema,
+  reasoningEffortSchema,
+  turnOutcomeSchema,
+  usageCountersSchema,
+} from '@persistent-codex/provider-platform'
 import { z } from 'zod'
 
 const identifierSchema = z.string().min(1)
@@ -189,6 +197,11 @@ export const replayResponseSchema = z.object({
 export const createSessionRequestSchema = z.object({}).strict()
 
 export const sessionResponseSchema = scopeSchema.extend({
+  provider: providerIdSchema,
+  requestedPolicy: modelPolicySchema,
+  resolvedModel: identifierSchema.nullable(),
+  reasoningEffort: reasoningEffortSchema.nullable(),
+  capabilitySnapshot: capabilityMatrixSchema.nullable(),
   codexThreadId: identifierSchema.nullable(),
   status: sessionStatusSchema,
   recoveryErrorCode: recoveryErrorCodeSchema.nullable(),
@@ -207,6 +220,10 @@ export const sessionSummarySchema = sessionResponseSchema
     tenantId: true,
     workspaceId: true,
     sessionId: true,
+    provider: true,
+    requestedPolicy: true,
+    resolvedModel: true,
+    reasoningEffort: true,
     codexThreadId: true,
     status: true,
   })
@@ -344,6 +361,18 @@ export const turnAcceptedResponseSchema = scopeSchema.extend({
   idempotencyKey: identifierSchema,
 })
 
+export const usageCostSummarySchema = scopeSchema.extend({
+  turnId: identifierSchema.nullable(),
+  counters: usageCountersSchema,
+  outcome: turnOutcomeSchema.exclude(['in_progress']).nullable(),
+  completeness: z.enum(['complete', 'partial']),
+  reconciliationStatus: z.enum(['unreconciled', 'reconciled']),
+  estimatedCostMicros: z.number().int().nonnegative().nullable(),
+  officialCostMicros: z.number().int().nonnegative().nullable(),
+  currency: z.literal('USD'),
+  priceCatalogVersions: z.array(identifierSchema),
+})
+
 export const approvalListResponseSchema = z.object({
   approvals: z.array(approvalSchema),
 })
@@ -398,3 +427,4 @@ export type ReadinessResponse = z.infer<typeof readinessResponseSchema>
 export type AuditRecord = z.infer<typeof auditRecordSchema>
 export type AuditListResponse = z.infer<typeof auditListResponseSchema>
 export type MetricsResponse = z.infer<typeof metricsResponseSchema>
+export type UsageCostSummary = z.infer<typeof usageCostSummarySchema>

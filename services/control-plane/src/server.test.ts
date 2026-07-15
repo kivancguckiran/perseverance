@@ -63,6 +63,117 @@ describe('bounded realtime sender', () => {
   })
 })
 
+describe('WP13 scoped usage and cost API', () => {
+  it('returns session/turn usage without content or cross-tenant leakage', async () => {
+    const store = new SqliteEventStore(':memory:')
+    store.createSession({
+      ...scope,
+      resolvedModel: 'fixture-model',
+      reasoningEffort: 'medium',
+      capabilitySnapshot: {
+        streaming: 'supported',
+        reasoningSummary: 'supported',
+        commandExecution: 'supported',
+        fileChanges: 'supported',
+        approvals: 'supported',
+        interrupt: 'supported',
+        resume: 'supported',
+        toolCalls: 'supported',
+        imageInput: 'unsupported',
+      },
+    })
+    store.createTurn({
+      ...scope,
+      turnId: 'turn_usage_api',
+      providerTurnId: 'provider_turn_usage_api',
+      provider: 'codex',
+      requestedPolicy: { alias: 'sol', reasoningEffort: 'medium' },
+      resolvedModel: 'fixture-model',
+      reasoningEffort: 'medium',
+      capabilitySnapshot: store.getSession(scope).capabilitySnapshot!,
+      status: 'in_progress',
+    })
+    store.appendUsage({
+      ...scope,
+      turnId: 'turn_usage_api',
+      modelId: 'fixture-model',
+      priceCatalog: {
+        version: 'api-fixture-v1',
+        currency: 'USD',
+        effectiveAt: '2026-07-15T00:00:00.000Z',
+        models: [
+          {
+            provider: 'codex',
+            modelId: 'fixture-model',
+            inputPerMillionMicros: 1_000_000,
+            cachedInputPerMillionMicros: 0,
+            outputPerMillionMicros: 0,
+            reasoningPerMillionMicros: 0,
+            toolUnitMicros: 0,
+          },
+        ],
+      },
+      report: {
+        schemaVersion: 1,
+        kind: 'cumulative',
+        provider: 'codex',
+        requestId: 'request_usage_api',
+        dedupeKey: 'usage_api_1',
+        counters: {
+          inputTokens: 123,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          toolUnits: 0,
+        },
+        completeness: 'complete',
+        occurredAt: '2026-07-15T00:00:00.000Z',
+      },
+    })
+    store.appendUsageOutcome({
+      ...scope,
+      turnId: 'turn_usage_api',
+      provider: 'codex',
+      modelId: 'fixture-model',
+      dedupeKey: 'terminal_usage_api',
+      outcome: 'failed',
+      completeness: 'complete',
+    })
+    const app = await buildControlPlane({ eventStore: store })
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_test/turns/turn_usage_api/usage',
+        headers,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({
+        outcome: 'failed',
+        counters: { inputTokens: 123 },
+        estimatedCostMicros: 123,
+        reconciliationStatus: 'unreconciled',
+      })
+      expect(response.body).not.toMatch(
+        /prompt|credential|Bearer|model response/i,
+      )
+      const sessionUsage = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_test/usage',
+        headers,
+      })
+      expect(sessionUsage.json().counters.inputTokens).toBe(123)
+      const hidden = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_test/usage',
+        headers: { ...headers, 'x-tenant-id': 'ten_other' },
+      })
+      expect(hidden.statusCode).toBe(404)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('WP10 session navigation and Git API', () => {
   it('paginates scoped sessions, persists refresh, and rejects Git operations', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'wp10-api-'))
@@ -885,6 +996,34 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
       return {
         account: { type: 'chatgpt' },
         requiresOpenaiAuth: true,
+      } as TResult
+    }
+    if (method === 'model/list') {
+      return {
+        data: [
+          {
+            id: 'fixture-default',
+            model: 'fixture-default',
+            upgrade: null,
+            upgradeInfo: null,
+            availabilityNux: null,
+            displayName: 'Fixture default',
+            description: 'Control-plane test model',
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'none', description: 'None' },
+              { reasoningEffort: 'medium', description: 'Medium' },
+            ],
+            defaultReasoningEffort: 'medium',
+            inputModalities: ['text', 'image'],
+            supportsPersonality: false,
+            additionalSpeedTiers: [],
+            serviceTiers: [],
+            defaultServiceTier: null,
+            isDefault: true,
+          },
+        ],
+        nextCursor: null,
       } as TResult
     }
     if (method === 'thread/start') {
@@ -2081,7 +2220,11 @@ describe('WP4 session, turn and live event flow', () => {
       status: 'active',
     })
     expect(client.initializeCalls).toBe(1)
-    expect(client.requests).toEqual(['account/read', 'thread/start'])
+    expect(client.requests).toEqual([
+      'account/read',
+      'model/list',
+      'thread/start',
+    ])
     expect(
       current.getSession({
         tenantId: 'ten_live',
@@ -2203,6 +2346,7 @@ describe('WP4 session, turn and live event flow', () => {
     })
     expect(client.requests).toEqual([
       'account/read',
+      'model/list',
       'thread/start',
       'account/read',
       'turn/start',

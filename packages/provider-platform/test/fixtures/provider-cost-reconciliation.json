@@ -1,0 +1,19 @@
+{
+  "request": {
+    "provider": "codex",
+    "tenantId": "tenant-fixture",
+    "workspaceId": "workspace-fixture",
+    "sessionId": "session-fixture",
+    "turnId": "turn-fixture",
+    "from": "2026-07-15T00:00:00.000Z",
+    "to": "2026-07-15T01:00:00.000Z"
+  },
+  "results": [
+    {
+      "sourceReference": "provider-export-fixture-1",
+      "officialCostMicros": 111,
+      "currency": "USD",
+      "reconciledAt": "2026-07-15T02:00:00.000Z"
+    }
+  ]
+}

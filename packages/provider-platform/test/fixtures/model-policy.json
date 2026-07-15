@@ -1,0 +1,12 @@
+{
+  "aliases": {
+    "sol": {
+      "provider": "codex",
+      "selector": { "kind": "model_id", "modelId": "fixture-model-a" }
+    },
+    "luna": {
+      "provider": "codex",
+      "selector": { "kind": "catalog_default" }
+    }
+  }
+}
