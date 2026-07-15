@@ -67,8 +67,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP12 — Alfa hardening ve kabul               | Tamamlandı | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                        |
 | WP13 — Platform ve usage ledger temeli       | Tamamlandı | Provider-neutral sözleşme, schema v9, model politikası ve append-only usage ledger doğrulandı               |
 | WP14 — Durable detached execution            | Tamamlandı | Schema v10 durable run, disconnect/replay, explicit interrupt, recovery ve accounting doğrulandı            |
-| WP15 — Çok sağlayıcılı conversation          | Aktif      | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
-| WP16 — PWA ve Faz 2 kabulü                   | Bekliyor   | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlanacak                                    |
+| WP15 — Çok sağlayıcılı conversation          | Tamamlandı | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
+| WP16 — PWA ve Faz 2 kabulü                   | Aktif      | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlanacak                                    |
 
 ## WP1 nihai denetim sonucu
 
@@ -741,3 +741,36 @@ Doğrulananlar:
 Uygulama commit'i: `0d75a1e` (`feat: add durable detached turn execution`).
 
 Aktif iş paketi WP15'tir. WP15 tamamlanmadan WP16'ya geçilemez.
+
+## WP15 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Uygulama ve düzeltme commit'leri `aabd6bd`, `ddd3079`, `37455d2` ve `5835809`
+  mevcut ve WP15 kapsamını taşıyor.
+- Claude ve Gemini process adapter'ları ortak provider-neutral arayüzden start, resume,
+  stream, usage, unknown event, interrupt ve cleanup davranışlarını sağlıyor.
+- Provider readiness üç durumlu ve typed; capacity/auth/config hataları kullanıcıya
+  actionable biçimde aktarılıyor. Claude effort eşlemesi uygulanırken Gemini'nin
+  desteklemediği effort değerleri sessizce kabul edilmiyor.
+- Conversation provider/model/effort seçimi kalıcı; yeni Codex conversation
+  `sol + medium` ile başlıyor. İkinci kullanıcı mesajı tek bir idempotent title job
+  üretiyor; `luna + none` policy'si ve `conversation_title` usage amacı korunuyor.
+- Interrupt lifecycle fixture'ındaki ready/signal yarışı giderildi. Provider adapter
+  testi 10 bağımsız paralel tekrarda 10/10 geçti.
+- Gerçek Claude `sonnet`, Gemini `gemini-2.5-pro` ve Codex title `gpt-5.6-luna`
+  smoke'ları start/resume/interrupt veya title policy akışlarını cleanup ile tamamladı.
+- Güncel HEAD üzerinde format, bütün typecheck'ler, 16 test dosyasında 196 test,
+  production build ve izinli localhost'ta `/` ile `/sessions/:sessionId` SSR HTTP smoke
+  geçti.
+- İzole güncel web instance'ında 1280×720 ve 390×844 görünümleri yatay taşma veya
+  console warning/error üretmedi; provider/model/effort kontrolleri iki viewport'ta da
+  erişilebilirdi.
+- Kabul sonunda geçici browser tab'ı ve izole dev process kapatıldı; çalışma ağacı
+  temiz kaldı.
+
+Uygulama commit'leri: `aabd6bd`, `ddd3079`, `37455d2`, `5835809`.
+
+Aktif iş paketi WP16'dır. WP16 tamamlanmadan Faz 2 kapatılamaz.
