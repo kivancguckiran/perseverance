@@ -16,6 +16,7 @@ import {
   describeTimelineEvent,
   isNearScrollEnd,
   sessionScopedCursor,
+  serverOwnedRunLabel,
   shouldSubmitComposer,
 } from './workspace-page'
 import MessageMarkdown from './message-markdown'
@@ -589,5 +590,17 @@ describe('attachment selection', () => {
     expect(
       attachmentMediaType({ name: 'archive.zip', type: '' }),
     ).toBeUndefined()
+  })
+})
+
+describe('durable background run status', () => {
+  it('distinguishes server-owned work from realtime connectivity', () => {
+    expect(serverOwnedRunLabel('running', 'yeniden bağlanıyor')).toBe(
+      'Arka planda çalışıyor · bağlantı yeniden kuruluyor',
+    )
+    expect(serverOwnedRunLabel('running', 'canlı')).toBe(
+      'Server üzerinde çalışıyor',
+    )
+    expect(serverOwnedRunLabel('interrupting', 'canlı')).toBe('Durduruluyor…')
   })
 })

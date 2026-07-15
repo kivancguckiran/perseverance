@@ -81,6 +81,31 @@ const scopeSchema = z.object({
   workspaceId: identifierSchema,
   sessionId: identifierSchema,
 })
+export const durableRunStatusSchema = z.enum([
+  'queued',
+  'running',
+  'interrupting',
+  'completed',
+  'failed',
+  'interrupted',
+  'recovery_required',
+])
+export const durableRunSchema = scopeSchema.extend({
+  runId: identifierSchema,
+  turnId: identifierSchema.nullable(),
+  providerTurnId: identifierSchema.nullable(),
+  provider: providerIdSchema,
+  status: durableRunStatusSchema,
+  attempt: z.number().int().positive(),
+  runtimeGeneration: z.number().int().nonnegative().nullable(),
+  terminalOutcome: turnOutcomeSchema.exclude(['in_progress']).nullable(),
+  recoveryCode: z.string().min(1).nullable(),
+  queuedAt: z.iso.datetime(),
+  startedAt: z.iso.datetime().nullable(),
+  interruptRequestedAt: z.iso.datetime().nullable(),
+  terminalAt: z.iso.datetime().nullable(),
+  lastReconciledAt: z.iso.datetime().nullable(),
+})
 export const artifactMetadataSchema = scopeSchema.extend({
   artifactId: identifierSchema,
   turnId: identifierSchema,
@@ -218,6 +243,8 @@ export const sessionResponseSchema = scopeSchema.extend({
   lastResumedAt: z.iso.datetime().nullable(),
   runtimeGeneration: z.number().int().nonnegative().nullable(),
   runtimeConnected: z.boolean(),
+  activeRun: durableRunSchema.nullable().default(null),
+  latestRun: durableRunSchema.nullable().default(null),
   replay: z.object({
     afterSequence: sequenceSchema,
     highWaterSequence: sequenceSchema,
@@ -420,12 +447,14 @@ export const steerTurnRequestSchema = z.object({
 export const interruptTurnRequestSchema = z.object({}).strict()
 
 export const turnActionResponseSchema = scopeSchema.extend({
+  runId: identifierSchema.optional(),
   codexThreadId: identifierSchema,
   codexTurnId: identifierSchema,
   status: z.enum(['accepted', 'interrupted']),
 })
 
 export const turnAcceptedResponseSchema = scopeSchema.extend({
+  runId: identifierSchema,
   codexThreadId: identifierSchema,
   codexTurnId: identifierSchema,
   idempotencyKey: identifierSchema,
@@ -476,6 +505,7 @@ export type ArtifactDownloadToken = z.infer<typeof artifactDownloadTokenSchema>
 export type ReplayResponse = z.infer<typeof replayResponseSchema>
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>
 export type SessionResponse = z.infer<typeof sessionResponseSchema>
+export type DurableRun = z.infer<typeof durableRunSchema>
 export type SessionSummary = z.infer<typeof sessionSummarySchema>
 export type SessionListResponse = z.infer<typeof sessionListResponseSchema>
 export type ConversationFolder = z.infer<typeof conversationFolderSchema>

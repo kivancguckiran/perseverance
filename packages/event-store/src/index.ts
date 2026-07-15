@@ -171,6 +171,35 @@ export interface TurnRecord extends StoreScope {
   completedAt: string | null
 }
 
+export type DurableRunStatus =
+  | 'queued'
+  | 'running'
+  | 'interrupting'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'recovery_required'
+
+export interface DurableRunRecord extends StoreScope {
+  runId: string
+  turnId: string | null
+  providerTurnId: string | null
+  provider: ProviderId
+  status: DurableRunStatus
+  attempt: number
+  runtimeGeneration: number | null
+  terminalOutcome: 'completed' | 'failed' | 'interrupted' | null
+  recoveryCode: string | null
+  recoveryDetail: string | null
+  queuedAt: string
+  startedAt: string | null
+  interruptRequestedAt: string | null
+  terminalAt: string | null
+  lastReconciledAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface UsageLedgerRecord extends StoreScope {
   ledgerId: number
   turnId: string
@@ -404,6 +433,29 @@ interface TurnRow {
   completed_at: string | null
 }
 
+interface DurableRunRow {
+  tenant_id: string
+  workspace_id: string
+  session_id: string
+  run_id: string
+  turn_id: string | null
+  provider_turn_id: string | null
+  provider: ProviderId
+  status: DurableRunStatus
+  attempt: number
+  runtime_generation: number | null
+  terminal_outcome: DurableRunRecord['terminalOutcome']
+  recovery_code: string | null
+  recovery_detail: string | null
+  queued_at: string
+  started_at: string | null
+  interrupt_requested_at: string | null
+  terminal_at: string | null
+  last_reconciled_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 interface UsageLedgerRow {
   ledger_id: number
   tenant_id: string
@@ -552,6 +604,31 @@ function turnFromRow(row: TurnRow): TurnRecord {
     status: row.status,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+  }
+}
+
+function durableRunFromRow(row: DurableRunRow): DurableRunRecord {
+  return {
+    tenantId: row.tenant_id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    runId: row.run_id,
+    turnId: row.turn_id,
+    providerTurnId: row.provider_turn_id,
+    provider: row.provider,
+    status: row.status,
+    attempt: row.attempt,
+    runtimeGeneration: row.runtime_generation,
+    terminalOutcome: row.terminal_outcome,
+    recoveryCode: row.recovery_code,
+    recoveryDetail: row.recovery_detail,
+    queuedAt: row.queued_at,
+    startedAt: row.started_at,
+    interruptRequestedAt: row.interrupt_requested_at,
+    terminalAt: row.terminal_at,
+    lastReconciledAt: row.last_reconciled_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
@@ -711,6 +788,16 @@ export class SqliteEventStore {
         `UPDATE approvals SET status = 'expired', upstream_response_status = 'unknown', resolved_at = ?, version = version + 1 WHERE status = 'resolving'`,
       )
       .run(this.#timestamp())
+    this.#database
+      .prepare(
+        `UPDATE durable_runs
+         SET status='recovery_required',
+             recovery_code='RECOVERY_OUTCOME_UNKNOWN',
+             recovery_detail='Control plane restarted before the provider turn identity or interrupt outcome was durable',
+             last_reconciled_at=?, updated_at=?
+         WHERE status='interrupting' OR (status='queued' AND turn_id IS NULL)`,
+      )
+      .run(this.#timestamp(), this.#timestamp())
   }
 
   #timestamp(): string {
@@ -1318,6 +1405,376 @@ export class SqliteEventStore {
     return turnFromRow(row)
   }
 
+  createDurableRun(
+    input: StoreScope & {
+      runId: string
+      provider: ProviderId
+      runtimeGeneration?: number | null
+      attempt?: number
+    },
+  ): DurableRunRecord {
+    assertScope(input)
+    assertIdentifier(input.runId, 'runId')
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const existing = this.#findDurableRun(input, input.runId)
+      if (existing) {
+        if (existing.provider !== input.provider)
+          throw new StoreConflictError(
+            'RUN_IDENTITY_CONFLICT',
+            'Run ID was reused with a different provider',
+          )
+        this.#database.exec('COMMIT')
+        return durableRunFromRow(existing)
+      }
+      const active = this.#findActiveDurableRun(input)
+      if (active)
+        throw new StoreConflictError(
+          'SESSION_TURN_ACTIVE',
+          'Session already has an active durable run',
+        )
+      this.#database
+        .prepare(
+          `INSERT INTO durable_runs (
+            tenant_id, workspace_id, session_id, run_id, provider, status,
+            attempt, runtime_generation, queued_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          input.runId,
+          input.provider,
+          input.attempt ?? 1,
+          input.runtimeGeneration ?? null,
+          timestamp,
+          timestamp,
+          timestamp,
+        )
+      const row = this.#findDurableRun(input, input.runId)!
+      this.#database.exec('COMMIT')
+      return durableRunFromRow(row)
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      if (
+        error instanceof Error &&
+        /durable_runs_one_active_per_session_idx/.test(error.message)
+      )
+        throw new StoreConflictError(
+          'SESSION_TURN_ACTIVE',
+          'Session already has an active durable run',
+        )
+      throw error
+    }
+  }
+
+  #findDurableRun(scope: StoreScope, runId: string): DurableRunRow | undefined {
+    return this.#database
+      .prepare(
+        `SELECT * FROM durable_runs
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND run_id=?`,
+      )
+      .get(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        runId,
+      ) as unknown as DurableRunRow | undefined
+  }
+
+  #findActiveDurableRun(scope: StoreScope): DurableRunRow | undefined {
+    return this.#database
+      .prepare(
+        `SELECT * FROM durable_runs
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?
+           AND status IN ('queued','running','interrupting')
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(scope.tenantId, scope.workspaceId, scope.sessionId) as unknown as
+      DurableRunRow | undefined
+  }
+
+  getDurableRun(scope: StoreScope, runId: string): DurableRunRecord {
+    assertScope(scope)
+    assertIdentifier(runId, 'runId')
+    const row = this.#findDurableRun(scope, runId)
+    if (!row)
+      throw new StoreNotFoundError('Durable run not found in requested scope')
+    return durableRunFromRow(row)
+  }
+
+  getActiveDurableRun(scope: StoreScope): DurableRunRecord | null {
+    assertScope(scope)
+    const row = this.#findActiveDurableRun(scope)
+    return row ? durableRunFromRow(row) : null
+  }
+
+  getLatestDurableRun(scope: StoreScope): DurableRunRecord | null {
+    assertScope(scope)
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM durable_runs
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(scope.tenantId, scope.workspaceId, scope.sessionId) as unknown as
+      DurableRunRow | undefined
+    return row ? durableRunFromRow(row) : null
+  }
+
+  getDurableRunByTurn(
+    scope: StoreScope,
+    turnId: string,
+  ): DurableRunRecord | null {
+    assertScope(scope)
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM durable_runs
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND turn_id=?`,
+      )
+      .get(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        turnId,
+      ) as unknown as DurableRunRow | undefined
+    return row ? durableRunFromRow(row) : null
+  }
+
+  bindDurableRunTurn(
+    input: StoreScope & {
+      runId: string
+      turnId: string
+      providerTurnId: string | null
+      runtimeGeneration: number
+    },
+  ): DurableRunRecord {
+    assertScope(input)
+    assertIdentifier(input.turnId, 'turnId')
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.#findDurableRun(input, input.runId)
+      if (!row)
+        throw new StoreNotFoundError('Durable run not found in requested scope')
+      if (row.turn_id && row.turn_id !== input.turnId)
+        throw new StoreConflictError(
+          'RUN_TURN_IDENTITY_CONFLICT',
+          'Durable run is already bound to another turn',
+        )
+      if (!['queued', 'running', 'recovery_required'].includes(row.status)) {
+        if (row.turn_id === input.turnId) {
+          this.#database.exec('COMMIT')
+          return durableRunFromRow(row)
+        }
+        throw new StoreConflictError(
+          'RUN_STATE_CONFLICT',
+          `Cannot bind a turn while run is ${row.status}`,
+        )
+      }
+      this.#database
+        .prepare(
+          `UPDATE durable_runs
+           SET turn_id=?, provider_turn_id=?, status='running',
+               runtime_generation=?, started_at=COALESCE(started_at, ?),
+               recovery_code=NULL, recovery_detail=NULL,
+               last_reconciled_at=?, updated_at=?
+           WHERE tenant_id=? AND workspace_id=? AND session_id=? AND run_id=?`,
+        )
+        .run(
+          input.turnId,
+          input.providerTurnId,
+          input.runtimeGeneration,
+          timestamp,
+          timestamp,
+          timestamp,
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          input.runId,
+        )
+      const updated = this.#findDurableRun(input, input.runId)!
+      this.#database.exec('COMMIT')
+      return durableRunFromRow(updated)
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  markDurableRunInterrupting(
+    scope: StoreScope,
+    runId: string,
+  ): DurableRunRecord {
+    const timestamp = this.#timestamp()
+    const result = this.#database
+      .prepare(
+        `UPDATE durable_runs
+         SET status='interrupting', interrupt_requested_at=COALESCE(interrupt_requested_at, ?), updated_at=?
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND run_id=?
+           AND status='running'`,
+      )
+      .run(
+        timestamp,
+        timestamp,
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        runId,
+      )
+    const run = this.getDurableRun(scope, runId)
+    if (Number(result.changes) === 0 && run.status !== 'interrupting')
+      throw new StoreConflictError(
+        'RUN_STATE_CONFLICT',
+        `Cannot interrupt a run while it is ${run.status}`,
+      )
+    return run
+  }
+
+  markDurableRunRecoveryRequired(
+    scope: StoreScope,
+    runId: string,
+    recoveryCode: string,
+    recoveryDetail: string,
+  ): DurableRunRecord {
+    const timestamp = this.#timestamp()
+    const result = this.#database
+      .prepare(
+        `UPDATE durable_runs
+         SET status='recovery_required', recovery_code=?, recovery_detail=?,
+             last_reconciled_at=?, updated_at=?
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND run_id=?
+           AND status IN ('queued','running','interrupting','recovery_required')`,
+      )
+      .run(
+        recoveryCode,
+        recoveryDetail,
+        timestamp,
+        timestamp,
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        runId,
+      )
+    if (Number(result.changes) === 0) {
+      const run = this.getDurableRun(scope, runId)
+      if (run.status !== 'recovery_required')
+        throw new StoreConflictError(
+          'RUN_STATE_CONFLICT',
+          `Cannot require recovery for a ${run.status} run`,
+        )
+    }
+    return this.getDurableRun(scope, runId)
+  }
+
+  finalizeDurableRun(
+    input: StoreScope & {
+      runId: string
+      outcome: 'completed' | 'failed' | 'interrupted'
+      completeness: 'complete' | 'partial'
+      occurredAt?: string
+    },
+  ): DurableRunRecord {
+    const timestamp = input.occurredAt ?? this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.#findDurableRun(input, input.runId)
+      if (!row)
+        throw new StoreNotFoundError('Durable run not found in requested scope')
+      if (row.terminal_outcome) {
+        if (row.terminal_outcome !== input.outcome)
+          throw new StoreConflictError(
+            'RUN_TERMINAL_CONFLICT',
+            'Durable run already has a different terminal outcome',
+          )
+        this.#database.exec('COMMIT')
+        return durableRunFromRow(row)
+      }
+      if (
+        !['queued', 'running', 'interrupting', 'recovery_required'].includes(
+          row.status,
+        )
+      )
+        throw new StoreConflictError(
+          'RUN_STATE_CONFLICT',
+          `Cannot finalize a run while it is ${row.status}`,
+        )
+      this.#database
+        .prepare(
+          `UPDATE durable_runs
+           SET status=?, terminal_outcome=?, terminal_at=?,
+               last_reconciled_at=?, recovery_code=NULL, recovery_detail=NULL,
+               updated_at=?
+           WHERE tenant_id=? AND workspace_id=? AND session_id=? AND run_id=?`,
+        )
+        .run(
+          input.outcome,
+          input.outcome,
+          timestamp,
+          timestamp,
+          timestamp,
+          input.tenantId,
+          input.workspaceId,
+          input.sessionId,
+          input.runId,
+        )
+      if (row.turn_id)
+        this.#database
+          .prepare(
+            `UPDATE turns SET status=?, completed_at=COALESCE(completed_at, ?)
+             WHERE tenant_id=? AND workspace_id=? AND session_id=? AND turn_id=?`,
+          )
+          .run(
+            input.outcome,
+            timestamp,
+            input.tenantId,
+            input.workspaceId,
+            input.sessionId,
+            row.turn_id,
+          )
+      const session = this.#database
+        .prepare(
+          `SELECT resolved_model FROM sessions
+           WHERE tenant_id=? AND workspace_id=? AND session_id=?`,
+        )
+        .get(input.tenantId, input.workspaceId, input.sessionId) as
+        { resolved_model: string | null } | undefined
+      if (row.turn_id && session?.resolved_model)
+        this.#database
+          .prepare(
+            `INSERT OR IGNORE INTO usage_ledger (
+              tenant_id, workspace_id, session_id, turn_id, provider, model_id,
+              entry_kind, dedupe_key, reported_json, effective_json, outcome,
+              completeness, reconciliation_status, occurred_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'terminal', ?, ?, ?, ?, ?,
+                      'unreconciled', ?, ?)`,
+          )
+          .run(
+            input.tenantId,
+            input.workspaceId,
+            input.sessionId,
+            row.turn_id,
+            row.provider,
+            session.resolved_model,
+            `terminal:run:${row.run_id}`,
+            JSON.stringify(zeroUsageCounters()),
+            JSON.stringify(zeroUsageCounters()),
+            input.outcome,
+            input.completeness,
+            timestamp,
+            this.#timestamp(),
+          )
+      const updated = this.#findDurableRun(input, input.runId)!
+      this.#database.exec('COMMIT')
+      return durableRunFromRow(updated)
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   completeTurn(
     scope: StoreScope,
     turnId: string,
@@ -1684,6 +2141,37 @@ export class SqliteEventStore {
         )
         .get(scope.tenantId, scope.workspaceId, scope.sessionId, turnId),
     )
+  }
+
+  findTurnTerminalOutcome(
+    scope: StoreScope,
+    turnId: string,
+  ): {
+    outcome: 'completed' | 'failed' | 'interrupted'
+    occurredAt: string
+  } | null {
+    assertScope(scope)
+    const row = this.#database
+      .prepare(
+        `SELECT payload_json FROM events
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?
+           AND type='turn.completed'
+           AND json_extract(payload_json, '$.codexTurnId')=?
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+      .get(scope.tenantId, scope.workspaceId, scope.sessionId, turnId) as
+      { payload_json: string } | undefined
+    if (!row) return null
+    const event = JSON.parse(row.payload_json) as {
+      occurredAt: string
+      payload: { status: string }
+    }
+    if (!['completed', 'failed', 'interrupted'].includes(event.payload.status))
+      return null
+    return {
+      outcome: event.payload.status as 'completed' | 'failed' | 'interrupted',
+      occurredAt: event.occurredAt,
+    }
   }
 
   listWorkspaceSessions(scope: {

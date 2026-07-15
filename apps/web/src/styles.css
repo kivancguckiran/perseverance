@@ -325,6 +325,21 @@ select {
   flex: 1 0 auto;
   flex-direction: column;
 }
+.background-run-banner {
+  width: fit-content;
+  margin: 0 0 18px 42px;
+  padding: 7px 10px;
+  border: 1px solid #315245;
+  border-radius: 999px;
+  color: #9ee8c8;
+  background: #10201b;
+  font-size: 0.72rem;
+}
+.background-run-banner.is-terminal {
+  color: #8fa39a;
+  border-color: #263a33;
+  background: #0d1714;
+}
 .chat-messages {
   display: flex;
   flex-direction: column;

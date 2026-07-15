@@ -110,6 +110,7 @@ export interface SessionOrchestratorOptions {
     identity: WorkspaceRuntimeIdentity,
   ) => WorkspaceRuntimeClient
   sessionIdFactory?: () => string
+  runIdFactory?: () => string
   runtimeInstanceIdFactory?: () => string
   sourceVersion?: string
   onDeliveryError?: WorkspaceRuntimeRegistryOptions['onDeliveryError']
@@ -267,6 +268,7 @@ export class SessionOrchestrator {
   readonly #workspaceCwd: SessionOrchestratorOptions['workspaceCwd']
   readonly #codexHome: SessionOrchestratorOptions['codexHome']
   readonly #sessionIdFactory: () => string
+  readonly #runIdFactory: () => string
   readonly #sourceVersion: string
   readonly #approvalPolicy: ThreadStartParams['approvalPolicy'] | undefined
   readonly #onRecoveryError: SessionOrchestratorOptions['onRecoveryError']
@@ -319,6 +321,7 @@ export class SessionOrchestrator {
     this.#codexHome = options.codexHome
     this.#sessionIdFactory =
       options.sessionIdFactory ?? (() => `ses_${randomUUID()}`)
+    this.#runIdFactory = options.runIdFactory ?? (() => `run_${randomUUID()}`)
     this.#sourceVersion = options.sourceVersion ?? '0.144.2'
     this.#approvalPolicy = options.approvalPolicy
     this.#onRecoveryError = options.onRecoveryError
@@ -612,9 +615,13 @@ export class SessionOrchestrator {
   getSession(scope: StoreScope): SessionResponse {
     const session = this.#store.getSession(scope)
     const runtime = this.#registry.get(scope)
+    const activeRun = this.#store.getActiveDurableRun(scope)
+    const latestRun = this.#store.getLatestDurableRun(scope)
     return sessionResponseSchema.parse({
       ...session,
       runtimeConnected: runtime?.client.health.state === 'ready',
+      activeRun,
+      latestRun,
       replay: { afterSequence: 0, highWaterSequence: session.lastSequence },
       recoveryOptions:
         session.status === 'recovery_required'
@@ -855,11 +862,18 @@ export class SessionOrchestrator {
       if (resumed.thread.id !== threadId)
         throw new Error('Thread identity mismatch')
       this.#reconcileSnapshot(scope, resumed.thread, 'thread/resume')
+      this.#reconcileDurableRun(
+        scope,
+        resumed.thread.turns,
+        runtime.client.processGeneration,
+      )
       this.#threadScopes.set(this.#threadKey(scope, threadId), scope)
       const active = [...resumed.thread.turns]
         .reverse()
         .find((turn) => turn.status === 'inProgress')
-      if (active)
+      const reconciledRun = this.#store.getLatestDurableRun(scope)
+      const runRecoveryRequired = reconciledRun?.status === 'recovery_required'
+      if (active && !runRecoveryRequired)
         this.#activeTurns.set(this.#activeTurnKey(scope), {
           sessionId: scope.sessionId,
           turnId: active.id,
@@ -867,7 +881,10 @@ export class SessionOrchestrator {
       const record = this.#store.updateSessionRecoveryWithAudit(
         scope,
         {
-          status: 'active',
+          status: runRecoveryRequired ? 'recovery_required' : 'active',
+          ...(runRecoveryRequired
+            ? { recoveryErrorCode: 'RECOVERY_OUTCOME_UNKNOWN' }
+            : {}),
           runtimeGeneration: runtime.client.processGeneration,
           resumed: true,
         },
@@ -877,7 +894,9 @@ export class SessionOrchestrator {
           action: 'recovery.completed',
           outcome: 'success',
           idempotencyKey: `recovery:${key}:completed`,
-          metadata: { toState: 'active' },
+          metadata: {
+            toState: runRecoveryRequired ? 'recovery_required' : 'active',
+          },
         },
       )
       const response = this.getSession(record)
@@ -960,6 +979,100 @@ export class SessionOrchestrator {
         )
       }
     }
+  }
+
+  #reconcileDurableRun(
+    scope: StoreScope,
+    turns: codexV2.Turn[],
+    runtimeGeneration: number,
+  ): void {
+    const active = this.#store.getActiveDurableRun(scope)
+    const latest = this.#store.getLatestDurableRun(scope)
+    let run =
+      active ??
+      (latest?.status === 'recovery_required' && latest.terminalOutcome === null
+        ? latest
+        : null)
+    if (!run) {
+      const upstreamActive = [...turns]
+        .reverse()
+        .find((turn) => turn.status === 'inProgress')
+      if (!upstreamActive) return
+      const session = this.#store.getSession(scope)
+      const runId = `run_recovery_${createHash('sha256')
+        .update(JSON.stringify([scope.sessionId, upstreamActive.id]))
+        .digest('hex')
+        .slice(0, 20)}`
+      run = this.#store.createDurableRun({
+        ...scope,
+        runId,
+        provider: session.provider,
+        runtimeGeneration,
+      })
+      run = this.#store.bindDurableRunTurn({
+        ...scope,
+        runId,
+        turnId: upstreamActive.id,
+        providerTurnId: upstreamActive.id,
+        runtimeGeneration,
+      })
+      if (
+        session.resolvedModel &&
+        session.reasoningEffort &&
+        session.capabilitySnapshot
+      )
+        this.#store.createTurn({
+          ...scope,
+          turnId: upstreamActive.id,
+          providerTurnId: upstreamActive.id,
+          provider: session.provider,
+          requestedPolicy: session.requestedPolicy,
+          resolvedModel: session.resolvedModel,
+          reasoningEffort: session.reasoningEffort,
+          capabilitySnapshot: session.capabilitySnapshot,
+          status: 'in_progress',
+        })
+    }
+    if (!run.turnId) {
+      this.#store.markDurableRunRecoveryRequired(
+        scope,
+        run.runId,
+        'RECOVERY_OUTCOME_UNKNOWN',
+        'Provider turn identity was not durable before restart; prompt was not resubmitted',
+      )
+      return
+    }
+    const turn = turns.find((candidate) => candidate.id === run.turnId)
+    if (!turn) {
+      this.#store.markDurableRunRecoveryRequired(
+        scope,
+        run.runId,
+        'RECOVERY_OUTCOME_UNKNOWN',
+        'Bound turn was absent from the provider thread snapshot; prompt was not resubmitted',
+      )
+      return
+    }
+    if (turn.status === 'inProgress') {
+      this.#store.bindDurableRunTurn({
+        ...scope,
+        runId: run.runId,
+        turnId: turn.id,
+        providerTurnId: turn.id,
+        runtimeGeneration,
+      })
+      return
+    }
+    const outcome = turn.status as 'completed' | 'failed' | 'interrupted'
+    if (['completed', 'failed', 'interrupted'].includes(outcome))
+      this.#store.finalizeDurableRun({
+        ...scope,
+        runId: run.runId,
+        outcome,
+        completeness: 'partial',
+        ...(turn.completedAt
+          ? { occurredAt: new Date(turn.completedAt * 1_000).toISOString() }
+          : {}),
+      })
   }
 
   #ingestRecoveryEnvelope(
@@ -1089,21 +1202,26 @@ export class SessionOrchestrator {
   async #interruptTurn(scope: StoreScope, turnId: string) {
     const session = this.#store.getSession(scope)
     const activeKey = this.#activeTurnKey(scope)
-    const active = this.#activeTurns.get(activeKey)
+    const run = this.#store.getActiveDurableRun(scope)
     if (!session.codexThreadId)
       throw new OrchestrationError(
         'SESSION_NOT_ACTIVE',
         'Session has no thread',
         409,
       )
-    if (!active)
-      return {
-        ...scope,
-        codexThreadId: session.codexThreadId,
-        codexTurnId: turnId,
-        status: 'interrupted' as const,
-      }
-    if (active.turnId && active.turnId !== turnId)
+    if (!run) {
+      const prior = this.#store.getDurableRunByTurn(scope, turnId)
+      if (prior?.terminalOutcome === 'interrupted')
+        return {
+          ...scope,
+          runId: prior.runId,
+          codexThreadId: session.codexThreadId,
+          codexTurnId: turnId,
+          status: 'interrupted' as const,
+        }
+      throw new OrchestrationError('NO_ACTIVE_TURN', 'Turn is not active', 409)
+    }
+    if (run.turnId && run.turnId !== turnId)
       throw new OrchestrationError(
         'ACTIVE_TURN_CONFLICT',
         'Turn is not active',
@@ -1116,14 +1234,36 @@ export class SessionOrchestrator {
         'Workspace runtime is unavailable',
         503,
       )
-    await runtime.client.request('turn/interrupt', {
-      threadId: session.codexThreadId,
-      turnId,
-    } satisfies TurnInterruptParams)
+    this.#store.markDurableRunInterrupting(scope, run.runId)
+    try {
+      await runtime.client.request('turn/interrupt', {
+        threadId: session.codexThreadId,
+        turnId,
+      } satisfies TurnInterruptParams)
+    } catch (error) {
+      this.#store.markDurableRunRecoveryRequired(
+        scope,
+        run.runId,
+        'RECOVERY_OUTCOME_UNKNOWN',
+        'Provider interrupt outcome is unknown and will not be sent again automatically',
+      )
+      throw new OrchestrationError(
+        'RECOVERY_OUTCOME_UNKNOWN',
+        'Provider interrupt outcome is unknown and will not be retried',
+        409,
+      )
+    }
+    this.#store.finalizeDurableRun({
+      ...scope,
+      runId: run.runId,
+      outcome: 'interrupted',
+      completeness: 'partial',
+    })
     this.#store.expireApprovals(scope, 'superseded')
     this.#activeTurns.delete(activeKey)
     return {
       ...scope,
+      runId: run.runId,
       codexThreadId: session.codexThreadId,
       codexTurnId: turnId,
       status: 'interrupted' as const,
@@ -1190,7 +1330,11 @@ export class SessionOrchestrator {
           ...scope,
           scope: keyScope,
           key,
-          status: 'failed',
+          status:
+            error instanceof OrchestrationError &&
+            error.code === 'RECOVERY_OUTCOME_UNKNOWN'
+              ? 'outcome_unknown'
+              : 'failed',
           response: errorPayload(error),
         })
         throw error
@@ -1265,12 +1409,47 @@ export class SessionOrchestrator {
       )
     }
 
+    const runId = this.#runIdFactory()
+    const runtime = this.#registry.get(scope)
+    try {
+      this.#store.createDurableRun({
+        ...scope,
+        runId,
+        provider: session.provider,
+        runtimeGeneration: runtime?.client.processGeneration ?? null,
+      })
+    } catch (error) {
+      if (
+        error instanceof StoreConflictError &&
+        error.code === 'SESSION_TURN_ACTIVE'
+      ) {
+        const failure = {
+          code: 'SESSION_TURN_ACTIVE',
+          message: 'Session already has an active server-owned turn',
+        }
+        this.#store.completeIdempotencyKey({
+          ...scope,
+          scope: keyScope,
+          key: idempotencyKey,
+          status: 'failed',
+          response: failure,
+        })
+        throw new OrchestrationError(failure.code, failure.message, 409)
+      }
+      throw error
+    }
     const activeTurnKey = this.#activeTurnKey(scope)
     if (this.#activeTurns.has(activeTurnKey)) {
       const failure = {
-        code: 'WORKSPACE_TURN_ACTIVE',
-        message: 'Workspace already has an active Codex turn',
+        code: 'SESSION_TURN_ACTIVE',
+        message: 'Session already has an active Codex turn',
       }
+      this.#store.finalizeDurableRun({
+        ...scope,
+        runId,
+        outcome: 'failed',
+        completeness: 'partial',
+      })
       this.#store.completeIdempotencyKey({
         ...scope,
         scope: keyScope,
@@ -1284,6 +1463,7 @@ export class SessionOrchestrator {
 
     const operation = this.#startReservedTurn(
       scope,
+      runId,
       session.codexThreadId,
       prompt,
       idempotencyKey,
@@ -1394,6 +1574,7 @@ export class SessionOrchestrator {
 
   async #startReservedTurn(
     scope: StoreScope,
+    runId: string,
     codexThreadId: string,
     prompt: string,
     idempotencyKey: string,
@@ -1458,9 +1639,17 @@ export class SessionOrchestrator {
       )
       const response = turnAcceptedResponseSchema.parse({
         ...scope,
+        runId,
         codexThreadId,
         codexTurnId: upstream.turn.id,
         idempotencyKey,
+      })
+      let run = this.#store.bindDurableRunTurn({
+        ...scope,
+        runId,
+        turnId: upstream.turn.id,
+        providerTurnId: upstream.turn.id,
+        runtimeGeneration: runtime.client.processGeneration,
       })
       this.#store.createTurn({
         ...scope,
@@ -1471,8 +1660,28 @@ export class SessionOrchestrator {
         resolvedModel: session.resolvedModel,
         reasoningEffort: session.reasoningEffort,
         capabilitySnapshot: session.capabilitySnapshot,
-        status: 'in_progress',
+        status:
+          run.terminalOutcome === null ? 'in_progress' : run.terminalOutcome,
       })
+      const terminalEvent = this.#store.findTurnTerminalOutcome(
+        scope,
+        upstream.turn.id,
+      )
+      if (terminalEvent && run.terminalOutcome === null)
+        run = this.#store.finalizeDurableRun({
+          ...scope,
+          runId,
+          outcome: terminalEvent.outcome,
+          completeness: 'partial',
+          occurredAt: terminalEvent.occurredAt,
+        })
+      if (run.terminalOutcome)
+        this.#store.completeTurn(
+          scope,
+          upstream.turn.id,
+          run.terminalOutcome,
+          run.terminalAt ?? new Date().toISOString(),
+        )
       this.#store.appendAudit({
         ...scope,
         actor: 'system',
@@ -1494,13 +1703,35 @@ export class SessionOrchestrator {
         status: 'completed',
         response,
       })
-      this.#activeTurns.set(this.#activeTurnKey(scope), {
-        sessionId: scope.sessionId,
-        turnId: upstream.turn.id,
-      })
+      if (run.terminalOutcome === null)
+        this.#activeTurns.set(this.#activeTurnKey(scope), {
+          sessionId: scope.sessionId,
+          turnId: upstream.turn.id,
+        })
       return response
     } catch (error) {
       this.#activeTurns.delete(this.#activeTurnKey(scope))
+      const outcomeUnknown =
+        error instanceof ProcessExitedError ||
+        error instanceof ProcessUnavailableError ||
+        error instanceof RequestTimeoutError
+      const run = this.#store.getDurableRun(scope, runId)
+      if (run.terminalOutcome === null) {
+        if (outcomeUnknown)
+          this.#store.markDurableRunRecoveryRequired(
+            scope,
+            runId,
+            'RECOVERY_OUTCOME_UNKNOWN',
+            'Provider turn/start may have been accepted; the prompt will not be submitted again automatically',
+          )
+        else
+          this.#store.finalizeDurableRun({
+            ...scope,
+            runId,
+            outcome: 'failed',
+            completeness: 'partial',
+          })
+      }
       const recoveryFailure = classifyRecoveryError(error)
       const turnError = recoveryFailure.permanent
         ? new OrchestrationError(
@@ -1542,7 +1773,7 @@ export class SessionOrchestrator {
         ...scope,
         scope: keyScope,
         key: idempotencyKey,
-        status: 'failed',
+        status: outcomeUnknown ? 'outcome_unknown' : 'failed',
         response: failure,
       })
       if (turnError instanceof OrchestrationError) throw turnError
@@ -1686,6 +1917,17 @@ export class SessionOrchestrator {
       event: adapted.event,
       ...(approval ? { approval } : {}),
     })
+    if (adapted.event.type === 'turn.started' && adapted.event.codexTurnId) {
+      const queued = this.#store.getActiveDurableRun(scope)
+      if (queued?.status === 'queued' && queued.turnId === null)
+        this.#store.bindDurableRunTurn({
+          ...scope,
+          runId: queued.runId,
+          turnId: adapted.event.codexTurnId,
+          providerTurnId: adapted.event.codexTurnId,
+          runtimeGeneration: runtime.client.processGeneration,
+        })
+    }
     if (
       adapted.event.type === 'token.usage.updated' &&
       adapted.event.codexTurnId
@@ -1703,10 +1945,11 @@ export class SessionOrchestrator {
             requestId: adapted.event.codexTurnId,
             dedupeKey: `codex:${delivery.ingestKey}`,
             counters: {
-              inputTokens: adapted.event.payload.last.inputTokens,
-              cachedInputTokens: adapted.event.payload.last.cachedInputTokens,
-              outputTokens: adapted.event.payload.last.outputTokens,
-              reasoningTokens: adapted.event.payload.last.reasoningOutputTokens,
+              inputTokens: adapted.event.payload.total.inputTokens,
+              cachedInputTokens: adapted.event.payload.total.cachedInputTokens,
+              outputTokens: adapted.event.payload.total.outputTokens,
+              reasoningTokens:
+                adapted.event.payload.total.reasoningOutputTokens,
               toolUnits: 0,
             },
             completeness: 'partial',
@@ -1738,21 +1981,40 @@ export class SessionOrchestrator {
         const outcome = adapted.event.payload.status as
           'completed' | 'failed' | 'interrupted'
         const session = this.#store.getSession(scope)
-        try {
-          this.#store.completeTurn(scope, turnId, outcome)
-        } catch (error) {
-          if (!(error instanceof StoreNotFoundError)) throw error
-        }
-        if (session.resolvedModel)
-          this.#store.appendUsageOutcome({
+        const run = this.#store.getDurableRunByTurn(scope, turnId)
+        if (run)
+          this.#store.finalizeDurableRun({
             ...scope,
-            turnId,
-            provider: session.provider,
-            modelId: session.resolvedModel,
-            dedupeKey: `terminal:${turnId}:${outcome}`,
+            runId: run.runId,
             outcome,
             completeness: 'partial',
             occurredAt: adapted.event.occurredAt,
+          })
+        else {
+          try {
+            this.#store.completeTurn(scope, turnId, outcome)
+          } catch (error) {
+            if (!(error instanceof StoreNotFoundError)) throw error
+          }
+          if (session.resolvedModel)
+            this.#store.appendUsageOutcome({
+              ...scope,
+              turnId,
+              provider: session.provider,
+              modelId: session.resolvedModel,
+              dedupeKey: `terminal:${turnId}:${outcome}`,
+              outcome,
+              completeness: 'partial',
+              occurredAt: adapted.event.occurredAt,
+            })
+        }
+        if (
+          session.status === 'recovery_required' &&
+          session.recoveryErrorCode === 'RECOVERY_OUTCOME_UNKNOWN'
+        )
+          this.#store.updateSessionRecovery(scope, {
+            status: 'active',
+            runtimeGeneration: runtime.client.processGeneration,
           })
       }
       this.#store.expireApprovals(scope, 'superseded')
@@ -1876,9 +2138,15 @@ export class SessionOrchestrator {
   }
 
   #activeTurnKey(
-    identity: Pick<WorkspaceRuntimeIdentity, 'tenantId' | 'workspaceId'>,
+    identity: Pick<WorkspaceRuntimeIdentity, 'tenantId' | 'workspaceId'> & {
+      sessionId: string
+    },
   ) {
-    return JSON.stringify([identity.tenantId, identity.workspaceId])
+    return JSON.stringify([
+      identity.tenantId,
+      identity.workspaceId,
+      identity.sessionId,
+    ])
   }
 }
 
