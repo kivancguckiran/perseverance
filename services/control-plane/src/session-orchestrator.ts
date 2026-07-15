@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
+import { createInterface } from 'node:readline'
 import type {
   ArtifactMetadata,
   ArtifactStorage,
@@ -33,12 +35,21 @@ import {
 } from '@persistent-codex/event-store'
 import {
   DEFAULT_CONVERSATION_POLICY,
+  DEFAULT_TITLE_POLICY,
   DEFAULT_MODEL_ALIAS_CONFIG,
   ProviderConfigurationError,
-  resolveModelPolicy,
+  resolveModelSelection,
   type ModelAliasConfig,
   type PriceCatalog,
+  type ProviderId,
+  type ProviderModelCatalog,
+  type ProviderRuntimeAdapterV1,
+  type ModelSelection,
 } from '@persistent-codex/provider-platform'
+import {
+  ClaudeCodeRuntimeAdapter,
+  GeminiCliRuntimeAdapter,
+} from '@persistent-codex/provider-cli-adapters'
 import {
   CodexAppServerError,
   ProcessExitedError,
@@ -138,6 +149,21 @@ export interface SessionOrchestratorOptions {
   artifactStorage?: ArtifactStorage
   modelAliases?: ModelAliasConfig
   priceCatalog?: PriceCatalog
+  providerCatalogs?: ProviderModelCatalog[]
+  providerAdapterFactory?: (input: {
+    provider: 'claude' | 'gemini'
+    catalog: ProviderModelCatalog
+    scope: StoreScope
+  }) => ProviderRuntimeAdapterV1
+  titleGenerator?: (input: {
+    scope: StoreScope
+    modelId: string
+    reasoningEffort: 'none'
+    messages: string[]
+  }) => Promise<{
+    title: string
+    usage?: import('@persistent-codex/provider-platform').UsageReport
+  }>
 }
 
 function threadIdOf(message: Record<string, unknown>): string | undefined {
@@ -277,6 +303,13 @@ export class SessionOrchestrator {
   readonly #onAuthTransition: SessionOrchestratorOptions['onAuthTransition']
   readonly #modelAliases: ModelAliasConfig
   readonly #priceCatalog: PriceCatalog | undefined
+  readonly #providerCatalogs: Map<ProviderId, ProviderModelCatalog>
+  readonly #providerAdapterFactory: SessionOrchestratorOptions['providerAdapterFactory']
+  readonly #titleGenerator: NonNullable<
+    SessionOrchestratorOptions['titleGenerator']
+  >
+  readonly #cliAdapters = new Map<string, ProviderRuntimeAdapterV1>()
+  readonly #titleJobsInFlight = new Set<string>()
   readonly #authStates = new Map<string, string>()
   readonly #gitReaders = new Map<string, GitSnapshotReader>()
   readonly #commandArtifacts = new Map<
@@ -330,6 +363,15 @@ export class SessionOrchestrator {
     this.#onAuthTransition = options.onAuthTransition
     this.#modelAliases = options.modelAliases ?? DEFAULT_MODEL_ALIAS_CONFIG
     this.#priceCatalog = options.priceCatalog
+    this.#providerCatalogs = new Map(
+      (options.providerCatalogs ?? []).map((catalog) => [
+        catalog.identity.provider,
+        catalog,
+      ]),
+    )
+    this.#providerAdapterFactory = options.providerAdapterFactory
+    this.#titleGenerator =
+      options.titleGenerator ?? ((input) => this.#generateCodexTitle(input))
     this.#registry = new WorkspaceRuntimeRegistry({
       ...(options.runtimeClientFactory
         ? { clientFactory: options.runtimeClientFactory }
@@ -380,6 +422,10 @@ export class SessionOrchestrator {
           this.#store.expireRuntimeApprovals(runtime)
         }
       },
+    })
+    queueMicrotask(() => {
+      for (const job of this.#store.listRunnableConversationTitleJobs())
+        this.#scheduleTitleJob(job)
     })
   }
 
@@ -501,13 +547,79 @@ export class SessionOrchestrator {
       )
   }
 
+  #cliAdapter(
+    provider: 'claude' | 'gemini',
+    scope: StoreScope,
+  ): ProviderRuntimeAdapterV1 {
+    const key = JSON.stringify([
+      scope.tenantId,
+      scope.workspaceId,
+      scope.sessionId,
+      provider,
+    ])
+    const existing = this.#cliAdapters.get(key)
+    if (existing) return existing
+    const catalog = this.#providerCatalogs.get(provider)
+    if (!catalog)
+      throw new OrchestrationError(
+        'PROVIDER_CATALOG_NOT_CONFIGURED',
+        `Configure ${provider} in PERSISTENT_PROVIDER_CATALOGS_JSON before creating this conversation`,
+        409,
+      )
+    const adapter =
+      this.#providerAdapterFactory?.({ provider, catalog, scope }) ??
+      (provider === 'claude'
+        ? new ClaudeCodeRuntimeAdapter({
+            catalog,
+            context: { ...scope, nextSequence: () => 0 },
+          })
+        : new GeminiCliRuntimeAdapter({
+            catalog,
+            context: { ...scope, nextSequence: () => 0 },
+          }))
+    this.#cliAdapters.set(key, adapter)
+    return adapter
+  }
+
+  async listProviderCatalogs(input: {
+    tenantId: string
+    workspaceId: string
+  }): Promise<ProviderModelCatalog[]> {
+    const catalogs = [...this.#providerCatalogs.values()]
+    try {
+      const cwd =
+        typeof this.#workspaceCwd === 'function'
+          ? this.#workspaceCwd(input)
+          : this.#workspaceCwd
+      const runtime = await this.#registry.getOrInitialize({
+        ...input,
+        cwd,
+        codexHome: this.#codexHome(input),
+      })
+      const adapter = new CodexProviderRuntimeAdapter({
+        transport: runtime.client,
+        events: this.#adapterFor({ ...input, sessionId: '__catalog__' }),
+        sourceVersion: this.#sourceVersion,
+      })
+      catalogs.push(await adapter.discoverModelCatalog())
+    } catch {
+      // Catalog endpoint remains useful for configured providers when Codex is unavailable.
+    }
+    return catalogs.sort((left, right) =>
+      left.identity.provider.localeCompare(right.identity.provider),
+    )
+  }
+
   async createSession(input: {
     tenantId: string
     workspaceId: string
     folderId?: string | null
     title?: string
+    provider?: ProviderId
+    model?: ModelSelection
   }): Promise<SessionResponse> {
-    await this.requireAuthReady(input)
+    const requestedProvider = input.provider ?? 'codex'
+    if (requestedProvider === 'codex') await this.requireAuthReady(input)
     const scope: StoreScope = {
       ...input,
       sessionId: this.#sessionIdFactory(),
@@ -517,26 +629,59 @@ export class SessionOrchestrator {
         ? this.#workspaceCwd(input)
         : this.#workspaceCwd
 
-    const runtime = await this.#registry.getOrInitialize({
-      ...input,
-      cwd,
-      codexHome: this.#codexHome(input),
-    })
-    const provider = new CodexProviderRuntimeAdapter({
-      transport: runtime.client,
-      events: this.#adapterFor(scope),
-      sourceVersion: this.#sourceVersion,
-    })
+    const runtime =
+      requestedProvider === 'codex'
+        ? await this.#registry.getOrInitialize({
+            ...input,
+            cwd,
+            codexHome: this.#codexHome(input),
+          })
+        : null
+    const provider =
+      requestedProvider === 'codex'
+        ? new CodexProviderRuntimeAdapter({
+            transport: runtime!.client,
+            events: this.#adapterFor(scope),
+            sourceVersion: this.#sourceVersion,
+          })
+        : this.#cliAdapter(requestedProvider, scope)
     let resolved
     try {
-      resolved = resolveModelPolicy(
-        DEFAULT_CONVERSATION_POLICY,
+      const requested =
+        input.model ??
+        (requestedProvider === 'codex'
+          ? DEFAULT_CONVERSATION_POLICY
+          : (() => {
+              const configured = this.#providerCatalogs
+                .get(requestedProvider)
+                ?.models.find((model) => model.isDefault && !model.hidden)
+              if (!configured)
+                throw new ProviderConfigurationError(
+                  'MODEL_ALIAS_UNRESOLVED',
+                  `Configure a default ${requestedProvider} model catalog before creating this conversation`,
+                )
+              return {
+                modelId: configured.modelId,
+                reasoningEffort: configured.defaultReasoningEffort,
+              }
+            })())
+      resolved = resolveModelSelection(
+        requestedProvider,
+        requested,
         this.#modelAliases,
         await provider.discoverModelCatalog(),
       )
     } catch (error) {
       if (error instanceof ProviderConfigurationError)
-        throw new OrchestrationError(error.code, error.message, 500)
+        throw new OrchestrationError(
+          error.code,
+          error.message,
+          ['REASONING_EFFORT_UNSUPPORTED', 'MODEL_ALIAS_UNRESOLVED'].includes(
+            error.code,
+          )
+            ? 409
+            : 500,
+        )
       throw error
     }
     this.#store.createSessionWithAudit(
@@ -561,6 +706,32 @@ export class SessionOrchestrator {
       },
     )
 
+    if (requestedProvider !== 'codex') {
+      const readiness = await (
+        provider as ProviderRuntimeAdapterV1
+      ).checkReadiness?.()
+      if (readiness && !readiness.ready)
+        throw new OrchestrationError(
+          readiness.code === 'auth_required'
+            ? 'AUTH_REQUIRED'
+            : 'PROVIDER_SETUP_REQUIRED',
+          readiness.instruction ?? `${requestedProvider} provider is not ready`,
+          readiness.code === 'auth_required' ? 401 : 503,
+        )
+      this.#store.updateSessionRecoveryWithAudit(
+        scope,
+        { status: 'active', runtimeGeneration: null },
+        {
+          ...scope,
+          actor: 'system',
+          action: 'session.lifecycle_changed',
+          outcome: 'success',
+          idempotencyKey: `session:${scope.sessionId}:active`,
+          metadata: { fromState: 'starting', toState: 'active' },
+        },
+      )
+      return this.getSession(scope)
+    }
     try {
       const params: ThreadStartParams = {
         cwd,
@@ -569,7 +740,7 @@ export class SessionOrchestrator {
           ? { approvalPolicy: this.#approvalPolicy }
           : {}),
       }
-      const response = await runtime.client.request<ThreadStartResponse>(
+      const response = await runtime!.client.request<ThreadStartResponse>(
         'thread/start',
         params,
       )
@@ -579,7 +750,7 @@ export class SessionOrchestrator {
         scope,
         {
           status: 'active',
-          runtimeGeneration: runtime.client.processGeneration,
+          runtimeGeneration: runtime!.client.processGeneration,
         },
         {
           ...scope,
@@ -619,7 +790,17 @@ export class SessionOrchestrator {
     const latestRun = this.#store.getLatestDurableRun(scope)
     return sessionResponseSchema.parse({
       ...session,
-      runtimeConnected: runtime?.client.health.state === 'ready',
+      runtimeConnected:
+        session.provider === 'codex'
+          ? runtime?.client.health.state === 'ready'
+          : this.#cliAdapters.has(
+              JSON.stringify([
+                scope.tenantId,
+                scope.workspaceId,
+                scope.sessionId,
+                session.provider,
+              ]),
+            ),
       activeRun,
       latestRun,
       replay: { afterSequence: 0, highWaterSequence: session.lastSequence },
@@ -1148,6 +1329,12 @@ export class SessionOrchestrator {
     prompt: string,
   ) {
     const session = this.#store.getSession(scope)
+    if (session.provider !== 'codex')
+      throw new OrchestrationError(
+        'CAPABILITY_UNSUPPORTED',
+        `${session.provider} headless adapter does not support in-flight steering`,
+        409,
+      )
     const active = this.#activeTurns.get(this.#activeTurnKey(scope))
     if (!active?.turnId)
       throw new OrchestrationError(
@@ -1203,6 +1390,29 @@ export class SessionOrchestrator {
     const session = this.#store.getSession(scope)
     const activeKey = this.#activeTurnKey(scope)
     const run = this.#store.getActiveDurableRun(scope)
+    if (session.provider !== 'codex') {
+      if (!run || (run.turnId && run.turnId !== turnId))
+        throw new OrchestrationError(
+          'NO_ACTIVE_TURN',
+          'Turn is not active',
+          409,
+        )
+      const adapter = this.#cliAdapter(session.provider, scope)
+      this.#store.markDurableRunInterrupting(scope, run.runId)
+      await adapter.interrupt({
+        schemaVersion: 1,
+        sessionId: session.codexThreadId ?? session.sessionId,
+        turnId,
+        reason: 'user',
+      })
+      return {
+        ...scope,
+        runId: run.runId,
+        codexThreadId: session.codexThreadId ?? session.sessionId,
+        codexTurnId: turnId,
+        status: 'interrupted' as const,
+      }
+    }
     if (!session.codexThreadId)
       throw new OrchestrationError(
         'SESSION_NOT_ACTIVE',
@@ -1354,8 +1564,16 @@ export class SessionOrchestrator {
     idempotencyKey: string,
     attachments: TurnAttachmentInput[] = [],
   ): Promise<TurnAcceptedResponse> {
-    await this.requireAuthReady(scope)
     const session = this.#store.getSession(scope)
+    if (session.provider !== 'codex')
+      return this.#startCliTurn(
+        scope,
+        session.provider,
+        prompt,
+        idempotencyKey,
+        attachments,
+      )
+    await this.requireAuthReady(scope)
     if (session.status !== 'active' || !session.codexThreadId) {
       throw new OrchestrationError(
         'SESSION_NOT_ACTIVE',
@@ -1476,6 +1694,360 @@ export class SessionOrchestrator {
     } finally {
       this.#turnsInFlight.delete(flightKey)
     }
+  }
+
+  async #startCliTurn(
+    scope: StoreScope,
+    provider: 'claude' | 'gemini',
+    prompt: string,
+    idempotencyKey: string,
+    attachments: TurnAttachmentInput[],
+  ): Promise<TurnAcceptedResponse> {
+    if (attachments.length > 0)
+      throw new OrchestrationError(
+        'CAPABILITY_UNSUPPORTED',
+        `${provider} attachment input is not enabled by the configured adapter`,
+        409,
+      )
+    const session = this.#store.getSession(scope)
+    if (
+      session.status !== 'active' ||
+      !session.resolvedModel ||
+      !session.reasoningEffort ||
+      !session.capabilitySnapshot
+    )
+      throw new OrchestrationError(
+        'SESSION_NOT_ACTIVE',
+        'Session model policy must be resolved before starting a turn',
+        409,
+      )
+    const keyScope = `turn:${scope.sessionId}`
+    const reservation = this.#store.reserveIdempotencyKey({
+      ...scope,
+      scope: keyScope,
+      key: idempotencyKey,
+      requestHash: requestHash(prompt, []),
+    })
+    if (!reservation.created) {
+      if (reservation.record.status === 'completed')
+        return turnAcceptedResponseSchema.parse(reservation.record.response)
+      throw new OrchestrationError(
+        'IDEMPOTENCY_REQUEST_IN_PROGRESS',
+        'An earlier request with this idempotency key is pending or failed',
+        409,
+      )
+    }
+    const runId = this.#runIdFactory()
+    const turnId = `turn_${randomUUID()}`
+    try {
+      this.#store.createDurableRun({
+        ...scope,
+        runId,
+        provider,
+        runtimeGeneration: null,
+      })
+      this.#store.bindDurableRunTurn({
+        ...scope,
+        runId,
+        turnId,
+        providerTurnId: turnId,
+        runtimeGeneration: null,
+      })
+      this.#store.createTurn({
+        ...scope,
+        turnId,
+        providerTurnId: turnId,
+        provider,
+        requestedPolicy: session.requestedPolicy,
+        resolvedModel: session.resolvedModel,
+        reasoningEffort: session.reasoningEffort,
+        capabilitySnapshot: session.capabilitySnapshot,
+        status: 'in_progress',
+      })
+      const count = this.#store.recordDurableUserMessage({
+        ...scope,
+        messageId: `msg_${turnId}`,
+        idempotencyKey,
+        content: prompt,
+      })
+      if (count >= 2) {
+        const job = this.#store.enqueueConversationTitleJob(scope)
+        if (job) this.#scheduleTitleJob(job)
+      }
+      const response = turnAcceptedResponseSchema.parse({
+        ...scope,
+        runId,
+        codexThreadId: session.codexThreadId ?? session.sessionId,
+        codexTurnId: turnId,
+        idempotencyKey,
+      })
+      this.#store.completeIdempotencyKey({
+        ...scope,
+        scope: keyScope,
+        key: idempotencyKey,
+        status: 'completed',
+        response,
+      })
+      this.#activeTurns.set(this.#activeTurnKey(scope), {
+        sessionId: scope.sessionId,
+        turnId,
+      })
+      const adapter = this.#cliAdapter(provider, scope)
+      const cwd =
+        typeof this.#workspaceCwd === 'function'
+          ? this.#workspaceCwd(scope)
+          : this.#workspaceCwd
+      let ordinal = 0
+      void adapter.startTurn!(
+        {
+          sessionId: session.codexThreadId,
+          prompt,
+          cwd,
+          modelId: session.resolvedModel,
+          reasoningEffort: session.reasoningEffort,
+        },
+        (delivery) => {
+          ordinal += 1
+          this.#store.ingest({
+            ...scope,
+            ingestKey: `${provider}:${runId}:${ordinal}:${delivery.normalized.rawEnvelopeChecksum}`,
+            raw: {
+              envelope: delivery.rawEnvelope,
+              checksum: delivery.normalized.rawEnvelopeChecksum,
+              sourceMethod: delivery.normalized.event.sourceMethod,
+              sourceVersion: adapter.identity.upstreamVersion,
+              sourceMetadata: { provider, runId, ordinal },
+              receivedAt: delivery.normalized.event.receivedAt,
+            },
+            event: delivery.normalized.event,
+          })
+          if (delivery.usage)
+            this.#store.appendUsage({
+              ...scope,
+              turnId,
+              modelId: session.resolvedModel!,
+              report: delivery.usage,
+              ...(this.#priceCatalog?.models.some(
+                (price) =>
+                  price.provider === provider &&
+                  price.modelId === session.resolvedModel,
+              )
+                ? { priceCatalog: this.#priceCatalog }
+                : {}),
+            })
+        },
+      )
+        .then((terminal) => {
+          if (!session.codexThreadId)
+            this.#store.bindCodexThread(scope, terminal.providerSessionId)
+          if (terminal.usage)
+            this.#store.appendUsage({
+              ...scope,
+              turnId,
+              modelId: session.resolvedModel!,
+              report: terminal.usage,
+              ...(this.#priceCatalog?.models.some(
+                (price) =>
+                  price.provider === provider &&
+                  price.modelId === session.resolvedModel,
+              )
+                ? { priceCatalog: this.#priceCatalog }
+                : {}),
+            })
+          this.#store.finalizeDurableRun({
+            ...scope,
+            runId,
+            outcome: terminal.outcome,
+            completeness: terminal.usage?.completeness ?? 'partial',
+          })
+          this.#store.completeTurn(scope, turnId, terminal.outcome)
+          this.#activeTurns.delete(this.#activeTurnKey(scope))
+        })
+        .catch(() => {
+          this.#store.finalizeDurableRun({
+            ...scope,
+            runId,
+            outcome: 'failed',
+            completeness: 'partial',
+          })
+          this.#store.completeTurn(scope, turnId, 'failed')
+          this.#activeTurns.delete(this.#activeTurnKey(scope))
+        })
+      return response
+    } catch (error) {
+      this.#store.completeIdempotencyKey({
+        ...scope,
+        scope: keyScope,
+        key: idempotencyKey,
+        status: 'failed',
+        response: errorPayload(error),
+      })
+      throw error
+    }
+  }
+
+  #scheduleTitleJob(scope: StoreScope): void {
+    const key = JSON.stringify([
+      scope.tenantId,
+      scope.workspaceId,
+      scope.sessionId,
+    ])
+    if (this.#titleJobsInFlight.has(key)) return
+    this.#titleJobsInFlight.add(key)
+    queueMicrotask(() => {
+      void this.#runTitleJob(scope).finally(() =>
+        this.#titleJobsInFlight.delete(key),
+      )
+    })
+  }
+
+  async #runTitleJob(scope: StoreScope): Promise<void> {
+    const job = this.#store.claimConversationTitleJob(scope)
+    if (!job) return
+    try {
+      const cwd =
+        typeof this.#workspaceCwd === 'function'
+          ? this.#workspaceCwd(scope)
+          : this.#workspaceCwd
+      const runtime = await this.#registry.getOrInitialize({
+        ...scope,
+        cwd,
+        codexHome: this.#codexHome(scope),
+      })
+      const provider = new CodexProviderRuntimeAdapter({
+        transport: runtime.client,
+        events: this.#adapterFor(scope),
+        sourceVersion: this.#sourceVersion,
+      })
+      const resolved = resolveModelSelection(
+        'codex',
+        DEFAULT_TITLE_POLICY,
+        this.#modelAliases,
+        await provider.discoverModelCatalog(),
+      )
+      const generated = await this.#titleGenerator({
+        scope,
+        modelId: resolved.modelId,
+        reasoningEffort: 'none',
+        messages: this.#store.listDurableUserMessages(scope, 2),
+      })
+      if (generated.usage)
+        this.#store.appendUsage({
+          ...scope,
+          turnId: `title:${job.jobId}`,
+          modelId: resolved.modelId,
+          report: generated.usage,
+          purpose: 'conversation_title',
+          ...(this.#priceCatalog?.models.some(
+            (price) =>
+              price.provider === 'codex' && price.modelId === resolved.modelId,
+          )
+            ? { priceCatalog: this.#priceCatalog }
+            : {}),
+        })
+      if (!this.#store.completeConversationTitleJob(scope, generated.title))
+        throw new OrchestrationError(
+          'TITLE_EMPTY_OR_MANUAL',
+          'Generated title was empty or a manual title already exists',
+          409,
+        )
+    } catch (error) {
+      const failed = this.#store.failConversationTitleJob(
+        scope,
+        error instanceof ProviderConfigurationError
+          ? error.code
+          : 'TITLE_GENERATION_FAILED',
+      )
+      if (failed?.status === 'queued')
+        setTimeout(() => this.#scheduleTitleJob(scope), 100)
+    }
+  }
+
+  async #generateCodexTitle(input: {
+    scope: StoreScope
+    modelId: string
+    reasoningEffort: 'none'
+    messages: string[]
+  }): Promise<{
+    title: string
+    usage?: import('@persistent-codex/provider-platform').UsageReport
+  }> {
+    const prompt = [
+      'Produce only a short, safe, single-line Turkish conversation title (maximum 8 words).',
+      'Do not use tools. Do not include quotes, markdown, or explanation.',
+      ...input.messages.map(
+        (message, index) => `Message ${index + 1}: ${message.slice(0, 2000)}`,
+      ),
+    ].join('\n')
+    return await new Promise((resolve, reject) => {
+      const child = spawn(
+        process.env.CODEX_BINARY ?? 'codex',
+        [
+          'exec',
+          '--json',
+          '--skip-git-repo-check',
+          '--sandbox',
+          'read-only',
+          '--model',
+          input.modelId,
+          '--config',
+          'model_reasoning_effort="none"',
+          prompt,
+        ],
+        {
+          cwd: '/private/tmp',
+          env: { ...process.env, CODEX_HOME: this.#codexHome(input.scope) },
+          stdio: ['ignore', 'pipe', 'ignore'],
+        },
+      )
+      let title = ''
+      let usage:
+        import('@persistent-codex/provider-platform').UsageReport | undefined
+      const lines = createInterface({
+        input: child.stdout,
+        crlfDelay: Infinity,
+      })
+      lines.on('line', (line) => {
+        try {
+          const event = JSON.parse(line) as Record<string, any>
+          if (
+            event.type === 'item.completed' &&
+            event.item?.type === 'agent_message' &&
+            typeof event.item.text === 'string'
+          )
+            title = event.item.text
+          if (event.type === 'turn.completed' && event.usage) {
+            usage = {
+              schemaVersion: 1,
+              kind: 'cumulative',
+              provider: 'codex',
+              requestId: `title:${input.scope.sessionId}`,
+              dedupeKey: `title:${input.scope.sessionId}:v1`,
+              counters: {
+                inputTokens: Number(event.usage.input_tokens ?? 0),
+                cachedInputTokens: Number(event.usage.cached_input_tokens ?? 0),
+                outputTokens: Number(event.usage.output_tokens ?? 0),
+                reasoningTokens: Number(
+                  event.usage.reasoning_output_tokens ?? 0,
+                ),
+                toolUnits: 0,
+              },
+              completeness: 'complete',
+              occurredAt: new Date().toISOString(),
+            }
+          }
+        } catch {
+          /* non-JSON output is never parsed as a title */
+        }
+      })
+      child.once('error', reject)
+      child.once('exit', (code) => {
+        if (code !== 0) reject(new Error('Codex title process failed'))
+        else if (!title.trim())
+          reject(new Error('Codex title output was empty'))
+        else resolve({ title, ...(usage ? { usage } : {}) })
+      })
+    })
   }
 
   async close(): Promise<void> {
@@ -1663,6 +2235,19 @@ export class SessionOrchestrator {
         status:
           run.terminalOutcome === null ? 'in_progress' : run.terminalOutcome,
       })
+      const durableMessage =
+        prompt.trim() ||
+        attachments.map((attachment) => attachment.name).join(', ')
+      const messageCount = this.#store.recordDurableUserMessage({
+        ...scope,
+        messageId: `msg_${upstream.turn.id}`,
+        idempotencyKey,
+        content: durableMessage,
+      })
+      if (messageCount >= 2) {
+        const job = this.#store.enqueueConversationTitleJob(scope)
+        if (job) this.#scheduleTitleJob(job)
+      }
       const terminalEvent = this.#store.findTurnTerminalOutcome(
         scope,
         upstream.turn.id,

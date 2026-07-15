@@ -1,0 +1,16 @@
+{
+  "name": "@persistent-codex/provider-cli-adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@persistent-codex/domain-events": "workspace:*",
+    "@persistent-codex/provider-platform": "workspace:*"
+  }
+}

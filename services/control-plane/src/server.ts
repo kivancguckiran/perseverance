@@ -40,6 +40,7 @@ import {
   gitSnapshotSchema,
   gitSnapshotListResponseSchema,
   metricsResponseSchema,
+  providerCatalogListResponseSchema,
   usageCostSummarySchema,
   serverMessageSchema,
   type ServerMessage,
@@ -49,6 +50,7 @@ import {
 import type {
   ModelAliasConfig,
   PriceCatalog,
+  ProviderModelCatalog,
 } from '@persistent-codex/provider-platform'
 import { createHash } from 'node:crypto'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
@@ -69,6 +71,7 @@ import {
   isIdempotencyConflict,
   OrchestrationError,
   SessionOrchestrator,
+  type SessionOrchestratorOptions,
 } from './session-orchestrator'
 import { BoundedMetricRecorder, metricRoute } from './metrics'
 import {
@@ -117,6 +120,9 @@ export interface ControlPlaneOptions {
   readinessProbeTimeoutMs?: number
   modelAliases?: ModelAliasConfig
   priceCatalog?: PriceCatalog
+  providerCatalogs?: ProviderModelCatalog[]
+  providerAdapterFactory?: SessionOrchestratorOptions['providerAdapterFactory']
+  titleGenerator?: SessionOrchestratorOptions['titleGenerator']
 }
 
 interface SubscriptionState extends StoreScope {
@@ -470,6 +476,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       : {}),
     ...(options.modelAliases ? { modelAliases: options.modelAliases } : {}),
     ...(options.priceCatalog ? { priceCatalog: options.priceCatalog } : {}),
+    ...(options.providerCatalogs
+      ? { providerCatalogs: options.providerCatalogs }
+      : {}),
+    ...(options.providerAdapterFactory
+      ? { providerAdapterFactory: options.providerAdapterFactory }
+      : {}),
+    ...(options.titleGenerator
+      ? { titleGenerator: options.titleGenerator }
+      : {}),
     onDeliveryError: (runtime, delivery, error) => {
       app.log.error(
         {
@@ -1132,6 +1147,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       const created = await orchestrator.createSession({
         ...scope,
+        provider: body.data.provider,
+        ...(body.data.model ? { model: body.data.model } : {}),
         ...(body.data.folderId !== undefined
           ? { folderId: body.data.folderId }
           : {}),
@@ -1168,6 +1185,18 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         }),
       )
     }
+  })
+
+  app.get('/v1/provider-catalogs', async (request, reply) => {
+    const scope = workspaceScope(request.headers)
+    if (!scope)
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    return providerCatalogListResponseSchema.parse({
+      catalogs: await orchestrator.listProviderCatalogs(scope),
+    })
   })
 
   app.get('/v1/conversation-folders', async (request, reply) => {

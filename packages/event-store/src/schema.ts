@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 10
+export const CURRENT_SCHEMA_VERSION = 11
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -27,6 +27,7 @@ export const CREATE_SCHEMA_SQL = `
     session_id TEXT NOT NULL,
     folder_id TEXT,
     title TEXT NOT NULL DEFAULT 'Yeni konuşma',
+    manual_title_at TEXT,
     provider TEXT NOT NULL DEFAULT 'codex',
     requested_policy_json TEXT NOT NULL DEFAULT '{"alias":"sol","reasoningEffort":"medium"}',
     resolved_model TEXT,
@@ -118,6 +119,7 @@ export const CREATE_SCHEMA_SQL = `
     provider TEXT NOT NULL,
     model_id TEXT NOT NULL,
     entry_kind TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'conversation_turn',
     report_kind TEXT,
     dedupe_key TEXT NOT NULL,
     reported_json TEXT NOT NULL,
@@ -137,6 +139,42 @@ export const CREATE_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS usage_ledger_session_turn_idx
     ON usage_ledger(tenant_id, workspace_id, session_id, turn_id, ledger_id);
+
+  CREATE TABLE IF NOT EXISTS conversation_user_messages (
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, workspace_id, session_id, message_id),
+    UNIQUE (tenant_id, workspace_id, session_id, idempotency_key),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS conversation_title_jobs (
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
+    attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 3 CHECK(max_attempts > 0),
+    last_error_code TEXT,
+    queued_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, workspace_id, session_id, job_id),
+    UNIQUE (tenant_id, workspace_id, session_id, idempotency_key),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
+  CREATE INDEX IF NOT EXISTS title_jobs_status_idx
+    ON conversation_title_jobs(status, updated_at);
 
   CREATE TABLE IF NOT EXISTS usage_cursors (
     tenant_id TEXT NOT NULL,
@@ -324,6 +362,9 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
     }
 
     database.exec(CREATE_SCHEMA_SQL)
+    database.exec(
+      `UPDATE conversation_title_jobs SET status='queued' WHERE status='running' AND attempt < max_attempts`,
+    )
 
     if (!hasColumn(database, 'sessions', 'recovery_error_code'))
       database.exec(`ALTER TABLE sessions ADD COLUMN recovery_error_code TEXT`)
@@ -339,6 +380,8 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
       database.exec(
         `ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT 'Yeni konuşma'`,
       )
+    if (!hasColumn(database, 'sessions', 'manual_title_at'))
+      database.exec(`ALTER TABLE sessions ADD COLUMN manual_title_at TEXT`)
     if (!hasColumn(database, 'sessions', 'provider'))
       database.exec(
         `ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'codex'`,
@@ -354,6 +397,13 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
     if (!hasColumn(database, 'sessions', 'capability_snapshot_json'))
       database.exec(
         `ALTER TABLE sessions ADD COLUMN capability_snapshot_json TEXT`,
+      )
+    if (
+      tableExists(database, 'usage_ledger') &&
+      !hasColumn(database, 'usage_ledger', 'purpose')
+    )
+      database.exec(
+        `ALTER TABLE usage_ledger ADD COLUMN purpose TEXT NOT NULL DEFAULT 'conversation_turn'`,
       )
     if (
       tableExists(database, 'conversation_folders') &&
