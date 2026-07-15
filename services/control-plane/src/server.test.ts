@@ -221,6 +221,50 @@ describe('WP10 session navigation and Git API', () => {
       expect(second.json().sessions).toHaveLength(1)
       expect(second.json().sessions[0].tenantId).toBe(scope.tenantId)
 
+      const createdFolder = await app.inject({
+        method: 'POST',
+        url: '/v1/conversation-folders',
+        headers,
+        payload: { name: 'Product' },
+      })
+      expect(createdFolder.statusCode).toBe(201)
+      expect(createdFolder.json()).toMatchObject({ name: 'Product' })
+      const folders = await app.inject({
+        method: 'GET',
+        url: '/v1/conversation-folders',
+        headers,
+      })
+      expect(folders.json().folders).toHaveLength(1)
+      const organized = await app.inject({
+        method: 'PATCH',
+        url: `/v1/sessions/${scope.sessionId}/conversation`,
+        headers,
+        payload: {
+          folderId: createdFolder.json().folderId,
+          title: 'Architecture chat',
+        },
+      })
+      expect(organized.statusCode).toBe(200)
+      expect(organized.json()).toMatchObject({
+        folderId: createdFolder.json().folderId,
+        title: 'Architecture chat',
+      })
+      const archived = await app.inject({
+        method: 'PATCH',
+        url: `/v1/conversation-folders/${createdFolder.json().folderId}`,
+        headers,
+        payload: { archived: true },
+      })
+      expect(archived.statusCode).toBe(200)
+      expect(archived.json().archivedAt).toBeTruthy()
+      const deleted = await app.inject({
+        method: 'DELETE',
+        url: `/v1/conversation-folders/${createdFolder.json().folderId}`,
+        headers,
+      })
+      expect(deleted.statusCode).toBe(204)
+      expect(store.getSession(scope).folderId).toBeNull()
+
       const mutation = await app.inject({
         method: 'POST',
         url: `/v1/sessions/${scope.sessionId}/git-snapshots/refresh`,
@@ -957,6 +1001,7 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
   failThreadStart = false
   snapshotTurns: unknown[] = []
   readonly requests: string[] = []
+  readonly turnStartParams: unknown[] = []
   readonly responses: Array<{ id: string | number; result: unknown }> = []
   readonly #notifications = new Set<
     (message: Record<string, unknown>) => void
@@ -1032,6 +1077,7 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
     }
     if (method === 'turn/start') {
       this.turnStartCalls += 1
+      this.turnStartParams.push(params)
       await new Promise((resolve) => setTimeout(resolve, 20))
       const input = params as { threadId: string }
       const identity = {
@@ -2026,11 +2072,15 @@ describe('WP4 session, turn and live event flow', () => {
     'x-workspace-id': 'wsp_live',
   }
 
-  async function setupLive(client: FakeRuntimeClient) {
+  async function setupLive(
+    client: FakeRuntimeClient,
+    options: Pick<ControlPlaneOptions, 'attachmentRoot'> = {},
+  ) {
     const current = await setup({
       workspaceCwd: '/server/configured/workspace',
       runtimeClientFactory: () => client,
       sessionIdFactory: () => 'ses_live',
+      ...options,
     })
     const response = await app!.inject({
       method: 'POST',
@@ -2299,6 +2349,81 @@ describe('WP4 session, turn and live event flow', () => {
     expect(client.turnStartCalls).toBe(1)
   })
 
+  it('resumes a persisted thread before the first turn after a control-plane restart', async () => {
+    const firstClient = new FakeRuntimeClient({ threadId: 'thr_persisted' })
+    const { current } = await setupLive(firstClient)
+    await app!.close()
+
+    const restartedClient = new FakeRuntimeClient({
+      threadId: 'thr_persisted',
+      turnId: 'turn_after_restart',
+    })
+    app = await buildControlPlane({
+      eventStore: current,
+      workspaceCwd: '/server/configured/workspace',
+      runtimeClientFactory: () => restartedClient,
+      sessionIdFactory: () => 'ses_unused',
+    })
+    await app.ready()
+
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_live/turns',
+      headers: { ...liveHeaders, 'idempotency-key': 'after-restart' },
+      payload: { prompt: 'Devam et' },
+    })
+    expect(accepted.statusCode).toBe(202)
+    expect(accepted.json()).toMatchObject({
+      codexThreadId: 'thr_persisted',
+      codexTurnId: 'turn_after_restart',
+    })
+    expect(restartedClient.requests).toEqual([
+      'account/read',
+      'thread/read',
+      'thread/resume',
+      'turn/start',
+    ])
+  })
+
+  it('moves a session to recovery_required when its bound thread is missing', async () => {
+    class MissingThreadClient extends FakeRuntimeClient {
+      override async request<TResult>(
+        method: string,
+        params: unknown,
+      ): Promise<TResult> {
+        if (method === 'turn/start')
+          throw new Error(`thread not found: ${this.fixture.threadId}`)
+        return super.request(method, params)
+      }
+    }
+    const client = new MissingThreadClient({ threadId: 'thr_missing' })
+    await setupLive(client)
+
+    const failed = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_live/turns',
+      headers: { ...liveHeaders, 'idempotency-key': 'missing-thread' },
+      payload: { prompt: 'Devam et' },
+    })
+    expect(failed.statusCode).toBe(409)
+    expect(failed.json()).toEqual({
+      code: 'THREAD_NOT_RESUMABLE',
+      message: 'The bound Codex thread cannot be read from this workspace home',
+    })
+
+    const detail = await app!.inject({
+      method: 'GET',
+      url: '/v1/sessions/ses_live',
+      headers: liveHeaders,
+    })
+    expect(detail.json()).toMatchObject({
+      codexThreadId: 'thr_missing',
+      status: 'recovery_required',
+      recoveryErrorCode: 'THREAD_NOT_RESUMABLE',
+      recoveryOptions: ['retry_resume', 'start_new_session', 'view_read_only'],
+    })
+  })
+
   it('persists fake notifications and approval requests before publishing live events', async () => {
     const client = new FakeRuntimeClient()
     const { current } = await setupLive(client)
@@ -2355,6 +2480,137 @@ describe('WP4 session, turn and live event flow', () => {
       type: 'agent.message.completed',
       payload: { text: 'Yetkili final' },
     })
+  })
+
+  it('uploads a scoped attachment and sends its canonical local path to Codex', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'attachment-api-'))
+    const client = new FakeRuntimeClient()
+    await setupLive(client, { attachmentRoot: directory })
+    const upload = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_live/attachments',
+      headers: {
+        ...liveHeaders,
+        'content-type': 'application/octet-stream',
+        'x-attachment-name': encodeURIComponent('fixture.png'),
+        'x-attachment-media-type': 'image/png',
+      },
+      payload: Buffer.from([0, 1, 2, 3]),
+    })
+    expect(upload.statusCode).toBe(201)
+    const attachment = upload.json()
+    expect(attachment).toMatchObject({
+      name: 'fixture.png',
+      mediaType: 'image/png',
+      kind: 'image',
+      byteLength: 4,
+    })
+
+    const turn = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_live/turns',
+      headers: { ...liveHeaders, 'idempotency-key': 'idem-attachment' },
+      payload: {
+        prompt: 'Bu görseli incele',
+        attachmentIds: [attachment.attachmentId],
+      },
+    })
+    expect(turn.statusCode).toBe(202)
+    expect(client.turnStartParams.at(-1)).toMatchObject({
+      input: [
+        { type: 'text', text: 'Bu görseli incele' },
+        { type: 'localImage', path: expect.stringMatching(/fixture\.png$/) },
+      ],
+    })
+  })
+
+  it('sends a file mention using a canonical path with its original extension', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'file-attachment-api-'))
+    const client = new FakeRuntimeClient()
+    await setupLive(client, { attachmentRoot: directory })
+    const upload = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_live/attachments',
+      headers: {
+        ...liveHeaders,
+        'content-type': 'application/octet-stream',
+        'x-attachment-name': encodeURIComponent('document.pdf'),
+        'x-attachment-media-type': 'application/pdf',
+      },
+      payload: Buffer.from('%PDF-1.5 fixture'),
+    })
+    expect(upload.statusCode).toBe(201)
+
+    const turn = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_live/turns',
+      headers: { ...liveHeaders, 'idempotency-key': 'idem-pdf-attachment' },
+      payload: {
+        prompt: 'Bu belgeyi incele',
+        attachmentIds: [upload.json().attachmentId],
+      },
+    })
+    expect(turn.statusCode).toBe(202)
+    expect(client.turnStartParams.at(-1)).toMatchObject({
+      input: [
+        {
+          type: 'text',
+          text: expect.stringMatching(
+            /^Bu belgeyi incele[\s\S]*<persistent-codex-attachments>[\s\S]*document\.pdf[\s\S]*<\/persistent-codex-attachments>$/,
+          ),
+        },
+        {
+          type: 'mention',
+          name: 'document.pdf',
+          path: expect.stringMatching(/document\.pdf$/),
+        },
+      ],
+    })
+  })
+
+  it('accepts more than five attachments in one turn', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'many-attachment-api-'))
+    const client = new FakeRuntimeClient()
+    await setupLive(client, { attachmentRoot: directory })
+    const uploads = await Promise.all(
+      Array.from({ length: 10 }, async (_, index) => {
+        const upload = await app!.inject({
+          method: 'POST',
+          url: '/v1/sessions/ses_live/attachments',
+          headers: {
+            ...liveHeaders,
+            'content-type': 'application/octet-stream',
+            'x-attachment-name': encodeURIComponent(`document-${index}.txt`),
+            'x-attachment-media-type': 'text/plain',
+          },
+          payload: Buffer.from(`fixture ${index}`),
+        })
+        expect(upload.statusCode).toBe(201)
+        return upload.json()
+      }),
+    )
+
+    const turn = await app!.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_live/turns',
+      headers: { ...liveHeaders, 'idempotency-key': 'idem-many-attachments' },
+      payload: {
+        prompt: 'Bu belgeleri incele',
+        attachmentIds: uploads.map((attachment) => attachment.attachmentId),
+      },
+    })
+
+    expect(turn.statusCode).toBe(202)
+    const input = (client.turnStartParams.at(-1) as { input: unknown[] }).input
+    expect(input).toHaveLength(11)
+    expect(input.slice(1)).toEqual(
+      uploads.map((attachment) =>
+        expect.objectContaining({
+          type: 'mention',
+          name: attachment.name,
+        }),
+      ),
+    )
   })
 
   it('rejects turn access from another tenant or workspace', async () => {

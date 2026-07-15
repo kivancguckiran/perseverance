@@ -194,9 +194,19 @@ export const replayResponseSchema = z.object({
   hasMore: z.boolean(),
 })
 
-export const createSessionRequestSchema = z.object({}).strict()
+export const conversationTitleSchema = z.string().trim().min(1).max(120)
+export const folderNameSchema = z.string().trim().min(1).max(80)
+
+export const createSessionRequestSchema = z
+  .object({
+    folderId: identifierSchema.nullable().optional(),
+    title: conversationTitleSchema.optional(),
+  })
+  .strict()
 
 export const sessionResponseSchema = scopeSchema.extend({
+  folderId: identifierSchema.nullable(),
+  title: conversationTitleSchema,
   provider: providerIdSchema,
   requestedPolicy: modelPolicySchema,
   resolvedModel: identifierSchema.nullable(),
@@ -220,6 +230,8 @@ export const sessionSummarySchema = sessionResponseSchema
     tenantId: true,
     workspaceId: true,
     sessionId: true,
+    folderId: true,
+    title: true,
     provider: true,
     requestedPolicy: true,
     resolvedModel: true,
@@ -237,6 +249,38 @@ export const sessionListResponseSchema = z.object({
   sessions: z.array(sessionSummarySchema),
   nextCursor: z.string().min(1).nullable(),
 })
+
+export const conversationFolderSchema = scopeSchema
+  .omit({ sessionId: true })
+  .extend({
+    folderId: identifierSchema,
+    name: folderNameSchema,
+    archivedAt: z.iso.datetime().nullable(),
+    createdAt: z.iso.datetime(),
+    updatedAt: z.iso.datetime(),
+  })
+
+export const createConversationFolderRequestSchema = z
+  .object({ name: folderNameSchema })
+  .strict()
+export const conversationFolderListResponseSchema = z.object({
+  folders: z.array(conversationFolderSchema),
+})
+export const updateConversationFolderRequestSchema = z
+  .object({ archived: z.boolean() })
+  .strict()
+export const updateConversationRequestSchema = z
+  .object({
+    folderId: identifierSchema.nullable().optional(),
+    title: conversationTitleSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.folderId !== undefined || value.title !== undefined,
+    {
+      message: 'folderId or title is required',
+    },
+  )
 
 export const auditActorSchema = z.enum(['user', 'system', 'runtime'])
 export const auditActionSchema = z.enum([
@@ -340,9 +384,35 @@ export const gitSnapshotListResponseSchema = z.object({
   snapshots: z.array(gitSnapshotSchema),
 })
 
-export const createTurnRequestSchema = z.object({
-  prompt: z.string().trim().min(1).max(100_000),
+export const attachmentMediaTypeSchema = z.enum([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'text/plain',
+  'text/markdown',
+  'application/json',
+  'application/pdf',
+])
+export const attachmentContextStart = '<persistent-codex-attachments>'
+export const attachmentContextEnd = '</persistent-codex-attachments>'
+export const conversationAttachmentSchema = scopeSchema.extend({
+  attachmentId: identifierSchema,
+  name: z.string().trim().min(1).max(255),
+  mediaType: attachmentMediaTypeSchema,
+  byteLength: z.number().int().positive(),
+  kind: z.enum(['image', 'file']),
+  createdAt: z.iso.datetime(),
 })
+export const createTurnRequestSchema = z
+  .object({
+    prompt: z.string().trim().max(100_000),
+    attachmentIds: z.array(identifierSchema).default([]),
+  })
+  .refine(
+    (value) => value.prompt.length > 0 || value.attachmentIds.length > 0,
+    { message: 'prompt or attachment is required' },
+  )
 export const steerTurnRequestSchema = z.object({
   expectedTurnId: identifierSchema,
   prompt: z.string().trim().min(1).max(100_000),
@@ -408,11 +478,27 @@ export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>
 export type SessionResponse = z.infer<typeof sessionResponseSchema>
 export type SessionSummary = z.infer<typeof sessionSummarySchema>
 export type SessionListResponse = z.infer<typeof sessionListResponseSchema>
+export type ConversationFolder = z.infer<typeof conversationFolderSchema>
+export type ConversationFolderListResponse = z.infer<
+  typeof conversationFolderListResponseSchema
+>
+export type CreateConversationFolderRequest = z.infer<
+  typeof createConversationFolderRequestSchema
+>
+export type UpdateConversationFolderRequest = z.infer<
+  typeof updateConversationFolderRequestSchema
+>
+export type UpdateConversationRequest = z.infer<
+  typeof updateConversationRequestSchema
+>
 export type GitSnapshot = z.infer<typeof gitSnapshotSchema>
 export type GitSnapshotListResponse = z.infer<
   typeof gitSnapshotListResponseSchema
 >
 export type CreateTurnRequest = z.infer<typeof createTurnRequestSchema>
+export type ConversationAttachment = z.infer<
+  typeof conversationAttachmentSchema
+>
 export type TurnAcceptedResponse = z.infer<typeof turnAcceptedResponseSchema>
 export type SteerTurnRequest = z.infer<typeof steerTurnRequestSchema>
 export type TurnActionResponse = z.infer<typeof turnActionResponseSchema>

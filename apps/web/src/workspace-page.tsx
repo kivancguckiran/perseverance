@@ -1,9 +1,13 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import {
+  attachmentContextStart,
   serverMessageSchema,
   approvalListResponseSchema,
   approvalSchema,
   artifactDownloadTokenSchema,
+  conversationAttachmentSchema,
+  conversationFolderListResponseSchema,
+  conversationFolderSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
   turnActionResponseSchema,
@@ -18,11 +22,14 @@ import {
   type ReadinessResponse,
   type GitSnapshot,
   type AuditRecord,
+  type ConversationFolder,
+  type ConversationAttachment,
+  type SessionSummary,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 
 interface PlatformMeta {
   service: string
@@ -31,15 +38,43 @@ interface PlatformMeta {
   transport: string
 }
 
+const MessageMarkdown = lazy(() => import('./message-markdown'))
+
 const apiBaseUrl =
   (import.meta.env.VITE_CONTROL_PLANE_URL as string | undefined) ??
   'http://127.0.0.1:3100'
 const tenantId = 'ten_local'
 const workspaceId = 'wsp_local'
+const historyDesktopMediaQuery = '(min-width: 1100px)'
 const scopeHeaders = {
   'content-type': 'application/json',
   'x-tenant-id': tenantId,
   'x-workspace-id': workspaceId,
+}
+
+const supportedAttachmentTypes = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'text/plain',
+  'text/markdown',
+  'application/json',
+  'application/pdf',
+])
+
+export function attachmentMediaType(file: Pick<File, 'name' | 'type'>) {
+  if (supportedAttachmentTypes.has(file.type)) return file.type
+  const extension = file.name.toLowerCase().split('.').pop()
+  return extension === 'md'
+    ? 'text/markdown'
+    : extension === 'json'
+      ? 'application/json'
+      : extension === 'txt'
+        ? 'text/plain'
+        : extension === 'pdf'
+          ? 'application/pdf'
+          : undefined
 }
 
 async function readPlatformMeta(): Promise<PlatformMeta> {
@@ -95,6 +130,14 @@ async function readRecentSessions(cursor: string | null) {
   })
   if (!response.ok) throw await apiError(response)
   return sessionListResponseSchema.parse(await response.json())
+}
+
+async function readConversationFolders() {
+  const response = await fetch(`${apiBaseUrl}/v1/conversation-folders`, {
+    headers: scopeHeaders,
+  })
+  if (!response.ok) throw await apiError(response)
+  return conversationFolderListResponseSchema.parse(await response.json())
 }
 
 async function readGitSnapshots(sessionId: string) {
@@ -305,7 +348,7 @@ function GitPanel({
   )
 }
 
-interface TimelineCard {
+export interface TimelineCard {
   key: string
   event: TimelineEvent
   text?: string
@@ -428,7 +471,264 @@ function reconcile(events: TimelineEvent[]): TimelineCard[] {
   )
 }
 
+export interface ConversationMessage {
+  key: string
+  role: 'user' | 'assistant'
+  text: string
+  sequence: number
+  turnId?: string
+  attachments?: Array<{ kind: 'image' | 'file'; name: string }>
+}
+
+function userMessageContent(event: TimelineEvent):
+  | {
+      text: string
+      attachments: Array<{ kind: 'image' | 'file'; name: string }>
+    }
+  | undefined {
+  if (
+    event.type !== 'codex.unknown' ||
+    (event.payload.method !== 'item/started' &&
+      event.payload.method !== 'item/completed') ||
+    !isRecord(event.payload.params)
+  )
+    return undefined
+  const item = event.payload.params.item
+  if (!isRecord(item) || item.type !== 'userMessage') return undefined
+  if (!Array.isArray(item.content)) return undefined
+  const rawText = item.content
+    .map((part) =>
+      isRecord(part) && typeof part.text === 'string' ? part.text : '',
+    )
+    .join('')
+    .trim()
+  const markerIndex = rawText.indexOf(attachmentContextStart)
+  const text = (
+    markerIndex >= 0 ? rawText.slice(0, markerIndex) : rawText
+  ).trim()
+  const attachments: Array<{ kind: 'image' | 'file'; name: string }> = []
+  for (const part of item.content) {
+    if (!isRecord(part) || typeof part.type !== 'string') continue
+    if (part.type === 'localImage' || part.type === 'image') {
+      const source =
+        typeof part.path === 'string'
+          ? part.path
+          : typeof part.url === 'string'
+            ? part.url
+            : ''
+      attachments.push({
+        kind: 'image',
+        name: source.split(/[\\/]/).pop() || 'Görsel',
+      })
+      continue
+    }
+    if (part.type === 'mention' && typeof part.name === 'string')
+      attachments.push({ kind: 'file', name: part.name })
+  }
+  return text || attachments.length > 0 ? { text, attachments } : undefined
+}
+
+function userMessageText(event: TimelineEvent): string | undefined {
+  return userMessageContent(event)?.text
+}
+
+export function conversationMessages(
+  events: TimelineEvent[],
+): ConversationMessage[] {
+  const messages = new Map<string, ConversationMessage>()
+  for (const event of events) {
+    const userContent = userMessageContent(event)
+    if (userContent) {
+      const key = event.codexItemId ?? event.eventId
+      messages.set(key, {
+        key,
+        role: 'user',
+        text: userContent.text,
+        sequence: event.sequence,
+        ...(userContent.attachments.length > 0
+          ? { attachments: userContent.attachments }
+          : {}),
+        ...(event.codexTurnId ? { turnId: event.codexTurnId } : {}),
+      })
+    }
+  }
+  for (const card of reconcile(events)) {
+    if (
+      card.event.type !== 'agent.message.delta' &&
+      card.event.type !== 'agent.message.completed'
+    )
+      continue
+    const text = card.text?.trim()
+    if (!text) continue
+    messages.set(card.key, {
+      key: card.key,
+      role: 'assistant',
+      text,
+      sequence: card.event.sequence,
+      ...(card.event.codexTurnId ? { turnId: card.event.codexTurnId } : {}),
+    })
+  }
+  return [...messages.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  )
+}
+
+export interface ConversationWork {
+  key: string
+  role: 'work'
+  cards: TimelineCard[]
+  sequence: number
+  running: boolean
+}
+
+export type ConversationFeedItem = ConversationMessage | ConversationWork
+
+function workKey(cards: TimelineCard[]): string {
+  const first = cards[0]!
+  return `work:${first.event.codexTurnId ?? first.key}`
+}
+
+function isMessageCard(card: TimelineCard): boolean {
+  if (
+    card.event.type === 'agent.message.delta' ||
+    card.event.type === 'agent.message.completed'
+  )
+    return true
+  return Boolean(userMessageText(card.event))
+}
+
+function isHousekeepingCard(card: TimelineCard): boolean {
+  if (
+    card.event.type === 'token.usage.updated' ||
+    card.event.type === 'turn.completed'
+  )
+    return true
+  return (
+    card.event.type === 'codex.unknown' &&
+    (card.event.payload.method === 'thread/status/changed' ||
+      card.event.payload.method === 'turn/completed')
+  )
+}
+
+export function conversationFeed(
+  events: TimelineEvent[],
+): ConversationFeedItem[] {
+  const messages = conversationMessages(events)
+  const cards = reconcile(events).filter((card) => !isMessageCard(card))
+  const assistantMessages = messages.filter(
+    (message) => message.role === 'assistant',
+  )
+  const work: ConversationWork[] = []
+  const claimedCards = new Set<string>()
+  const workKeyCounts = new Map<string, number>()
+  let turnIsActive = false
+  let activeTurnId: string | undefined
+  for (const event of events) {
+    if (event.type === 'turn.started') {
+      turnIsActive = true
+      activeTurnId = event.codexTurnId
+    }
+    if (event.type === 'turn.completed') {
+      turnIsActive = false
+      activeTurnId = undefined
+    }
+  }
+  const nextWorkKey = (segment: TimelineCard[]) => {
+    const base = workKey(segment)
+    const count = workKeyCounts.get(base) ?? 0
+    workKeyCounts.set(base, count + 1)
+    return count === 0 ? base : `${base}:${count + 1}`
+  }
+  let afterSequence = -1
+  for (const assistant of assistantMessages) {
+    const segment = cards.filter(
+      (card) =>
+        !claimedCards.has(card.key) &&
+        card.event.sequence > afterSequence &&
+        card.event.sequence <= assistant.sequence,
+    )
+    if (segment.length) {
+      for (const card of segment) claimedCards.add(card.key)
+      work.push({
+        key: nextWorkKey(segment),
+        role: 'work',
+        cards: segment,
+        sequence: assistant.sequence - 0.5,
+        running: false,
+      })
+    }
+    afterSequence = assistant.sequence
+  }
+  const trailing = cards.filter(
+    (card) =>
+      card.event.sequence > afterSequence && !claimedCards.has(card.key),
+  )
+  if (trailing.length && trailing.some((card) => !isHousekeepingCard(card))) {
+    const last = trailing.at(-1)!
+    const lastMessageSequence = messages.at(-1)?.sequence ?? -1
+    work.push({
+      key: nextWorkKey(trailing),
+      role: 'work',
+      cards: trailing,
+      sequence: Math.max(last.event.sequence, lastMessageSequence) + 0.5,
+      running: turnIsActive,
+    })
+  }
+  if (turnIsActive && !work.some((item) => item.running)) {
+    const lastSequence = Math.max(
+      events.at(-1)?.sequence ?? -1,
+      messages.at(-1)?.sequence ?? -1,
+    )
+    work.push({
+      key: `work:${activeTurnId ?? 'active'}:pending`,
+      role: 'work',
+      cards: [],
+      sequence: lastSequence + 0.5,
+      running: true,
+    })
+  }
+  return [...messages, ...work].sort(
+    (left, right) => left.sequence - right.sequence,
+  )
+}
+
+export function shouldSubmitComposer(input: {
+  key: string
+  shiftKey: boolean
+  isComposing: boolean
+}): boolean {
+  return input.key === 'Enter' && !input.shiftKey && !input.isComposing
+}
+
+export function isNearScrollEnd(
+  metrics: { scrollHeight: number; scrollTop: number; clientHeight: number },
+  threshold = 120,
+): boolean {
+  return (
+    metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= threshold
+  )
+}
+
+export function chatFollowStateAfterScroll(input: {
+  wasFollowing: boolean
+  previousScrollTop: number | null
+  scrollHeight: number
+  scrollTop: number
+  clientHeight: number
+}): boolean {
+  if (
+    input.previousScrollTop !== null &&
+    input.scrollTop < input.previousScrollTop - 1
+  )
+    return false
+  if (isNearScrollEnd(input, 24)) return true
+  return input.wasFollowing
+}
+
 function titleOf(event: TimelineEvent): string {
+  if (event.type === 'codex.unknown') {
+    return unknownEventTitle(event.payload.method)
+  }
   const titles: Partial<Record<TimelineEvent['type'], string>> = {
     'turn.started': 'Turn başladı',
     'turn.completed': 'Turn tamamlandı',
@@ -447,12 +747,137 @@ function titleOf(event: TimelineEvent): string {
     'tool.completed': 'Tool tamamlandı',
     'token.usage.updated': 'Token kullanımı',
     'error.reported': 'Hata',
-    'codex.unknown': 'Bilinmeyen Codex olayı',
     'approval.requested': 'Onay bekleniyor',
     'approval.resolved': 'Onay çözüldü',
     'context.compacted': 'Context compact edildi',
   }
   return titles[event.type] ?? event.type
+}
+
+const unknownEventTitles: Record<string, string> = {
+  'thread/started': 'Codex task’ı başlatıldı',
+  'thread/status/changed': 'Task durumu değişti',
+  'turn/started': 'Turn başladı',
+  'turn/completed': 'Turn tamamlandı',
+  'item/started': 'İşlem başladı',
+  'item/completed': 'İşlem tamamlandı',
+  'mcpServer/startupStatus/updated': 'Araç bağlantıları hazırlanıyor',
+  warning: 'Codex uyarısı',
+}
+
+function unknownEventTitle(method: string): string {
+  return unknownEventTitles[method] ?? 'Codex olayı'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function firstString(
+  value: unknown,
+  keys: readonly string[],
+): string | undefined {
+  if (!isRecord(value)) return undefined
+  for (const key of keys) {
+    const candidate = value[key]
+    if (typeof candidate === 'string' && candidate.trim()) return candidate
+  }
+  return undefined
+}
+
+function unknownEventSummary(
+  event: Extract<TimelineEvent, { type: 'codex.unknown' }>,
+) {
+  const params = event.payload.params
+  const direct = firstString(params, [
+    'message',
+    'status',
+    'state',
+    'serverName',
+    'name',
+  ])
+  if (direct) return direct
+  if (isRecord(params)) {
+    const nested = firstString(params.thread, ['status', 'state'])
+    if (nested) return nested
+    const itemType = firstString(params.item, ['type', 'kind', 'name'])
+    if (itemType) return itemType
+  }
+  return event.payload.method
+}
+
+export interface TimelineEventPresentation {
+  title: string
+  summary: string
+  tone: 'activity' | 'content' | 'success' | 'warning' | 'error'
+  expanded: boolean
+}
+
+export function describeTimelineEvent(
+  card: TimelineCard,
+): TimelineEventPresentation {
+  const { event } = card
+  if (event.type === 'codex.unknown') {
+    const method = event.payload.method
+    return {
+      title: unknownEventTitle(method),
+      summary: unknownEventSummary(event),
+      tone: method === 'warning' ? 'warning' : 'activity',
+      expanded: false,
+    }
+  }
+  const content =
+    event.type === 'agent.message.delta' ||
+    event.type === 'agent.message.completed' ||
+    event.type === 'reasoning.summary.delta' ||
+    event.type === 'plan.delta' ||
+    event.type === 'plan.completed' ||
+    event.type === 'command.output.delta' ||
+    event.type === 'command.completed' ||
+    event.type === 'file.change.proposed' ||
+    event.type === 'file.change.completed' ||
+    event.type === 'diff.updated'
+  const tone =
+    event.type === 'error.reported'
+      ? 'error'
+      : event.type === 'approval.requested'
+        ? 'warning'
+        : event.type === 'turn.completed' ||
+            event.type === 'tool.completed' ||
+            event.type === 'approval.resolved'
+          ? 'success'
+          : content
+            ? 'content'
+            : 'activity'
+  return {
+    title: titleOf(event),
+    summary: detailOf(card),
+    tone,
+    expanded: content,
+  }
+}
+
+function technicalDetailOf(event: TimelineEvent): string {
+  const metadata = {
+    type: event.type,
+    sourceMethod: event.sourceMethod,
+    sequence: event.sequence,
+    occurredAt: event.occurredAt,
+    codexThreadId: event.codexThreadId,
+    codexTurnId: event.codexTurnId,
+    codexItemId: event.codexItemId,
+  }
+  if (event.type !== 'codex.unknown') return JSON.stringify(metadata, null, 2)
+  return JSON.stringify(
+    {
+      ...metadata,
+      envelopeKind: event.payload.envelopeKind,
+      method: event.payload.method,
+      params: event.payload.params,
+    },
+    null,
+    2,
+  )
 }
 
 function detailOf(card: TimelineCard): string {
@@ -502,21 +927,45 @@ function detailOf(card: TimelineCard): string {
 
 function TimelineEntry({ card }: { card: TimelineCard }) {
   const approvalEvent = card.event.type === 'approval.requested'
+  const presentation = describeTimelineEvent(card)
   const artifactId =
     card.event.type === 'command.completed'
       ? card.event.payload.output.artifact?.artifactId
       : undefined
   return (
     <article
-      className={`timeline-card event-${card.event.type.replaceAll('.', '-')} ${
+      className={`timeline-card timeline-tone-${presentation.tone} event-${card.event.type.replaceAll('.', '-')} ${
         approvalEvent ? 'is-approval' : ''
       }`}
     >
-      <div className="card-heading">
-        <strong>{titleOf(card.event)}</strong>
-        <span>#{card.event.sequence}</span>
-      </div>
-      <pre>{detailOf(card)}</pre>
+      <details className="timeline-event" open={presentation.expanded}>
+        <summary className="timeline-event-summary">
+          <span className="timeline-event-marker" aria-hidden="true" />
+          <span className="timeline-event-label">
+            <strong>{presentation.title}</strong>
+            {!presentation.expanded ? (
+              <span>{presentation.summary}</span>
+            ) : null}
+          </span>
+          <span className="timeline-event-sequence">
+            #{card.event.sequence}
+          </span>
+          <span className="timeline-event-chevron" aria-hidden="true" />
+        </summary>
+        <div className="timeline-event-body">
+          {presentation.expanded ? (
+            <>
+              <pre>{presentation.summary}</pre>
+              <details className="timeline-technical-details">
+                <summary>Teknik detaylar</summary>
+                <pre>{technicalDetailOf(card.event)}</pre>
+              </details>
+            </>
+          ) : (
+            <pre>{technicalDetailOf(card.event)}</pre>
+          )}
+        </div>
+      </details>
       {card.event.type === 'command.completed' && artifactId ? (
         <div className="artifact-actions">
           <span>
@@ -532,6 +981,159 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
         </div>
       ) : null}
     </article>
+  )
+}
+
+function compactWorkSummary(card: TimelineCard): string {
+  const value = describeTimelineEvent(card).summary.split('\n')[0]?.trim() ?? ''
+  return value.length > 90 ? `${value.slice(0, 87)}…` : value
+}
+
+function commandActivity(command: string, running: boolean): string {
+  const value = command.toLocaleLowerCase('en-US')
+  if (
+    /\b(vitest|jest|pytest|cargo test|go test|pnpm test|npm test)\b/.test(value)
+  )
+    return running ? 'Testleri çalıştırıyor' : 'Testleri çalıştırdı'
+  if (/\b(typecheck|tsc|build|lint|prettier)\b/.test(value))
+    return running ? 'Değişiklikleri doğruluyor' : 'Değişiklikleri doğruladı'
+  if (/\b(install|add)\b/.test(value))
+    return running ? 'Bağımlılıkları hazırlıyor' : 'Bağımlılıkları hazırladı'
+  if (/\b(rg|grep|find|ls|sed|git status|git diff)\b/.test(value))
+    return running ? 'Çalışma alanını inceliyor' : 'Çalışma alanını inceledi'
+  return running ? 'Bir komut çalıştırıyor' : 'Komutları tamamladı'
+}
+
+export function describeConversationWork(work: ConversationWork): string {
+  const { cards, running } = work
+  if (running && cards.length === 0) return 'Düşünüyor'
+  const unknownKinds = cards
+    .filter(
+      (
+        card,
+      ): card is TimelineCard & {
+        event: Extract<TimelineEvent, { type: 'codex.unknown' }>
+      } => card.event.type === 'codex.unknown',
+    )
+    .map((card) => unknownEventSummary(card.event).toLocaleLowerCase('en-US'))
+  const command = [...cards]
+    .reverse()
+    .find(
+      (card) =>
+        card.event.type === 'command.proposed' ||
+        card.event.type === 'command.completed',
+    )
+  const hasFileChange = cards.some(
+    (card) =>
+      card.event.type === 'file.change.proposed' ||
+      card.event.type === 'file.change.completed' ||
+      card.event.type === 'diff.updated',
+  )
+  const tool = [...cards]
+    .reverse()
+    .find(
+      (card) =>
+        card.event.type === 'tool.started' ||
+        card.event.type === 'tool.completed',
+    )
+  if (running && command) {
+    const event = command.event
+    return commandActivity(
+      event.type === 'command.proposed' || event.type === 'command.completed'
+        ? event.payload.command
+        : '',
+      true,
+    )
+  }
+  if (hasFileChange)
+    return running
+      ? 'Kod değişikliklerini uyguluyor'
+      : 'Kod değişikliklerini uyguladı'
+  if (command) {
+    const event = command.event
+    return commandActivity(
+      event.type === 'command.proposed' || event.type === 'command.completed'
+        ? event.payload.command
+        : '',
+      running,
+    )
+  }
+  if (tool) {
+    const event = tool.event
+    const toolName =
+      event.type === 'tool.started' || event.type === 'tool.completed'
+        ? event.payload.tool.toLocaleLowerCase('en-US')
+        : ''
+    if (/search|web|browser/.test(toolName))
+      return running ? 'Kaynakları araştırıyor' : 'Kaynakları araştırdı'
+    if (/\b(rg|grep|find|read|filesystem)\b/.test(toolName))
+      return running ? 'Çalışma alanını inceliyor' : 'Çalışma alanını inceledi'
+    return running ? 'Araçları kullanıyor' : 'Araç işlemlerini tamamladı'
+  }
+  if (unknownKinds.some((kind) => /websearch|search|browser/.test(kind)))
+    return running ? 'Kaynakları araştırıyor' : 'Kaynakları araştırdı'
+  if (unknownKinds.some((kind) => /reasoning|plan/.test(kind)))
+    return running ? 'Yaklaşımı değerlendiriyor' : 'Yaklaşımı değerlendirdi'
+  if (
+    cards.some(
+      (card) =>
+        card.event.type === 'codex.unknown' &&
+        card.event.payload.method === 'mcpServer/startupStatus/updated',
+    )
+  )
+    return running
+      ? 'Çalışma ortamını hazırlıyor'
+      : 'Çalışma ortamını hazırladı'
+  if (
+    cards.some(
+      (card) =>
+        card.event.type === 'plan.delta' ||
+        card.event.type === 'plan.completed' ||
+        card.event.type === 'reasoning.summary.delta',
+    )
+  )
+    return running ? 'Yaklaşımı değerlendiriyor' : 'Yaklaşımı değerlendirdi'
+  return running ? 'Yanıtı hazırlıyor' : 'Yanıtı hazırladı'
+}
+
+function ConversationWorkBlock({ work }: { work: ConversationWork }) {
+  const [expanded, setExpanded] = useState(false)
+  const visibleCards = work.cards.slice(-8)
+  return (
+    <details
+      className={`chat-work ${work.running ? 'is-running' : ''}`}
+      open={expanded}
+      onToggle={(event) => setExpanded(event.currentTarget.open)}
+    >
+      <summary>
+        <span className="chat-work-icon" aria-hidden="true">
+          <span />
+        </span>
+        <span className="chat-work-label">
+          <strong>{describeConversationWork(work)}</strong>
+          {work.running ? (
+            <span className="chat-work-loading" aria-label="Devam ediyor">
+              <i />
+              <i />
+              <i />
+            </span>
+          ) : null}
+        </span>
+        <span className="chat-work-chevron" aria-hidden="true" />
+      </summary>
+      <ol>
+        {visibleCards.map((card) => (
+          <li key={card.key}>
+            <span aria-hidden="true" />
+            <strong>{describeTimelineEvent(card).title}</strong>
+            <small>{compactWorkSummary(card)}</small>
+          </li>
+        ))}
+      </ol>
+      {work.cards.length > visibleCards.length ? (
+        <p>{work.cards.length - visibleCards.length} eski işlem gizlendi.</p>
+      ) : null}
+    </details>
   )
 }
 
@@ -631,6 +1233,207 @@ function ApprovalCard({
   )
 }
 
+function ConversationHistory({
+  folders,
+  sessions,
+  activeSessionId,
+  folderName,
+  folderPending,
+  folderActionPending,
+  onFolderNameChange,
+  onCreateFolder,
+  onNewConversation,
+  onSelectConversation,
+  onSelectFolder,
+  onArchiveFolder,
+  onRestoreFolder,
+  onDeleteFolder,
+}: {
+  folders: ConversationFolder[]
+  sessions: SessionSummary[]
+  activeSessionId?: string
+  folderName: string
+  folderPending: boolean
+  folderActionPending?: string
+  onFolderNameChange(value: string): void
+  onCreateFolder(): void
+  onNewConversation(folderId: string | null): void
+  onSelectConversation(sessionId: string): void
+  onSelectFolder(folderId: string | null): void
+  onArchiveFolder(folder: ConversationFolder): void
+  onRestoreFolder(folder: ConversationFolder): void
+  onDeleteFolder(folder: ConversationFolder): void
+}) {
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const activeFolders = folders.filter((folder) => !folder.archivedAt)
+  const archivedFolders = folders.filter((folder) => folder.archivedAt)
+  const groups = [
+    ...activeFolders.map((folder) => ({
+      folderId: folder.folderId as string | null,
+      name: folder.name,
+    })),
+    { folderId: null, name: 'Diğer konuşmalar' },
+  ]
+  return (
+    <section className="conversation-history" aria-label="Conversation history">
+      <div className="history-brand">
+        <span className="history-logo" aria-hidden="true">
+          C
+        </span>
+        <strong>Conversations</strong>
+      </div>
+      <div className="history-actions">
+        <button
+          className="new-conversation-button"
+          type="button"
+          onClick={() => onNewConversation(null)}
+        >
+          <span aria-hidden="true">＋</span> Yeni sohbet
+        </button>
+        <button
+          className="new-folder-button"
+          type="button"
+          aria-expanded={creatingFolder}
+          onClick={() => setCreatingFolder((open) => !open)}
+        >
+          <span aria-hidden="true">▱</span> Yeni folder
+        </button>
+      </div>
+      {creatingFolder ? (
+        <form
+          className="folder-create-row"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (!folderName.trim() || folderPending) return
+            onCreateFolder()
+            setCreatingFolder(false)
+          }}
+        >
+          <input
+            autoFocus
+            aria-label="Yeni folder adı"
+            value={folderName}
+            onChange={(event) => onFolderNameChange(event.target.value)}
+            placeholder="Folder adı"
+            maxLength={80}
+          />
+          <button
+            type="submit"
+            disabled={!folderName.trim() || folderPending}
+            aria-label="Folder oluştur"
+          >
+            {folderPending ? '…' : 'Ekle'}
+          </button>
+        </form>
+      ) : null}
+      <div className="history-folders">
+        {groups.map((group) => {
+          const groupedSessions = sessions.filter(
+            (item) => item.folderId === group.folderId,
+          )
+          if (group.folderId === null && groupedSessions.length === 0)
+            return null
+          return (
+            <details
+              className="history-folder"
+              key={group.folderId ?? 'none'}
+              open
+            >
+              <summary>
+                <span aria-hidden="true">▾</span>
+                <strong>{group.name}</strong>
+                <small>{groupedSessions.length}</small>
+                {group.folderId ? (
+                  <span className="history-folder-actions">
+                    <button
+                      type="button"
+                      aria-label={`${group.name} içinde yeni sohbet`}
+                      title="Yeni sohbet"
+                      onClick={(event) => {
+                        event.preventDefault()
+                        onSelectFolder(group.folderId)
+                        onNewConversation(group.folderId)
+                      }}
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      disabled={folderActionPending === group.folderId}
+                      aria-label={`${group.name} folder'ını arşivle`}
+                      title="Arşivle"
+                      onClick={(event) => {
+                        event.preventDefault()
+                        const folder = activeFolders.find(
+                          (item) => item.folderId === group.folderId,
+                        )
+                        if (folder) onArchiveFolder(folder)
+                      }}
+                    >
+                      ↓
+                    </button>
+                  </span>
+                ) : null}
+              </summary>
+              <div className="history-conversations">
+                {groupedSessions.map((item) => (
+                  <button
+                    type="button"
+                    key={item.sessionId}
+                    className={
+                      item.sessionId === activeSessionId ? 'is-active' : ''
+                    }
+                    onClick={() => onSelectConversation(item.sessionId)}
+                  >
+                    <span>{item.title}</span>
+                    <small>{item.status}</small>
+                  </button>
+                ))}
+                {groupedSessions.length === 0 ? (
+                  <p>Henüz konuşma yok.</p>
+                ) : null}
+              </div>
+            </details>
+          )
+        })}
+        {archivedFolders.length ? (
+          <details className="archived-folders">
+            <summary>Arşivlenenler · {archivedFolders.length}</summary>
+            {archivedFolders.map((folder) => {
+              const groupedSessions = sessions.filter(
+                (item) => item.folderId === folder.folderId,
+              )
+              return (
+                <div className="archived-folder" key={folder.folderId}>
+                  <div>
+                    <strong>{folder.name}</strong>
+                    <small>{groupedSessions.length} sohbet</small>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={folderActionPending === folder.folderId}
+                    onClick={() => onRestoreFolder(folder)}
+                  >
+                    Geri al
+                  </button>
+                  <button
+                    className="danger-button"
+                    type="button"
+                    disabled={folderActionPending === folder.folderId}
+                    onClick={() => onDeleteFolder(folder)}
+                  >
+                    Sil
+                  </button>
+                </div>
+              )
+            })}
+          </details>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const navigate = useNavigate()
   const meta = useQuery({
@@ -649,6 +1452,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryFn: ({ pageParam }) => readRecentSessions(pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
+  })
+  const conversationFolders = useQuery({
+    queryKey: ['conversation-folders'],
+    queryFn: readConversationFolders,
   })
   const gitSnapshots = useQuery({
     queryKey: ['git-snapshots', sessionId],
@@ -678,8 +1485,35 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     new Map(),
   )
   const [readOnly, setReadOnly] = useState(false)
+  const [masterExpanded, setMasterExpanded] = useState(true)
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const [folderName, setFolderName] = useState('')
+  const [folderPending, setFolderPending] = useState(false)
+  const [folderActionPending, setFolderActionPending] = useState<string>()
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
+  const [attachmentPending, setAttachmentPending] = useState(false)
   const lastSequence = useRef(0)
   const timelineRef = useRef<HTMLDivElement>(null)
+  const chatSurfaceRef = useRef<HTMLElement>(null)
+  const chatContentRef = useRef<HTMLDivElement>(null)
+  const followChatRef = useRef(true)
+  const forceChatScrollRef = useRef(false)
+  const previousChatScrollTopRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    const desktop = window.matchMedia(historyDesktopMediaQuery)
+    const syncHistoryForViewport = (event: Pick<MediaQueryList, 'matches'>) =>
+      setHistoryOpen(event.matches)
+    syncHistoryForViewport(desktop)
+    desktop.addEventListener('change', syncHistoryForViewport)
+    return () => desktop.removeEventListener('change', syncHistoryForViewport)
+  }, [])
+
+  function closeHistoryOverlay() {
+    if (!window.matchMedia(historyDesktopMediaQuery).matches)
+      setHistoryOpen(false)
+  }
 
   useEffect(() => {
     if (!sessionId) return
@@ -691,15 +1525,23 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     )
     if (session?.sessionId !== sessionId) {
       lastSequence.current = scopedCursor
+      followChatRef.current = true
+      forceChatScrollRef.current = true
+      previousChatScrollTopRef.current = null
       setSession(undefined)
       setEvents(new Map())
       setApprovals(new Map())
       setError(undefined)
       setRealtimeState('kapalı')
+      setMasterExpanded(true)
+      setAttachments([])
     }
     readSessionDetail(sessionId)
       .then((loaded) => {
-        if (active && loaded) setSession(loaded)
+        if (active && loaded) {
+          setSession(loaded)
+          setSelectedFolderId(loaded.folderId)
+        }
       })
       .catch((cause) => {
         if (active)
@@ -865,8 +1707,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       reconcile([...events.values()].sort((a, b) => a.sequence - b.sequence)),
     [events],
   )
+  const chatFeed = useMemo(
+    () =>
+      conversationFeed(
+        [...events.values()].sort((a, b) => a.sequence - b.sequence),
+      ),
+    [events],
+  )
   const virtualizer = useVirtualizer({
-    count: cards.length,
+    count: masterExpanded ? cards.length : 0,
     getScrollElement: () => timelineRef.current,
     estimateSize: () => 150,
     overscan: 8,
@@ -882,14 +1731,40 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     return active
   }, [events])
 
-  async function createSession() {
+  useEffect(() => {
+    if (!followChatRef.current && !forceChatScrollRef.current) return
+    const frame = requestAnimationFrame(() => {
+      const surface = chatSurfaceRef.current
+      if (!surface) return
+      surface.scrollTo({
+        top: surface.scrollHeight,
+        behavior: forceChatScrollRef.current ? 'smooth' : 'auto',
+      })
+      forceChatScrollRef.current = false
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [chatFeed])
+
+  useEffect(() => {
+    const content = chatContentRef.current
+    if (!content || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (!followChatRef.current) return
+      const surface = chatSurfaceRef.current
+      if (surface) surface.scrollTop = surface.scrollHeight
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [chatFeed.length > 0, sessionId])
+
+  async function createSession(folderId = selectedFolderId) {
     setSessionPending(true)
     setError(undefined)
     try {
       const response = await fetch(`${apiBaseUrl}/v1/sessions`, {
         method: 'POST',
         headers: scopeHeaders,
-        body: '{}',
+        body: JSON.stringify({ folderId }),
       })
       if (!response.ok) throw await apiError(response)
       const created = sessionResponseSchema.parse(await response.json())
@@ -906,6 +1781,108 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setSessionPending(false)
+    }
+  }
+
+  async function createFolder() {
+    const name = folderName.trim()
+    if (!name || folderPending) return
+    setFolderPending(true)
+    setError(undefined)
+    try {
+      const response = await fetch(`${apiBaseUrl}/v1/conversation-folders`, {
+        method: 'POST',
+        headers: scopeHeaders,
+        body: JSON.stringify({ name }),
+      })
+      if (!response.ok) throw await apiError(response)
+      const created = conversationFolderSchema.parse(await response.json())
+      setSelectedFolderId(created.folderId)
+      setFolderName('')
+      await conversationFolders.refetch()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setFolderPending(false)
+    }
+  }
+
+  async function moveConversation(folderId: string | null) {
+    if (!session) return
+    setError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/sessions/${encodeURIComponent(session.sessionId)}/conversation`,
+        {
+          method: 'PATCH',
+          headers: scopeHeaders,
+          body: JSON.stringify({ folderId }),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      setSession(sessionResponseSchema.parse(await response.json()))
+      setSelectedFolderId(folderId)
+      void recentSessions.refetch()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  async function setFolderArchived(
+    folder: ConversationFolder,
+    archived: boolean,
+  ) {
+    setFolderActionPending(folder.folderId)
+    setError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/conversation-folders/${encodeURIComponent(folder.folderId)}`,
+        {
+          method: 'PATCH',
+          headers: scopeHeaders,
+          body: JSON.stringify({ archived }),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      conversationFolderSchema.parse(await response.json())
+      if (archived && selectedFolderId === folder.folderId)
+        setSelectedFolderId(null)
+      await conversationFolders.refetch()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setFolderActionPending(undefined)
+    }
+  }
+
+  async function deleteFolder(folder: ConversationFolder) {
+    if (
+      !window.confirm(
+        `“${folder.name}” folder'ı silinsin mi? İçindeki sohbetler korunup “Folder yok” grubuna taşınacak.`,
+      )
+    )
+      return
+    setFolderActionPending(folder.folderId)
+    setError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/conversation-folders/${encodeURIComponent(folder.folderId)}`,
+        { method: 'DELETE', headers: scopeHeaders },
+      )
+      if (!response.ok) throw await apiError(response)
+      if (selectedFolderId === folder.folderId) setSelectedFolderId(null)
+      if (session?.folderId === folder.folderId)
+        setSession((current) =>
+          current ? { ...current, folderId: null } : current,
+        )
+      await Promise.all([
+        conversationFolders.refetch(),
+        recentSessions.refetch(),
+      ])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setFolderActionPending(undefined)
     }
   }
 
@@ -1005,7 +1982,21 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   async function submitTurn(event: React.FormEvent) {
     event.preventDefault()
     const trimmed = prompt.trim()
-    if (!session || !trimmed || turnPending || turnActive || !authReady) return
+    if (
+      !session ||
+      (!trimmed && attachments.length === 0) ||
+      turnPending ||
+      turnActive ||
+      !authReady
+    )
+      return
+    followChatRef.current = true
+    forceChatScrollRef.current = true
+    requestAnimationFrame(() => {
+      const surface = chatSurfaceRef.current
+      if (surface)
+        surface.scrollTo({ top: surface.scrollHeight, behavior: 'smooth' })
+    })
     setTurnPending(true)
     setError(undefined)
     try {
@@ -1014,16 +2005,94 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         {
           method: 'POST',
           headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
-          body: JSON.stringify({ prompt: trimmed }),
+          body: JSON.stringify({
+            prompt: trimmed,
+            attachmentIds: attachments.map(
+              (attachment) => attachment.attachmentId,
+            ),
+          }),
         },
       )
       if (!response.ok) throw await apiError(response)
       turnAcceptedResponseSchema.parse(await response.json())
+      if (session.title === 'Yeni konuşma') {
+        const title = (trimmed || attachments[0]?.name || 'Yeni konuşma').slice(
+          0,
+          120,
+        )
+        const titleResponse = await fetch(
+          `${apiBaseUrl}/v1/sessions/${encodeURIComponent(session.sessionId)}/conversation`,
+          {
+            method: 'PATCH',
+            headers: scopeHeaders,
+            body: JSON.stringify({ title }),
+          },
+        )
+        if (titleResponse.ok) {
+          setSession(sessionResponseSchema.parse(await titleResponse.json()))
+          void recentSessions.refetch()
+        }
+      }
       setPrompt('')
+      setAttachments([])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setTurnPending(false)
+    }
+  }
+
+  async function uploadAttachments(files: FileList | null) {
+    if (!session || !files?.length || attachmentPending) return
+    const selected = [...files]
+    setAttachmentPending(true)
+    setError(undefined)
+    try {
+      const uploaded = await Promise.all(
+        selected.map(async (file) => {
+          const mediaType = attachmentMediaType(file)
+          if (!mediaType)
+            throw new Error(`${file.name}: desteklenmeyen dosya türü`)
+          if (file.size < 1) throw new Error(`${file.name}: dosya boş olmamalı`)
+          const response = await fetch(
+            `${apiBaseUrl}/v1/sessions/${encodeURIComponent(session.sessionId)}/attachments`,
+            {
+              method: 'POST',
+              headers: {
+                ...scopeHeaders,
+                'content-type': 'application/octet-stream',
+                'x-attachment-name': encodeURIComponent(file.name),
+                'x-attachment-media-type': mediaType,
+              },
+              body: file,
+            },
+          )
+          if (!response.ok) throw await apiError(response)
+          return conversationAttachmentSchema.parse(await response.json())
+        }),
+      )
+      setAttachments((current) => [...current, ...uploaded])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setAttachmentPending(false)
+    }
+  }
+
+  async function removeAttachment(attachment: ConversationAttachment) {
+    if (!session) return
+    setError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/sessions/${encodeURIComponent(session.sessionId)}/attachments/${encodeURIComponent(attachment.attachmentId)}`,
+        { method: 'DELETE', headers: scopeHeaders },
+      )
+      if (!response.ok) throw await apiError(response)
+      setAttachments((current) =>
+        current.filter((item) => item.attachmentId !== attachment.attachmentId),
+      )
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
     }
   }
 
@@ -1040,8 +2109,38 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         </div>
       </header>
 
-      <section className="workspace-grid">
-        <aside className="project-panel">
+      <section
+        className={`workspace-grid ${historyOpen ? 'history-is-open' : ''}`}
+      >
+        <aside className={`project-panel ${historyOpen ? 'is-open' : ''}`}>
+          <ConversationHistory
+            folders={conversationFolders.data?.folders ?? []}
+            sessions={
+              recentSessions.data?.pages.flatMap((page) => page.sessions) ?? []
+            }
+            {...(sessionId ? { activeSessionId: sessionId } : {})}
+            folderName={folderName}
+            folderPending={folderPending}
+            {...(folderActionPending ? { folderActionPending } : {})}
+            onFolderNameChange={setFolderName}
+            onCreateFolder={() => void createFolder()}
+            onSelectFolder={setSelectedFolderId}
+            onArchiveFolder={(folder) => void setFolderArchived(folder, true)}
+            onRestoreFolder={(folder) => void setFolderArchived(folder, false)}
+            onDeleteFolder={(folder) => void deleteFolder(folder)}
+            onNewConversation={(folderId) => {
+              setSelectedFolderId(folderId)
+              closeHistoryOverlay()
+              void createSession(folderId)
+            }}
+            onSelectConversation={(selectedSessionId) => {
+              closeHistoryOverlay()
+              void navigate({
+                to: '/sessions/$sessionId',
+                params: { sessionId: selectedSessionId },
+              })
+            }}
+          />
           <p className="section-label">Workspace</p>
           <h2>local-poc</h2>
           <dl className="metadata-list">
@@ -1134,7 +2233,131 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </nav>
         </aside>
 
-        <section className="timeline-panel" aria-labelledby="timeline-title">
+        <button
+          className="history-backdrop"
+          type="button"
+          aria-label="Conversation history panelini kapat"
+          onClick={() => setHistoryOpen(false)}
+        />
+
+        <section className="timeline-panel" aria-labelledby="chat-title">
+          <header className="chat-header">
+            <button
+              className="history-toggle"
+              type="button"
+              aria-label="Conversation history aç/kapat"
+              aria-expanded={historyOpen}
+              onClick={() => setHistoryOpen((open) => !open)}
+            >
+              ☰
+            </button>
+            <div>
+              <p className="section-label">Conversation</p>
+              <h1 id="chat-title">{session?.title ?? 'Yeni konuşma'}</h1>
+            </div>
+            <label>
+              <span>Folder</span>
+              <select
+                value={session?.folderId ?? ''}
+                disabled={!session}
+                onChange={(event) =>
+                  void moveConversation(event.target.value || null)
+                }
+              >
+                <option value="">Folder yok</option>
+                {(conversationFolders.data?.folders ?? []).map((folder) => (
+                  <option
+                    key={folder.folderId}
+                    value={folder.folderId}
+                    disabled={Boolean(folder.archivedAt)}
+                  >
+                    {folder.archivedAt ? `[Arşiv] ${folder.name}` : folder.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </header>
+          <section
+            className="chat-surface"
+            aria-label="Conversation messages"
+            ref={chatSurfaceRef}
+            onScroll={(event) => {
+              const surface = event.currentTarget
+              followChatRef.current = chatFollowStateAfterScroll({
+                wasFollowing: followChatRef.current,
+                previousScrollTop: previousChatScrollTopRef.current,
+                scrollHeight: surface.scrollHeight,
+                scrollTop: surface.scrollTop,
+                clientHeight: surface.clientHeight,
+              })
+              previousChatScrollTopRef.current = surface.scrollTop
+            }}
+          >
+            <div className="chat-content" ref={chatContentRef}>
+              {[...approvals.values()]
+                .filter((approval) => approval.sessionId === session?.sessionId)
+                .map((approval) => (
+                  <ApprovalCard
+                    key={approval.approvalId}
+                    approval={approval}
+                    pending={approvalPending === approval.approvalId}
+                    readOnly={readOnly}
+                    {...(approvalErrors.get(approval.approvalId)
+                      ? { error: approvalErrors.get(approval.approvalId)! }
+                      : {})}
+                    onDecision={(decision) =>
+                      void decideApproval(approval, decision)
+                    }
+                  />
+                ))}
+              {chatFeed.length > 0 ? (
+                <div className="chat-messages">
+                  {chatFeed.map((item) =>
+                    item.role === 'work' ? (
+                      <ConversationWorkBlock work={item} key={item.key} />
+                    ) : (
+                      <article
+                        className={`chat-message is-${item.role}`}
+                        key={item.key}
+                      >
+                        <span className="chat-avatar" aria-hidden="true">
+                          {item.role === 'assistant' ? 'C' : 'S'}
+                        </span>
+                        <div>
+                          <strong>
+                            {item.role === 'assistant' ? 'Codex' : 'Sen'}
+                          </strong>
+                          <Suspense fallback={<p>{item.text}</p>}>
+                            {item.text ? (
+                              <MessageMarkdown>{item.text}</MessageMarkdown>
+                            ) : null}
+                          </Suspense>
+                          {item.attachments?.length ? (
+                            <div className="message-attachments">
+                              {item.attachments.map((attachment, index) => (
+                                <span key={`${attachment.name}:${index}`}>
+                                  <span aria-hidden="true">
+                                    {attachment.kind === 'image' ? '▧' : '▤'}
+                                  </span>
+                                  {attachment.name}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    ),
+                  )}
+                </div>
+              ) : (
+                <div className="chat-welcome">
+                  <span aria-hidden="true">C</span>
+                  <h2>Nasıl yardımcı olabilirim?</h2>
+                  <p>Yeni bir konuşma başlatmak için aşağıya yaz.</p>
+                </div>
+              )}
+            </div>
+          </section>
           <section
             className={`auth-readiness auth-${readiness.data?.status ?? 'checking'}`}
             aria-live="polite"
@@ -1227,7 +2450,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </div>
 
           <div
-            className="timeline-stream"
+            className={`timeline-stream ${masterExpanded ? '' : 'is-collapsed'}`}
             aria-live="polite"
             aria-label="Timeline olayları"
             tabIndex={0}
@@ -1249,30 +2472,57 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   }
                 />
               ))}
-            {cards.length ? (
-              <div
-                className="virtual-timeline"
-                style={{
-                  height: virtualizer.getTotalSize(),
-                  position: 'relative',
-                }}
-              >
-                {virtualizer.getVirtualItems().map((row) => (
+            {cards.length > 0 ? (
+              <section className="timeline-master" aria-label="Codex çalışması">
+                <button
+                  className="timeline-master-toggle"
+                  type="button"
+                  aria-expanded={masterExpanded}
+                  aria-controls="timeline-master-events"
+                  onClick={() => setMasterExpanded((expanded) => !expanded)}
+                >
+                  <span className="timeline-master-icon" aria-hidden="true">
+                    <span />
+                  </span>
+                  <span className="timeline-master-label">
+                    <strong>Codex çalışması</strong>
+                    <span>
+                      {cards.length} işlem ·{' '}
+                      {turnActive ? 'çalışıyor' : 'hazır'}
+                    </span>
+                  </span>
+                  <span
+                    className="timeline-master-chevron"
+                    aria-hidden="true"
+                  />
+                </button>
+                {masterExpanded ? (
                   <div
-                    key={cards[row.index]!.key}
-                    ref={virtualizer.measureElement}
-                    data-index={row.index}
+                    id="timeline-master-events"
+                    className="virtual-timeline timeline-master-events"
                     style={{
-                      position: 'absolute',
-                      width: '100%',
-                      transform: `translateY(${row.start}px)`,
-                      paddingBottom: 12,
+                      height: virtualizer.getTotalSize(),
+                      position: 'relative',
                     }}
                   >
-                    <TimelineEntry card={cards[row.index]!} />
+                    {virtualizer.getVirtualItems().map((row) => (
+                      <div
+                        key={cards[row.index]!.key}
+                        ref={virtualizer.measureElement}
+                        data-index={row.index}
+                        style={{
+                          position: 'absolute',
+                          width: '100%',
+                          transform: `translateY(${row.start}px)`,
+                          paddingBottom: 4,
+                        }}
+                      >
+                        <TimelineEntry card={cards[row.index]!} />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                ) : null}
+              </section>
             ) : (
               <div className="timeline-empty">
                 <div className="terminal-mark" aria-hidden="true">
@@ -1341,12 +2591,73 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             onSubmit={(event) => void submitTurn(event)}
           >
             <label htmlFor="prompt">Codex’e görev ver</label>
+            {attachments.length > 0 ? (
+              <div className="composer-attachments" aria-label="Attachment’lar">
+                {attachments.map((attachment) => (
+                  <span
+                    className="attachment-chip"
+                    key={attachment.attachmentId}
+                  >
+                    <span aria-hidden="true">
+                      {attachment.kind === 'image' ? '▧' : '▤'}
+                    </span>
+                    <span>{attachment.name}</span>
+                    <small>
+                      {(attachment.byteLength / 1024).toFixed(1)} KB
+                    </small>
+                    <button
+                      type="button"
+                      aria-label={`${attachment.name} attachment’ını kaldır`}
+                      onClick={() => void removeAttachment(attachment)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div className="composer-row">
+              <label
+                className="attachment-button"
+                aria-label="Dosya ekle"
+                title="Dosya ekle"
+              >
+                <input
+                  type="file"
+                  multiple
+                  accept="image/png,image/jpeg,image/webp,image/gif,text/plain,text/markdown,application/json,application/pdf,.md,.txt,.json,.pdf"
+                  disabled={
+                    !session ||
+                    turnPending ||
+                    turnActive ||
+                    readOnly ||
+                    attachmentPending
+                  }
+                  onChange={(event) => {
+                    void uploadAttachments(event.target.files)
+                    event.target.value = ''
+                  }}
+                />
+                <span aria-hidden="true">＋</span>
+              </label>
               <textarea
                 id="prompt"
                 name="prompt"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    !shouldSubmitComposer({
+                      key: event.key,
+                      shiftKey: event.shiftKey,
+                      isComposing: event.nativeEvent.isComposing,
+                    })
+                  )
+                    return
+                  event.preventDefault()
+                  if (turnActive) void steerOrInterrupt('steer')
+                  else event.currentTarget.form?.requestSubmit()
+                }}
                 placeholder="Kısa bir cevap ver…"
                 rows={2}
                 disabled={!session || turnPending || readOnly || !authReady}
@@ -1355,8 +2666,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 type="submit"
                 disabled={
                   !session ||
-                  !prompt.trim() ||
+                  (!prompt.trim() && attachments.length === 0) ||
                   turnPending ||
+                  attachmentPending ||
                   turnActive ||
                   readOnly ||
                   !authReady

@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import {
   parseTimelineEvent,
   type TimelineEvent,
 } from '@persistent-codex/domain-events'
 import {
   boundedTail,
+  attachmentMediaType,
+  chatFollowStateAfterScroll,
   coalesceTimelineEvents,
+  conversationFeed,
+  conversationMessages,
+  describeConversationWork,
+  describeTimelineEvent,
+  isNearScrollEnd,
   sessionScopedCursor,
+  shouldSubmitComposer,
 } from './workspace-page'
+import MessageMarkdown from './message-markdown'
 const base = {
   schemaVersion: 1 as const,
   tenantId: 'ten',
@@ -60,4 +71,523 @@ describe('bounded browser timeline state', () => {
     expect(
       new TextEncoder().encode(boundedTail('', '🙂'.repeat(40000))).length,
     ).toBeLessThanOrEqual(65536))
+})
+
+describe('Codex-style timeline presentation', () => {
+  it('gives known upstream notifications a human-readable operation name', () => {
+    const event = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_unknown_thread_started',
+      sequence: 14,
+      sourceMethod: 'thread/started',
+      type: 'codex.unknown',
+      payload: {
+        envelopeKind: 'notification',
+        method: 'thread/started',
+        params: { thread: { status: 'inProgress' } },
+      },
+    })
+
+    expect(
+      describeTimelineEvent({
+        key: event.eventId,
+        event,
+        completed: false,
+      }),
+    ).toMatchObject({
+      title: 'Codex task’ı başlatıldı',
+      summary: 'inProgress',
+      tone: 'activity',
+      expanded: false,
+    })
+  })
+
+  it('uses a calm generic label for future Codex events', () => {
+    const event = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_future',
+      sequence: 15,
+      sourceMethod: 'future/operation/updated',
+      type: 'codex.unknown',
+      payload: {
+        envelopeKind: 'notification',
+        method: 'future/operation/updated',
+        params: {},
+      },
+    })
+
+    expect(
+      describeTimelineEvent({
+        key: event.eventId,
+        event,
+        completed: false,
+      }).title,
+    ).toBe('Codex olayı')
+  })
+})
+
+describe('conversation projection', () => {
+  it('projects upstream user items and normalized assistant messages into chat', () => {
+    const user = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_user',
+      sequence: 20,
+      sourceMethod: 'item/completed',
+      type: 'codex.unknown',
+      payload: {
+        envelopeKind: 'notification',
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'userMessage',
+            content: [{ type: 'text', text: 'Merhaba Codex' }],
+          },
+        },
+      },
+    })
+    const assistant = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_assistant',
+      sequence: 21,
+      sourceMethod: 'item/completed',
+      type: 'agent.message.completed',
+      payload: { text: 'Merhaba!' },
+    })
+
+    expect(conversationMessages([user, assistant])).toEqual([
+      expect.objectContaining({ role: 'user', text: 'Merhaba Codex' }),
+      expect.objectContaining({ role: 'assistant', text: 'Merhaba!' }),
+    ])
+  })
+
+  it('places compact Codex work between the user prompt and assistant reply', () => {
+    const events = [
+      parseTimelineEvent({
+        ...base,
+        codexItemId: undefined,
+        eventId: 'evt_turn',
+        sequence: 19,
+        sourceMethod: 'turn/started',
+        type: 'turn.started',
+        payload: { status: 'in_progress' },
+      }),
+      parseTimelineEvent({
+        ...base,
+        codexItemId: 'usr_feed',
+        eventId: 'evt_user_feed',
+        sequence: 20,
+        sourceMethod: 'item/completed',
+        type: 'codex.unknown',
+        payload: {
+          envelopeKind: 'notification',
+          method: 'item/completed',
+          params: {
+            item: {
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'Kontrol et' }],
+            },
+          },
+        },
+      }),
+      parseTimelineEvent({
+        ...base,
+        codexItemId: 'tool_feed',
+        eventId: 'evt_tool',
+        sequence: 21,
+        sourceMethod: 'item/started',
+        type: 'tool.started',
+        payload: {
+          toolKind: 'dynamic',
+          tool: 'rg',
+          arguments: {},
+          provider: 'local',
+          status: 'in_progress',
+        },
+      }),
+      parseTimelineEvent({
+        ...base,
+        codexItemId: 'asst_feed',
+        eventId: 'evt_assistant_feed',
+        sequence: 22,
+        sourceMethod: 'item/completed',
+        type: 'agent.message.completed',
+        payload: { text: 'Kontrol ettim.' },
+      }),
+    ]
+
+    const feed = conversationFeed(events)
+    expect(feed.map((item) => item.role)).toEqual([
+      'user',
+      'work',
+      'assistant',
+      'work',
+    ])
+    expect(feed[1]).toMatchObject({ role: 'work', running: false })
+    expect(feed[1] && 'cards' in feed[1] ? feed[1].cards : []).toHaveLength(2)
+    if (feed[1]?.role === 'work')
+      expect(describeConversationWork(feed[1])).toBe('Çalışma alanını inceledi')
+    expect(feed.at(-1)).toMatchObject({
+      role: 'work',
+      running: true,
+      cards: [],
+    })
+  })
+
+  it('shows work before an assistant message even without a user item', () => {
+    const events = [
+      parseTimelineEvent({
+        ...base,
+        codexItemId: undefined,
+        eventId: 'evt_startup',
+        sequence: 1,
+        sourceMethod: 'thread/started',
+        type: 'codex.unknown',
+        payload: {
+          envelopeKind: 'notification',
+          method: 'thread/started',
+          params: {},
+        },
+      }),
+      parseTimelineEvent({
+        ...base,
+        codexItemId: 'asst_first',
+        eventId: 'evt_first_answer',
+        sequence: 2,
+        sourceMethod: 'item/completed',
+        type: 'agent.message.completed',
+        payload: { text: 'Hazırım.' },
+      }),
+    ]
+    expect(conversationFeed(events).map((item) => item.role)).toEqual([
+      'work',
+      'assistant',
+    ])
+  })
+
+  it('submits with Enter while preserving Shift+Enter and IME composition', () => {
+    expect(
+      shouldSubmitComposer({
+        key: 'Enter',
+        shiftKey: false,
+        isComposing: false,
+      }),
+    ).toBe(true)
+    expect(
+      shouldSubmitComposer({
+        key: 'Enter',
+        shiftKey: true,
+        isComposing: false,
+      }),
+    ).toBe(false)
+    expect(
+      shouldSubmitComposer({
+        key: 'Enter',
+        shiftKey: false,
+        isComposing: true,
+      }),
+    ).toBe(false)
+  })
+
+  it('keeps the work block identity stable while realtime events arrive', () => {
+    const started = parseTimelineEvent({
+      ...base,
+      codexItemId: undefined,
+      eventId: 'evt_stable_turn',
+      sequence: 30,
+      sourceMethod: 'turn/started',
+      type: 'turn.started',
+      payload: { status: 'in_progress' },
+    })
+    const command = parseTimelineEvent({
+      ...base,
+      codexItemId: 'cmd_stable',
+      eventId: 'evt_stable_command',
+      sequence: 31,
+      sourceMethod: 'item/started',
+      type: 'command.proposed',
+      payload: { command: 'pnpm test', cwd: '/workspace', status: 'proposed' },
+    })
+    const assistant = parseTimelineEvent({
+      ...base,
+      codexItemId: 'asst_stable',
+      eventId: 'evt_stable_assistant',
+      sequence: 32,
+      sourceMethod: 'item/completed',
+      type: 'agent.message.completed',
+      payload: { text: 'Bitti.' },
+    })
+    const terminal = parseTimelineEvent({
+      ...base,
+      codexTurnId: undefined,
+      codexItemId: undefined,
+      eventId: 'evt_stable_terminal',
+      sequence: 33,
+      sourceMethod: 'turn/completed',
+      type: 'turn.completed',
+      payload: { status: 'completed' },
+    })
+    const activeWork = conversationFeed([started, command]).find(
+      (item) => item.role === 'work',
+    )
+    const completedWork = conversationFeed([started, command, assistant]).find(
+      (item) => item.role === 'work',
+    )
+    expect(activeWork?.key).toBe(completedWork?.key)
+    expect(activeWork).toMatchObject({ running: true })
+    if (activeWork?.role === 'work')
+      expect(describeConversationWork(activeWork)).toBe('Testleri çalıştırıyor')
+    expect(
+      conversationFeed([started, command, assistant, terminal]).filter(
+        (item) => item.role === 'work',
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('places active tool work after commentary and keeps its loading state', () => {
+    const started = parseTimelineEvent({
+      ...base,
+      codexItemId: undefined,
+      eventId: 'evt_commentary_turn',
+      sequence: 40,
+      sourceMethod: 'turn/started',
+      type: 'turn.started',
+      payload: { status: 'in_progress' },
+    })
+    const commentary = parseTimelineEvent({
+      ...base,
+      codexItemId: 'asst_commentary',
+      eventId: 'evt_commentary',
+      sequence: 41,
+      sourceMethod: 'item/completed',
+      type: 'agent.message.completed',
+      payload: { text: 'Kaynakları tarıyorum.' },
+    })
+    const search = parseTimelineEvent({
+      ...base,
+      codexItemId: 'tool_search',
+      eventId: 'evt_search',
+      sequence: 42,
+      sourceMethod: 'item/started',
+      type: 'tool.started',
+      payload: {
+        toolKind: 'dynamic',
+        tool: 'webSearch',
+        arguments: {},
+        provider: 'local',
+        status: 'in_progress',
+      },
+    })
+    const activeFeed = conversationFeed([started, commentary, search])
+    expect(activeFeed.map((item) => item.role)).toEqual([
+      'work',
+      'assistant',
+      'work',
+    ])
+    const currentWork = activeFeed.at(-1)
+    expect(currentWork).toMatchObject({ role: 'work', running: true })
+    if (currentWork?.role === 'work')
+      expect(describeConversationWork(currentWork)).toBe(
+        'Kaynakları araştırıyor',
+      )
+  })
+
+  it('shows a generic thinking state while an active turn has no visible work', () => {
+    const started = parseTimelineEvent({
+      ...base,
+      codexItemId: undefined,
+      eventId: 'evt_thinking_turn',
+      sequence: 45,
+      sourceMethod: 'turn/started',
+      type: 'turn.started',
+      payload: { status: 'in_progress' },
+    })
+    const assistant = parseTimelineEvent({
+      ...base,
+      codexItemId: 'asst_thinking',
+      eventId: 'evt_thinking_commentary',
+      sequence: 46,
+      sourceMethod: 'item/completed',
+      type: 'agent.message.completed',
+      payload: { text: 'Bir sonraki adımı hazırlıyorum.' },
+    })
+
+    const feed = conversationFeed([started, assistant])
+    expect(feed.map((item) => item.role)).toEqual(['work', 'assistant', 'work'])
+    const pending = feed.at(-1)
+    expect(pending).toMatchObject({ role: 'work', cards: [], running: true })
+    if (pending?.role === 'work')
+      expect(describeConversationWork(pending)).toBe('Düşünüyor')
+  })
+
+  it('places initial turn loading after the user message', () => {
+    const started = parseTimelineEvent({
+      ...base,
+      codexItemId: undefined,
+      eventId: 'evt_initial_turn',
+      sequence: 50,
+      sourceMethod: 'turn/started',
+      type: 'turn.started',
+      payload: { status: 'in_progress' },
+    })
+    const user = parseTimelineEvent({
+      ...base,
+      codexItemId: 'usr_initial',
+      eventId: 'evt_initial_user',
+      sequence: 51,
+      sourceMethod: 'item/completed',
+      type: 'codex.unknown',
+      payload: {
+        envelopeKind: 'notification',
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'userMessage',
+            content: [{ type: 'text', text: 'test' }],
+          },
+        },
+      },
+    })
+    expect(conversationFeed([started, user])).toMatchObject([
+      { role: 'user', text: 'test' },
+      { role: 'work', running: true },
+    ])
+  })
+
+  it('follows only when the viewport is near the conversation end', () => {
+    expect(
+      isNearScrollEnd({
+        scrollHeight: 1_000,
+        scrollTop: 430,
+        clientHeight: 500,
+      }),
+    ).toBe(true)
+    expect(
+      isNearScrollEnd({
+        scrollHeight: 1_000,
+        scrollTop: 200,
+        clientHeight: 500,
+      }),
+    ).toBe(false)
+  })
+
+  it('locks chat following on upward scroll until the user returns to bottom', () => {
+    expect(
+      chatFollowStateAfterScroll({
+        wasFollowing: true,
+        previousScrollTop: 430,
+        scrollHeight: 1_000,
+        scrollTop: 420,
+        clientHeight: 500,
+      }),
+    ).toBe(false)
+    expect(
+      chatFollowStateAfterScroll({
+        wasFollowing: false,
+        previousScrollTop: 420,
+        scrollHeight: 1_000,
+        scrollTop: 470,
+        clientHeight: 500,
+      }),
+    ).toBe(false)
+    expect(
+      chatFollowStateAfterScroll({
+        wasFollowing: false,
+        previousScrollTop: 470,
+        scrollHeight: 1_000,
+        scrollTop: 480,
+        clientHeight: 500,
+      }),
+    ).toBe(true)
+  })
+
+  it('renders safe GitHub-flavored Markdown in messages', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageMarkdown, {
+        children:
+          '## Başlık\n\n- [x] Tamam\n\n`inline` ve [bağlantı](https://example.com)',
+      }),
+    )
+    expect(html).toContain('<h2>Başlık</h2>')
+    expect(html).toContain('type="checkbox"')
+    expect(html).toContain('rel="noreferrer noopener"')
+    expect(html).not.toContain('<script')
+  })
+
+  it('keeps attachment-only user messages visible in history', () => {
+    const user = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_user_attachment',
+      sequence: 22,
+      sourceMethod: 'item/completed',
+      type: 'codex.unknown',
+      payload: {
+        envelopeKind: 'notification',
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'userMessage',
+            content: [
+              { type: 'mention', name: 'brief.pdf', path: '/safe/brief.pdf' },
+            ],
+          },
+        },
+      },
+    })
+
+    expect(conversationMessages([user])).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        text: '',
+        attachments: [{ kind: 'file', name: 'brief.pdf' }],
+      }),
+    ])
+  })
+
+  it('hides internal attachment context while preserving the file chip', () => {
+    const user = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_user_attachment_context',
+      sequence: 23,
+      sourceMethod: 'item/completed',
+      type: 'codex.unknown',
+      payload: {
+        envelopeKind: 'notification',
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'userMessage',
+            content: [
+              {
+                type: 'text',
+                text: 'Bu nedir?\n\n<persistent-codex-attachments>\n- brief.pdf: /private/path/brief.pdf\n</persistent-codex-attachments>',
+              },
+              { type: 'mention', name: 'brief.pdf', path: '/safe/brief.pdf' },
+            ],
+          },
+        },
+      },
+    })
+
+    expect(conversationMessages([user])).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        text: 'Bu nedir?',
+        attachments: [{ kind: 'file', name: 'brief.pdf' }],
+      }),
+    ])
+  })
+})
+
+describe('attachment selection', () => {
+  it('accepts supported MIME types and infers common text extensions', () => {
+    expect(attachmentMediaType({ name: 'image.png', type: 'image/png' })).toBe(
+      'image/png',
+    )
+    expect(attachmentMediaType({ name: 'notes.md', type: '' })).toBe(
+      'text/markdown',
+    )
+    expect(
+      attachmentMediaType({ name: 'archive.zip', type: '' }),
+    ).toBeUndefined()
+  })
 })

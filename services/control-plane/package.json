@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "corpus:lint": "node corpus/scripts/lint.mjs",
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "typecheck": "tsc --noEmit"

@@ -22,6 +22,11 @@ import {
   approvalSchema,
   apiErrorResponseSchema,
   clientMessageSchema,
+  conversationAttachmentSchema,
+  conversationFolderListResponseSchema,
+  conversationFolderSchema,
+  createConversationFolderRequestSchema,
+  updateConversationFolderRequestSchema,
   createSessionRequestSchema,
   createTurnRequestSchema,
   steerTurnRequestSchema,
@@ -31,6 +36,7 @@ import {
   replayResponseSchema,
   readinessResponseSchema,
   sessionListResponseSchema,
+  updateConversationRequestSchema,
   gitSnapshotSchema,
   gitSnapshotListResponseSchema,
   metricsResponseSchema,
@@ -65,6 +71,10 @@ import {
   SessionOrchestrator,
 } from './session-orchestrator'
 import { BoundedMetricRecorder, metricRoute } from './metrics'
+import {
+  AttachmentStorageError,
+  LocalAttachmentStorage,
+} from './attachment-storage'
 
 interface RealtimeSocket {
   send(data: string): void
@@ -89,6 +99,7 @@ export interface ControlPlaneOptions {
   codexHomeRoot?: string
   codexProvisioningSource?: string
   artifactRoot?: string
+  attachmentRoot?: string
   preflightChecks?: Array<{
     name:
       | 'codex'
@@ -397,6 +408,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const artifacts = new LocalArtifactStorage(
     options.artifactRoot ?? '.runtime/artifacts',
   )
+  const attachments = new LocalAttachmentStorage(
+    options.attachmentRoot ??
+      `${options.artifactRoot ?? '.runtime/artifacts'}/attachments`,
+  )
+  app.addContentTypeParser(
+    'application/octet-stream',
+    { parseAs: 'buffer', bodyLimit: Number.MAX_SAFE_INTEGER },
+    (_request, body, done) => done(null, body),
+  )
   const downloadTokens = new Map<
     string,
     {
@@ -551,7 +571,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     },
   })
 
-  await app.register(cors, { origin: true })
+  await app.register(cors, {
+    origin: true,
+    methods: 'GET,HEAD,POST,PATCH,DELETE,OPTIONS',
+  })
   await app.register(websocket)
 
   app.addHook('onRequest', async (request) => {
@@ -1092,7 +1115,26 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       )
     }
     try {
-      const created = await orchestrator.createSession(scope)
+      if (
+        body.data.folderId &&
+        !store
+          .listConversationFolders(scope)
+          .some(
+            (folder) =>
+              folder.folderId === body.data.folderId && !folder.archivedAt,
+          )
+      )
+        return reply.code(404).send({
+          code: 'FOLDER_NOT_FOUND',
+          message: 'Conversation folder was not found',
+        })
+      const created = await orchestrator.createSession({
+        ...scope,
+        ...(body.data.folderId !== undefined
+          ? { folderId: body.data.folderId }
+          : {}),
+        ...(body.data.title ? { title: body.data.title } : {}),
+      })
       store.appendAudit({
         ...created,
         actor: 'user',
@@ -1125,6 +1167,155 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       )
     }
   })
+
+  app.get('/v1/conversation-folders', async (request, reply) => {
+    const scope = workspaceScope(request.headers)
+    if (!scope)
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    return conversationFolderListResponseSchema.parse({
+      folders: store.listConversationFolders(scope),
+    })
+  })
+
+  app.post('/v1/conversation-folders', async (request, reply) => {
+    const scope = workspaceScope(request.headers)
+    if (!scope)
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    const body = createConversationFolderRequestSchema.safeParse(
+      request.body ?? {},
+    )
+    if (!body.success)
+      return reply.code(400).send({
+        code: 'VALIDATION_ERROR',
+        message: 'Folder request body is invalid',
+      })
+    return reply.code(201).send(
+      conversationFolderSchema.parse(
+        store.createConversationFolder({
+          ...scope,
+          folderId: `fol_${randomBytes(12).toString('hex')}`,
+          name: body.data.name,
+        }),
+      ),
+    )
+  })
+
+  app.patch<{ Params: { folderId: string } }>(
+    '/v1/conversation-folders/:folderId',
+    async (request, reply) => {
+      const scope = workspaceScope(request.headers)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const body = updateConversationFolderRequestSchema.safeParse(
+        request.body ?? {},
+      )
+      if (!body.success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Folder update is invalid',
+        })
+      try {
+        return conversationFolderSchema.parse(
+          store.setConversationFolderArchived(
+            { ...scope, folderId: request.params.folderId },
+            body.data.archived,
+          ),
+        )
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply.code(404).send({
+            code: error.code,
+            message: error.message,
+          })
+        throw error
+      }
+    },
+  )
+
+  app.delete<{ Params: { folderId: string } }>(
+    '/v1/conversation-folders/:folderId',
+    async (request, reply) => {
+      const scope = workspaceScope(request.headers)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        store.deleteConversationFolder({
+          ...scope,
+          folderId: request.params.folderId,
+        })
+        return reply.code(204).send()
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply.code(404).send({
+            code: error.code,
+            message: error.message,
+          })
+        throw error
+      }
+    },
+  )
+
+  app.patch<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/conversation',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const body = updateConversationRequestSchema.safeParse(request.body ?? {})
+      if (!body.success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Conversation update is invalid',
+        })
+      if (
+        body.data.folderId &&
+        !store
+          .listConversationFolders(scope)
+          .some(
+            (folder) =>
+              folder.folderId === body.data.folderId && !folder.archivedAt,
+          )
+      )
+        return reply.code(404).send({
+          code: 'FOLDER_NOT_FOUND',
+          message: 'Conversation folder was not found',
+        })
+      try {
+        const changes = {
+          ...(body.data.folderId !== undefined
+            ? { folderId: body.data.folderId }
+            : {}),
+          ...(body.data.title !== undefined ? { title: body.data.title } : {}),
+        }
+        return sessionResponseSchema.parse({
+          ...orchestrator.getSession(scope),
+          ...store.updateConversation(scope, changes),
+        })
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply.code(404).send({
+            code: error.code,
+            message: error.message,
+          })
+        throw error
+      }
+    },
+  )
 
   app.get<{ Querystring: { cursor?: string; limit?: string } }>(
     '/v1/sessions',
@@ -1468,6 +1659,82 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   )
 
   app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/attachments',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const encodedName = headerValue(request.headers['x-attachment-name'])
+      const mediaType = headerValue(request.headers['x-attachment-media-type'])
+      if (!encodedName || !mediaType || !Buffer.isBuffer(request.body))
+        return reply.code(400).send({
+          code: 'INVALID_ATTACHMENT_REQUEST',
+          message: 'Attachment name, media type, and binary body are required',
+        })
+      try {
+        store.getSession(scope)
+        const name = decodeURIComponent(encodedName)
+        return reply.code(201).send(
+          conversationAttachmentSchema.parse(
+            attachments.store({
+              scope,
+              name,
+              mediaType,
+              data: request.body,
+            }),
+          ),
+        )
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply.code(404).send({
+            code: error.code,
+            message: error.message,
+          })
+        if (error instanceof AttachmentStorageError)
+          return reply.code(400).send({
+            code: error.code,
+            message: error.message,
+          })
+        if (error instanceof URIError)
+          return reply.code(400).send({
+            code: 'INVALID_ATTACHMENT_NAME',
+            message: 'Attachment name encoding is invalid',
+          })
+        throw error
+      }
+    },
+  )
+
+  app.delete<{ Params: { sessionId: string; attachmentId: string } }>(
+    '/v1/sessions/:sessionId/attachments/:attachmentId',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        attachments.remove(scope, request.params.attachmentId)
+        return reply.code(204).send()
+      } catch (error) {
+        if (
+          error instanceof AttachmentStorageError ||
+          (error instanceof Error && 'code' in error && error.code === 'ENOENT')
+        )
+          return reply.code(404).send({
+            code: 'ATTACHMENT_NOT_FOUND',
+            message: 'Attachment was not found in this session',
+          })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
     '/v1/sessions/:sessionId/turns',
     async (request, reply) => {
       const scope = requestScope(request.headers, request.params.sessionId)
@@ -1493,10 +1760,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       }
       try {
+        const turnAttachments = body.data.attachmentIds.map((attachmentId) =>
+          attachments.resolve(scope, attachmentId),
+        )
         const accepted = await orchestrator.startTurn(
           scope,
           body.data.prompt,
           idempotencyKey,
+          turnAttachments,
         )
         turnStartedAt.set(
           JSON.stringify([
@@ -1508,6 +1779,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         )
         return reply.code(202).send(accepted)
       } catch (error) {
+        if (error instanceof AttachmentStorageError)
+          return reply.code(400).send({
+            code: error.code,
+            message: error.message,
+          })
         if (error instanceof StoreNotFoundError) {
           return reply
             .code(404)
