@@ -1002,6 +1002,7 @@ describe('WP15 provider selection API', () => {
         ready: true,
         version: 'fixture',
         authReady: true,
+        authStatus: 'ready',
         code: 'ready',
         instruction: null,
       }),

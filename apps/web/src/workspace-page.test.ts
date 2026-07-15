@@ -15,6 +15,10 @@ import {
   describeConversationWork,
   describeTimelineEvent,
   isNearScrollEnd,
+  readStoredProviderSelection,
+  providerPickerSelection,
+  providerAuthMessage,
+  parseStoredProviderSelection,
   sessionScopedCursor,
   serverOwnedRunLabel,
   shouldSubmitComposer,
@@ -53,6 +57,56 @@ function delta(sequence: number, text: string): TimelineEvent {
   })
 }
 describe('bounded browser timeline state', () => {
+  it('defaults provider selection to Codex + sol + medium during SSR', () => {
+    expect(readStoredProviderSelection()).toEqual({
+      provider: 'codex',
+      modelId: '',
+      effort: 'medium',
+    })
+  })
+  it('maps Claude defaults and Gemini none in the provider picker', () => {
+    expect(
+      providerPickerSelection('claude', [
+        {
+          modelId: 'claude-sonnet',
+          isDefault: true,
+          hidden: false,
+          defaultReasoningEffort: 'high',
+        },
+      ]),
+    ).toEqual({ modelId: 'claude-sonnet', effort: 'high' })
+    expect(
+      providerPickerSelection('gemini', [
+        {
+          modelId: 'gemini-flash',
+          isDefault: true,
+          hidden: false,
+          defaultReasoningEffort: 'none',
+        },
+      ]),
+    ).toEqual({ modelId: 'gemini-flash', effort: 'none' })
+  })
+  it('renders actionable auth and unknown/capacity guidance', () => {
+    expect(providerAuthMessage('claude', 'required', 'Run login')).toContain(
+      'login gerekli',
+    )
+    expect(providerAuthMessage('gemini', 'unknown')).toContain('capacity')
+  })
+  it('restores provider, model, and effort selection after reload', () => {
+    expect(
+      parseStoredProviderSelection(
+        JSON.stringify({
+          provider: 'claude',
+          modelId: 'claude-sonnet',
+          effort: 'high',
+        }),
+      ),
+    ).toEqual({
+      provider: 'claude',
+      modelId: 'claude-sonnet',
+      effort: 'high',
+    })
+  })
   it('resets the realtime cursor when navigating between sessions', () => {
     expect(sessionScopedCursor('ses_a', 'ses_b', 42)).toBe(0)
     expect(sessionScopedCursor('ses_a', 'ses_a', 42)).toBe(42)

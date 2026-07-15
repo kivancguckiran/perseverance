@@ -1455,6 +1455,86 @@ function ConversationHistory({
   )
 }
 
+export function readStoredProviderSelection(): {
+  provider: 'codex' | 'claude' | 'gemini'
+  modelId: string
+  effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+} {
+  return parseStoredProviderSelection(
+    typeof window === 'undefined'
+      ? null
+      : window.localStorage.getItem('provider-selection-v1'),
+  )
+}
+
+export function parseStoredProviderSelection(raw: string | null): {
+  provider: 'codex' | 'claude' | 'gemini'
+  modelId: string
+  effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+} {
+  const fallback = {
+    provider: 'codex' as const,
+    modelId: '',
+    effort: 'medium' as const,
+  }
+  if (!raw) return fallback
+  try {
+    const saved = JSON.parse(raw) as Record<string, unknown> | null
+    const providers = ['codex', 'claude', 'gemini'] as const
+    const efforts = [
+      'none',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+    ] as const
+    return saved &&
+      providers.includes(saved.provider as (typeof providers)[number]) &&
+      typeof saved.modelId === 'string' &&
+      efforts.includes(saved.effort as (typeof efforts)[number])
+      ? {
+          provider: saved.provider as (typeof providers)[number],
+          modelId: saved.modelId,
+          effort: saved.effort as (typeof efforts)[number],
+        }
+      : fallback
+  } catch {
+    return fallback
+  }
+}
+
+export function providerPickerSelection(
+  provider: 'codex' | 'claude' | 'gemini',
+  models: Array<{
+    modelId: string
+    isDefault: boolean
+    hidden: boolean
+    defaultReasoningEffort:
+      'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  }> = [],
+) {
+  const model = models.find((entry) => entry.isDefault && !entry.hidden)
+  return provider === 'codex'
+    ? { modelId: '', effort: 'medium' as const }
+    : {
+        modelId: model?.modelId ?? '',
+        effort: model?.defaultReasoningEffort ?? ('none' as const),
+      }
+}
+
+export function providerAuthMessage(
+  provider: 'claude' | 'gemini',
+  authStatus: 'ready' | 'required' | 'unknown',
+  instruction?: string | null,
+) {
+  if (authStatus === 'required')
+    return `${provider} login gerekli. ${instruction ?? ''}`
+  if (authStatus === 'unknown')
+    return 'Gemini auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın; capacity hatasında daha sonra yeniden deneyin.'
+  return `${provider} auth hazır.`
+}
+
 export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const navigate = useNavigate()
   const meta = useQuery({
@@ -1521,11 +1601,24 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [attachmentPending, setAttachmentPending] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<
     'codex' | 'claude' | 'gemini'
-  >('codex')
-  const [selectedModelId, setSelectedModelId] = useState('')
+  >(() => readStoredProviderSelection().provider)
+  const [selectedModelId, setSelectedModelId] = useState(
+    () => readStoredProviderSelection().modelId,
+  )
   const [selectedEffort, setSelectedEffort] = useState<
     'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-  >('medium')
+  >(() => readStoredProviderSelection().effort)
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      'provider-selection-v1',
+      JSON.stringify({
+        provider: selectedProvider,
+        modelId: selectedModelId,
+        effort: selectedEffort,
+      }),
+    )
+  }, [selectedEffort, selectedModelId, selectedProvider])
   const lastSequence = useRef(0)
   const timelineRef = useRef<HTMLDivElement>(null)
   const chatSurfaceRef = useRef<HTMLElement>(null)
@@ -1818,6 +1911,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           support === 'supported' ? [] : [`${capability}: ${support}`],
       )
     : []
+  const selectedProviderReadiness =
+    providerCatalogs.data?.readiness[selectedProvider]
 
   async function createSession(folderId = selectedFolderId) {
     setSessionPending(true)
@@ -2220,18 +2315,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   const catalog = providerCatalogs.data?.catalogs.find(
                     (entry) => entry.identity.provider === provider,
                   )
-                  const model = catalog?.models.find(
-                    (entry) => entry.isDefault && !entry.hidden,
+                  const selection = providerPickerSelection(
+                    provider,
+                    catalog?.models,
                   )
                   setSelectedProvider(provider)
-                  setSelectedModelId(
-                    provider === 'codex' ? '' : (model?.modelId ?? ''),
-                  )
-                  setSelectedEffort(
-                    provider === 'codex'
-                      ? 'medium'
-                      : (model?.defaultReasoningEffort ?? 'none'),
-                  )
+                  setSelectedModelId(selection.modelId)
+                  setSelectedEffort(selection.effort)
                 }}
               >
                 {(providerCatalogs.data?.catalogs ?? []).map((catalog) => (
@@ -2295,6 +2385,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 {capabilityWarnings.join(' · ')}
               </p>
             ) : null}
+            {selectedProvider !== 'codex' && selectedProviderReadiness ? (
+              <p className="capability-warning" role="status">
+                {providerAuthMessage(
+                  selectedProvider,
+                  selectedProviderReadiness.authStatus,
+                  selectedProviderReadiness.instruction,
+                )}
+              </p>
+            ) : null}
             {providerCatalogs.isError ? (
               <p className="form-error">Provider catalog alınamadı.</p>
             ) : null}
@@ -2306,7 +2405,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               sessionPending ||
               (!authReady && selectedProvider === 'codex') ||
               !selectedModel ||
-              !availableEfforts.includes(selectedEffort)
+              !availableEfforts.includes(selectedEffort) ||
+              selectedProviderReadiness?.ready === false
             }
             onClick={() => void createSession()}
           >

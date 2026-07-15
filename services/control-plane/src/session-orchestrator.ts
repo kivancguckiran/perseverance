@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { spawn } from 'node:child_process'
-import { createInterface } from 'node:readline'
 import type {
   ArtifactMetadata,
   ArtifactStorage,
@@ -50,6 +48,7 @@ import {
   ClaudeCodeRuntimeAdapter,
   GeminiCliRuntimeAdapter,
 } from '@persistent-codex/provider-cli-adapters'
+import { CodexTitleProcessRunner } from './title-process-runner'
 import {
   CodexAppServerError,
   ProcessExitedError,
@@ -608,6 +607,29 @@ export class SessionOrchestrator {
     return catalogs.sort((left, right) =>
       left.identity.provider.localeCompare(right.identity.provider),
     )
+  }
+
+  async listProviderReadiness(input: {
+    tenantId: string
+    workspaceId: string
+  }) {
+    const entries = await Promise.all(
+      (['claude', 'gemini'] as const).flatMap((provider) =>
+        this.#providerCatalogs.has(provider)
+          ? [
+              (async () =>
+                [
+                  provider,
+                  await this.#cliAdapter(provider, {
+                    ...input,
+                    sessionId: '__readiness__',
+                  }).checkReadiness!(),
+                ] as const)(),
+            ]
+          : [],
+      ),
+    )
+    return Object.fromEntries(entries)
   }
 
   async createSession(input: {
@@ -1979,74 +2001,22 @@ export class SessionOrchestrator {
         (message, index) => `Message ${index + 1}: ${message.slice(0, 2000)}`,
       ),
     ].join('\n')
-    return await new Promise((resolve, reject) => {
-      const child = spawn(
-        process.env.CODEX_BINARY ?? 'codex',
-        [
-          'exec',
-          '--json',
-          '--skip-git-repo-check',
-          '--sandbox',
-          'read-only',
-          '--model',
-          input.modelId,
-          '--config',
-          'model_reasoning_effort="none"',
-          prompt,
-        ],
-        {
-          cwd: '/private/tmp',
-          env: { ...process.env, CODEX_HOME: this.#codexHome(input.scope) },
-          stdio: ['ignore', 'pipe', 'ignore'],
-        },
-      )
-      let title = ''
-      let usage:
-        import('@persistent-codex/provider-platform').UsageReport | undefined
-      const lines = createInterface({
-        input: child.stdout,
-        crlfDelay: Infinity,
-      })
-      lines.on('line', (line) => {
-        try {
-          const event = JSON.parse(line) as Record<string, any>
-          if (
-            event.type === 'item.completed' &&
-            event.item?.type === 'agent_message' &&
-            typeof event.item.text === 'string'
-          )
-            title = event.item.text
-          if (event.type === 'turn.completed' && event.usage) {
-            usage = {
-              schemaVersion: 1,
-              kind: 'cumulative',
-              provider: 'codex',
-              requestId: `title:${input.scope.sessionId}`,
-              dedupeKey: `title:${input.scope.sessionId}:v1`,
-              counters: {
-                inputTokens: Number(event.usage.input_tokens ?? 0),
-                cachedInputTokens: Number(event.usage.cached_input_tokens ?? 0),
-                outputTokens: Number(event.usage.output_tokens ?? 0),
-                reasoningTokens: Number(
-                  event.usage.reasoning_output_tokens ?? 0,
-                ),
-                toolUnits: 0,
-              },
-              completeness: 'complete',
-              occurredAt: new Date().toISOString(),
-            }
-          }
-        } catch {
-          /* non-JSON output is never parsed as a title */
-        }
-      })
-      child.once('error', reject)
-      child.once('exit', (code) => {
-        if (code !== 0) reject(new Error('Codex title process failed'))
-        else if (!title.trim())
-          reject(new Error('Codex title output was empty'))
-        else resolve({ title, ...(usage ? { usage } : {}) })
-      })
+    return await new CodexTitleProcessRunner().run({
+      binary: process.env.CODEX_BINARY ?? 'codex',
+      args: [
+        'exec',
+        '--json',
+        '--skip-git-repo-check',
+        '--sandbox',
+        'read-only',
+        '--model',
+        input.modelId,
+        '--config',
+        'model_reasoning_effort="none"',
+        prompt,
+      ],
+      codexHome: this.#codexHome(input.scope),
+      requestId: `title:${input.scope.sessionId}`,
     })
   }
 

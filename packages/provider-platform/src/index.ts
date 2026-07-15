@@ -293,6 +293,7 @@ export const providerErrorSchema = z.object({
   provider: providerIdSchema,
   code: z.enum([
     'unauthorized',
+    'capacity_exhausted',
     'rate_limited',
     'model_unavailable',
     'capability_unsupported',
@@ -335,8 +336,14 @@ export interface ProviderTurnTerminal {
 export interface ProviderReadiness {
   ready: boolean
   version: string | null
-  authReady: boolean
-  code: 'ready' | 'binary_missing' | 'version_mismatch' | 'auth_required'
+  authReady: boolean | null
+  authStatus: 'ready' | 'required' | 'unknown'
+  code:
+    | 'ready'
+    | 'binary_missing'
+    | 'version_mismatch'
+    | 'auth_required'
+    | 'auth_unknown'
   instruction: string | null
 }
 
