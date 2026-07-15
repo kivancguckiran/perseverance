@@ -1,5 +1,15 @@
 const mode = process.argv[2]
 
+if (mode === 'ignore-signals') {
+  process.on('SIGINT', () => {})
+  process.on('SIGTERM', () => {})
+} else if (mode === 'interrupt-exit') {
+  process.on('SIGINT', () => {
+    process.stderr.write('interrupted by fixture\n')
+    process.exit(130)
+  })
+}
+
 console.log(
   JSON.stringify({
     type: 'system',
@@ -7,6 +17,7 @@ console.log(
     session_id: 'fixture-session',
   }),
 )
+console.log(JSON.stringify({ type: 'ready', mode }))
 
 if (mode === 'complete') {
   console.log(
@@ -17,14 +28,5 @@ if (mode === 'complete') {
     }),
   )
 } else {
-  if (mode === 'ignore-signals') {
-    process.on('SIGINT', () => {})
-    process.on('SIGTERM', () => {})
-  } else {
-    process.on('SIGINT', () => {
-      process.stderr.write('interrupted by fixture\n')
-      process.exit(130)
-    })
-  }
   setInterval(() => {}, 1_000)
 }
