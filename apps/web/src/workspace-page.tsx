@@ -25,6 +25,7 @@ import {
   type ConversationFolder,
   type ConversationAttachment,
   type SessionSummary,
+  type DurableRun,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
@@ -62,6 +63,16 @@ const supportedAttachmentTypes = new Set([
   'application/json',
   'application/pdf',
 ])
+
+export function serverOwnedRunLabel(
+  status: DurableRun['status'],
+  realtimeState: string,
+) {
+  if (status === 'interrupting') return 'Durduruluyor…'
+  return realtimeState === 'canlı'
+    ? 'Server üzerinde çalışıyor'
+    : 'Arka planda çalışıyor · bağlantı yeniden kuruluyor'
+}
 
 export function attachmentMediaType(file: Pick<File, 'name' | 'type'>) {
   if (supportedAttachmentTypes.has(file.type)) return file.type
@@ -1625,6 +1636,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         if (!parsed.success) return
         if (parsed.data.type === 'replay') apply(parsed.data.events)
         if (parsed.data.type === 'event') apply([parsed.data.event])
+        if (
+          parsed.data.type === 'subscribed' ||
+          (parsed.data.type === 'event' &&
+            parsed.data.event.type === 'turn.completed')
+        )
+          void readSessionDetail(session.sessionId).then((loaded) => {
+            if (active && loaded) setSession(loaded)
+          })
         if (parsed.data.type === 'event' || parsed.data.type === 'replay') {
           socket?.send(
             JSON.stringify({
@@ -1660,7 +1679,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       if (reconnectTimer) clearTimeout(reconnectTimer)
       socket?.close()
     }
-  }, [session])
+  }, [session?.sessionId])
 
   async function decideApproval(
     approval: Approval,
@@ -1728,8 +1747,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       if (event.type === 'turn.started') active = true
       if (event.type === 'turn.completed') active = false
     }
-    return active
-  }, [events])
+    return (
+      active ||
+      session?.activeRun?.status === 'queued' ||
+      session?.activeRun?.status === 'running' ||
+      session?.activeRun?.status === 'interrupting'
+    )
+  }, [events, session?.activeRun?.status])
 
   useEffect(() => {
     if (!followChatRef.current && !forceChatScrollRef.current) return
@@ -1944,8 +1968,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       )
         current = undefined
     }
-    return current
-  }, [events])
+    return current ?? session?.activeRun?.turnId ?? undefined
+  }, [events, session?.activeRun?.turnId])
 
   async function steerOrInterrupt(action: 'steer' | 'interrupt') {
     if (!session || !activeTurnId) return
@@ -2294,6 +2318,18 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             }}
           >
             <div className="chat-content" ref={chatContentRef}>
+              {turnActive ? (
+                <p className="background-run-banner" role="status">
+                  {serverOwnedRunLabel(
+                    session?.activeRun?.status ?? 'running',
+                    realtimeState,
+                  )}
+                </p>
+              ) : session?.latestRun?.terminalOutcome ? (
+                <p className="background-run-banner is-terminal" role="status">
+                  Son çalışma: {session.latestRun.terminalOutcome}
+                </p>
+              ) : null}
               {[...approvals.values()]
                 .filter((approval) => approval.sessionId === session?.sessionId)
                 .map((approval) => (

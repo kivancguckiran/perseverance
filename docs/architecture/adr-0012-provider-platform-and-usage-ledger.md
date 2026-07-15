@@ -63,3 +63,7 @@ dışındadır. `usage_cursors` ledger'ın doğruluk kaynağı değil, append-on
 yeniden kurulabilen idempotency projection'ıdır. Provider katalog veya fiyat config'i
 eksikse yeni iş görünür configuration error ya da partial/unpriced kayıt üretir; sistem
 model ID veya sıfır maliyet tahmin etmez.
+
+WP14 accounting finalization ADR-0013 ile eklenmiştir: cumulative Codex snapshot'ları
+`tokenUsage.total` üzerinden stable ingest key ile yazılır; durable run terminal geçişi,
+turn sonucu ve terminal ledger kaydı aynı transaction'da finalize edilir.

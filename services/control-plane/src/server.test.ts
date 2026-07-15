@@ -2009,6 +2009,177 @@ describe('control plane WebSocket replay/live stream', () => {
     })
   })
 
+  it('keeps a delayed turn running after WebSocket disconnect and replays its terminal output', async () => {
+    class DelayedClient extends FakeRuntimeClient {
+      override async request<TResult>(method: string, params: unknown) {
+        if (method !== 'turn/start')
+          return super.request<TResult>(method, params)
+        this.requests.push(method)
+        this.turnStartCalls += 1
+        const threadId = (params as { threadId: string }).threadId
+        setTimeout(() => {
+          this.emitNotification({
+            method: 'turn/started',
+            params: {
+              threadId,
+              turn: {
+                id: this.fixture.turnId,
+                status: 'inProgress',
+                items: [],
+                error: null,
+              },
+            },
+          })
+          this.emitNotification({
+            method: 'item/completed',
+            params: {
+              threadId,
+              turnId: this.fixture.turnId,
+              item: {
+                type: 'agentMessage',
+                id: this.fixture.itemId,
+                text: 'detached completion',
+                phase: null,
+                memoryCitation: null,
+              },
+              completedAtMs: 1,
+            },
+          })
+          this.emitNotification({
+            method: 'thread/tokenUsage/updated',
+            params: {
+              threadId,
+              turnId: this.fixture.turnId,
+              tokenUsage: {
+                total: {
+                  totalTokens: 15,
+                  inputTokens: 10,
+                  cachedInputTokens: 2,
+                  outputTokens: 5,
+                  reasoningOutputTokens: 1,
+                },
+                last: {
+                  totalTokens: 15,
+                  inputTokens: 10,
+                  cachedInputTokens: 2,
+                  outputTokens: 5,
+                  reasoningOutputTokens: 1,
+                },
+                modelContextWindow: 200000,
+              },
+            },
+          })
+          this.emitNotification({
+            method: 'turn/completed',
+            params: {
+              threadId,
+              turn: {
+                id: this.fixture.turnId,
+                status: 'completed',
+                items: [],
+                error: null,
+              },
+            },
+          })
+        }, 60)
+        return {
+          turn: {
+            id: this.fixture.turnId,
+            status: 'inProgress',
+            items: [],
+            error: null,
+          },
+        } as TResult
+      }
+    }
+    const client = new DelayedClient({ turnId: 'turn_detached' })
+    store = new SqliteEventStore()
+    app = await buildControlPlane({
+      eventStore: store,
+      runtimeClientFactory: () => client,
+      sessionIdFactory: () => scope.sessionId,
+      runIdFactory: () => 'run_detached',
+    })
+    await app.ready()
+    expect(
+      (
+        await app!.inject({
+          method: 'POST',
+          url: '/v1/sessions',
+          headers,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(201)
+    const first = await connect()
+    subscribe(first.socket)
+    await first.reader.next()
+    await first.reader.next()
+    const accepted = await app!.inject({
+      method: 'POST',
+      url: `/v1/sessions/${scope.sessionId}/turns`,
+      headers: { ...headers, 'idempotency-key': 'detached-start' },
+      payload: { prompt: 'finish after disconnect' },
+    })
+    expect(accepted.statusCode).toBe(202)
+    expect(accepted.json()).toMatchObject({
+      runId: 'run_detached',
+      codexTurnId: 'turn_detached',
+    })
+    first.socket.close()
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(client.requests).not.toContain('turn/interrupt')
+    const reconnect = await connect()
+    subscribe(reconnect.socket)
+    const replay = await reconnect.reader.next()
+    expect(replay).toMatchObject({ type: 'replay' })
+    if (replay.type !== 'replay') throw new Error('Replay was not delivered')
+    expect(replay.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'agent.message.completed',
+          codexTurnId: 'turn_detached',
+          payload: { text: 'detached completion' },
+        }),
+        expect.objectContaining({
+          type: 'turn.completed',
+          codexTurnId: 'turn_detached',
+          payload: { status: 'completed' },
+        }),
+      ]),
+    )
+    const detail = await app!.inject({
+      method: 'GET',
+      url: `/v1/sessions/${scope.sessionId}`,
+      headers,
+    })
+    expect(detail.json()).toMatchObject({
+      activeRun: null,
+      latestRun: {
+        runId: 'run_detached',
+        turnId: 'turn_detached',
+        terminalOutcome: 'completed',
+      },
+    })
+    const usage = await app!.inject({
+      method: 'GET',
+      url: `/v1/sessions/${scope.sessionId}/turns/turn_detached/usage`,
+      headers,
+    })
+    expect(usage.json()).toMatchObject({
+      outcome: 'completed',
+      completeness: 'partial',
+      reconciliationStatus: 'unreconciled',
+      counters: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 5,
+        reasoningTokens: 1,
+      },
+    })
+    reconnect.socket.close()
+  })
+
   it('enforces monotonic, in-scope, non-ahead acknowledgements', async () => {
     const current = await setup()
     ingest(current, 'one')
@@ -2345,7 +2516,7 @@ describe('WP4 session, turn and live event flow', () => {
     ])
     expect(first.statusCode).toBe(202)
     expect(competing.statusCode).toBe(409)
-    expect(competing.json()).toMatchObject({ code: 'WORKSPACE_TURN_ACTIVE' })
+    expect(competing.json()).toMatchObject({ code: 'SESSION_TURN_ACTIVE' })
     expect(client.turnStartCalls).toBe(1)
   })
 
@@ -2383,6 +2554,130 @@ describe('WP4 session, turn and live event flow', () => {
       'thread/resume',
       'turn/start',
     ])
+  })
+
+  it('reconciles a durable run after restart without submitting the prompt twice', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wp14-run-recovery-'))
+    const databasePath = join(directory, 'events.sqlite')
+    class HoldingClient extends FakeRuntimeClient {
+      override async request<TResult>(method: string, params: unknown) {
+        if (method !== 'turn/start')
+          return super.request<TResult>(method, params)
+        this.requests.push(method)
+        this.turnStartCalls += 1
+        return {
+          turn: {
+            id: this.fixture.turnId,
+            status: 'inProgress',
+            items: [],
+            error: null,
+          },
+        } as TResult
+      }
+    }
+    const firstClient = new HoldingClient({
+      threadId: 'thr_durable_restart',
+      turnId: 'turn_durable_restart',
+    })
+    const firstStore = new SqliteEventStore(databasePath)
+    const first = await buildControlPlane({
+      eventStore: firstStore,
+      runtimeClientFactory: () => firstClient,
+      sessionIdFactory: () => 'ses_durable_restart',
+      runIdFactory: () => 'run_durable_restart',
+    })
+    const scoped = {
+      'x-tenant-id': 'ten_durable_restart',
+      'x-workspace-id': 'wsp_durable_restart',
+    }
+    try {
+      expect(
+        (
+          await first.inject({
+            method: 'POST',
+            url: '/v1/sessions',
+            headers: scoped,
+            payload: {},
+          })
+        ).statusCode,
+      ).toBe(201)
+      const accepted = await first.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_durable_restart/turns',
+        headers: { ...scoped, 'idempotency-key': 'durable-start' },
+        payload: { prompt: 'submit exactly once' },
+      })
+      expect(accepted.statusCode).toBe(202)
+      expect(firstClient.turnStartCalls).toBe(1)
+    } finally {
+      await first.close()
+      firstStore.close()
+    }
+
+    const recoveredClient = new FakeRuntimeClient({
+      threadId: 'thr_durable_restart',
+      turnId: 'turn_durable_restart',
+    })
+    recoveredClient.snapshotTurns = [
+      {
+        id: 'turn_durable_restart',
+        status: 'completed',
+        items: [
+          {
+            type: 'agentMessage',
+            id: 'msg_recovered',
+            text: 'recovered output',
+            phase: null,
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    ]
+    const recoveredStore = new SqliteEventStore(databasePath)
+    const recovered = await buildControlPlane({
+      eventStore: recoveredStore,
+      runtimeClientFactory: () => recoveredClient,
+    })
+    try {
+      const resumed = await recovered.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_durable_restart/resume',
+        headers: { ...scoped, 'idempotency-key': 'durable-reconcile' },
+        payload: {},
+      })
+      expect(resumed.statusCode).toBe(200)
+      expect(resumed.json()).toMatchObject({
+        activeRun: null,
+        latestRun: {
+          runId: 'run_durable_restart',
+          turnId: 'turn_durable_restart',
+          terminalOutcome: 'completed',
+        },
+      })
+      expect(recoveredClient.turnStartCalls).toBe(0)
+      expect(
+        recoveredStore
+          .replaySessionEvents(
+            {
+              tenantId: 'ten_durable_restart',
+              workspaceId: 'wsp_durable_restart',
+              sessionId: 'ses_durable_restart',
+            },
+            0,
+            100,
+          )
+          .events.filter((event) => event.type === 'turn.completed'),
+      ).toHaveLength(1)
+    } finally {
+      await recovered.close()
+      recoveredStore.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('moves a session to recovery_required when its bound thread is missing', async () => {

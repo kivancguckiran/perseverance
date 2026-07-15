@@ -94,6 +94,7 @@ export interface ControlPlaneOptions {
     identity: WorkspaceRuntimeIdentity,
   ) => WorkspaceRuntimeClient
   sessionIdFactory?: () => string
+  runIdFactory?: () => string
   runtimeInstanceIdFactory?: () => string
   approvalPolicy?: 'untrusted' | 'on-request' | 'never'
   codexHomeRoot?: string
@@ -460,6 +461,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     ...(options.sessionIdFactory
       ? { sessionIdFactory: options.sessionIdFactory }
       : {}),
+    ...(options.runIdFactory ? { runIdFactory: options.runIdFactory } : {}),
     ...(options.runtimeInstanceIdFactory
       ? { runtimeInstanceIdFactory: options.runtimeInstanceIdFactory }
       : {}),

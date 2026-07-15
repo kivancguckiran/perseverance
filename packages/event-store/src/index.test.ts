@@ -599,7 +599,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 9,
+        user_version: 10,
       })
       database.close()
     } finally {
@@ -843,7 +843,7 @@ describe('WP11 durable audit', () => {
       expect(reopened.listAudit(scope).records).toHaveLength(1)
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
-        user_version: 9,
+        user_version: 10,
       })
       database.close()
     } finally {
@@ -1115,5 +1115,90 @@ describe('WP13 provider persistence and append-only usage ledger', () => {
       /prompt|credential|Bearer|model response/i,
     )
     store.close()
+  })
+})
+
+describe('WP14 durable detached run lifecycle', () => {
+  it('enforces the explicit lifecycle and idempotent terminal transition', () => {
+    const store = new SqliteEventStore(':memory:')
+    store.createSession(scope)
+    expect(
+      store.createDurableRun({ ...scope, runId: 'run_1', provider: 'codex' }),
+    ).toMatchObject({ status: 'queued', attempt: 1, turnId: null })
+    expect(
+      store.bindDurableRunTurn({
+        ...scope,
+        runId: 'run_1',
+        turnId: 'turn_1',
+        providerTurnId: 'turn_1',
+        runtimeGeneration: 2,
+      }),
+    ).toMatchObject({ status: 'running', runtimeGeneration: 2 })
+    expect(store.markDurableRunInterrupting(scope, 'run_1')).toMatchObject({
+      status: 'interrupting',
+    })
+    const terminal = store.finalizeDurableRun({
+      ...scope,
+      runId: 'run_1',
+      outcome: 'interrupted',
+      completeness: 'partial',
+    })
+    expect(terminal).toMatchObject({
+      status: 'interrupted',
+      terminalOutcome: 'interrupted',
+    })
+    expect(
+      store.finalizeDurableRun({
+        ...scope,
+        runId: 'run_1',
+        outcome: 'interrupted',
+        completeness: 'partial',
+      }),
+    ).toEqual(terminal)
+    store.close()
+  })
+
+  it('protects one active run per session at the database boundary', () => {
+    const store = new SqliteEventStore(':memory:')
+    store.createSession(scope)
+    store.createDurableRun({ ...scope, runId: 'run_first', provider: 'codex' })
+    expect(() =>
+      store.createDurableRun({
+        ...scope,
+        runId: 'run_competing',
+        provider: 'codex',
+      }),
+    ).toThrowError(/already has an active durable run/)
+    expect(store.getActiveDurableRun(scope)?.runId).toBe('run_first')
+    store.close()
+  })
+
+  it('migrates to schema v10 and marks only unknown pre-ack runs for recovery on reopen', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'durable-run-reopen-'))
+    const path = join(directory, 'events.sqlite')
+    const first = new SqliteEventStore(path)
+    first.createSession(scope)
+    first.createDurableRun({
+      ...scope,
+      runId: 'run_unknown',
+      provider: 'codex',
+    })
+    first.close()
+    const reopened = new SqliteEventStore(path)
+    try {
+      expect(reopened.getLatestDurableRun(scope)).toMatchObject({
+        runId: 'run_unknown',
+        status: 'recovery_required',
+        recoveryCode: 'RECOVERY_OUTCOME_UNKNOWN',
+      })
+      const database = new DatabaseSync(path)
+      expect(database.prepare('PRAGMA user_version').get()).toEqual({
+        user_version: 10,
+      })
+      database.close()
+    } finally {
+      reopened.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

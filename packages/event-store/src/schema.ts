@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 9
+export const CURRENT_SCHEMA_VERSION = 10
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -70,6 +70,43 @@ export const CREATE_SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS turns_session_started_idx
     ON turns(tenant_id, workspace_id, session_id, started_at);
+
+  CREATE TABLE IF NOT EXISTS durable_runs (
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    turn_id TEXT,
+    provider_turn_id TEXT,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN (
+      'queued', 'running', 'interrupting', 'completed', 'failed',
+      'interrupted', 'recovery_required'
+    )),
+    attempt INTEGER NOT NULL DEFAULT 1 CHECK(attempt > 0),
+    runtime_generation INTEGER,
+    terminal_outcome TEXT CHECK(terminal_outcome IS NULL OR terminal_outcome IN (
+      'completed', 'failed', 'interrupted'
+    )),
+    recovery_code TEXT,
+    recovery_detail TEXT,
+    queued_at TEXT NOT NULL,
+    started_at TEXT,
+    interrupt_requested_at TEXT,
+    terminal_at TEXT,
+    last_reconciled_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, workspace_id, session_id, run_id),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id),
+    UNIQUE (tenant_id, workspace_id, session_id, turn_id)
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS durable_runs_one_active_per_session_idx
+    ON durable_runs(tenant_id, workspace_id, session_id)
+    WHERE status IN ('queued', 'running', 'interrupting');
+  CREATE INDEX IF NOT EXISTS durable_runs_session_updated_idx
+    ON durable_runs(tenant_id, workspace_id, session_id, updated_at DESC);
 
   CREATE TABLE IF NOT EXISTS usage_ledger (
     ledger_id INTEGER PRIMARY KEY AUTOINCREMENT,

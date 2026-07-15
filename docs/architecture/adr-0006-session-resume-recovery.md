@@ -21,6 +21,10 @@ Startup sırasında turn, resume, steer veya interrupt için `pending` kalan ide
 
 Browser session URL’sinden detail’i yükler, durable cursor’dan replay eder, eventId/sequence ile duplicate engeller ve replay→live high-water protokolünü korur. Approval state ayrıca REST ile reconcile edilir. `turn/steer` zorunlu `expectedTurnId` kullanır; `turn/interrupt` aynı terminal sonucu tekrar döndürebilir ve pending approval’ları supersede eder.
 
+WP14 ile bu kararın aktif-turn kısmı ADR-0013'teki server-owned `durable_runs`
+kaydıyla somutlaştırılmıştır. Restart sırasında bound run snapshot'tan reconcile edilir;
+provider turn kimliği veya interrupt sonucu bilinmeyen kayıt otomatik yeniden gönderilmez.
+
 ## Sonuçlar
 
 Normal Codex Desktop task deposu PoC session’larıyla karışmaz. Home root kaybı otomatik yeni konuşmayla maskelenmez. Crash-safe yaklaşım bazı belirsiz isteklerde kullanıcı müdahalesi gerektirir; güvenli tekrar davranışı bunun karşılığında korunur.
