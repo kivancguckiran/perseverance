@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 15 Temmuz 2026
-- Aktif iş paketi: WP15
+- Aktif iş paketi: WP16
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
@@ -95,8 +95,8 @@ conversation başlığı ikinci kullanıcı mesajından sonra `luna` model polit
 | ----- | ---------- | ----------------------------------------------------------------------------- |
 | WP13  | Tamamlandı | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
 | WP14  | Tamamlandı | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
-| WP15  | Aktif      | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
-| WP16  | Bekliyor   | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
+| WP15  | Tamamlandı | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
+| WP16  | Aktif      | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
 
 ## 5. WP13 — Platform sözleşmesi ve maliyet temeli
 
@@ -192,6 +192,16 @@ WP14 tamamlandıktan sonra resmi ve pinli yüzeylerle Claude ile Gemini adapter'
 arayüze eklenir; capability farkları normalize edilir ve bilinmeyen event korunur.
 Conversation model/effort seçimi UI/API'ye bağlanır, Codex için `sol + medium` varsayılanı
 ve ikinci kullanıcı mesajından sonra idempotent `luna + none` title job uygulanır.
+
+### Kabul sonucu
+
+WP15 bağımsız olarak kabul edildi. `aabd6bd`, `ddd3079`, `37455d2` ve `5835809`
+commit'leri üzerinde ortak provider adapter arayüzü, Claude/Gemini process adapter'ları,
+model/effort seçimi, Codex `sol + medium` varsayılanı ve ikinci kullanıcı mesajından sonra
+idempotent `luna + none` başlık üretimi doğrulandı. Provider interrupt acceptance testi
+10 bağımsız tekrarın tamamında geçti; güncel HEAD üzerinde 16 test dosyasında 196 test,
+production build ve SSR HTTP smoke başarılıydı. Gerçek Claude, Gemini ve Codex title
+smoke'ları ile 1280×720 ve 390×844 browser kontrolleri de geçti. WP16 tek aktif pakettir.
 
 ## 8. WP16 — PWA, maliyet görünümü ve Faz 2 kabulü
 
