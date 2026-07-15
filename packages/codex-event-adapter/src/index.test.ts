@@ -9,8 +9,51 @@ import {
   CodexEnvelopeValidationError,
   CodexEventAdapter,
   TimelineReconciler,
+  codexModelCatalog,
   ingestRawCodexEnvelope,
 } from './index'
+
+describe('Codex provider model catalog', () => {
+  it('maps model/list identities, capabilities, and reasoning efforts', () => {
+    const catalog = codexModelCatalog(
+      {
+        data: [
+          {
+            id: 'opaque-fixture-id',
+            model: 'fixture-upstream-model',
+            upgrade: null,
+            upgradeInfo: null,
+            availabilityNux: null,
+            displayName: 'Fixture model',
+            description: 'fixture',
+            hidden: false,
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'none', description: 'None' },
+              { reasoningEffort: 'medium', description: 'Medium' },
+            ],
+            defaultReasoningEffort: 'medium',
+            inputModalities: ['text', 'image'],
+            supportsPersonality: false,
+            additionalSpeedTiers: [],
+            serviceTiers: [],
+            defaultServiceTier: null,
+            isDefault: true,
+          },
+        ],
+        nextCursor: null,
+      },
+      {
+        sourceVersion: 'fixture-version',
+        discoveredAt: '2026-07-15T00:00:00.000Z',
+      },
+    )
+    expect(catalog.models[0]).toMatchObject({
+      modelId: 'fixture-upstream-model',
+      reasoningEfforts: ['none', 'medium'],
+      capabilities: { imageInput: 'supported', interrupt: 'supported' },
+    })
+  })
+})
 
 const goldenDirectory = fileURLToPath(
   new URL('../../../tests/golden-sessions/', import.meta.url),

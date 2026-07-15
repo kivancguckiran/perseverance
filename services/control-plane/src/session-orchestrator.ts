@@ -8,7 +8,10 @@ import {
   DEFAULT_ARTIFACT_CHUNK_BYTES,
   redactCommandOutput,
 } from '@persistent-codex/artifact-storage'
-import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
+import {
+  CodexEventAdapter,
+  CodexProviderRuntimeAdapter,
+} from '@persistent-codex/codex-event-adapter'
 import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import {
   readinessResponseSchema,
@@ -21,10 +24,19 @@ import {
 import {
   SqliteEventStore,
   StoreConflictError,
+  StoreNotFoundError,
   type StoreScope,
   type ApprovalDecision,
   type ApprovalRecord,
 } from '@persistent-codex/event-store'
+import {
+  DEFAULT_CONVERSATION_POLICY,
+  DEFAULT_MODEL_ALIAS_CONFIG,
+  ProviderConfigurationError,
+  resolveModelPolicy,
+  type ModelAliasConfig,
+  type PriceCatalog,
+} from '@persistent-codex/provider-platform'
 import {
   CodexAppServerError,
   ProcessExitedError,
@@ -113,6 +125,8 @@ export interface SessionOrchestratorOptions {
     toState: string
   }) => void
   artifactStorage?: ArtifactStorage
+  modelAliases?: ModelAliasConfig
+  priceCatalog?: PriceCatalog
 }
 
 function threadIdOf(message: Record<string, unknown>): string | undefined {
@@ -222,6 +236,8 @@ export class SessionOrchestrator {
   readonly #artifactStorage: ArtifactStorage | undefined
   readonly #onRuntimeHealth: SessionOrchestratorOptions['onRuntimeHealth']
   readonly #onAuthTransition: SessionOrchestratorOptions['onAuthTransition']
+  readonly #modelAliases: ModelAliasConfig
+  readonly #priceCatalog: PriceCatalog | undefined
   readonly #authStates = new Map<string, string>()
   readonly #gitReaders = new Map<string, GitSnapshotReader>()
   readonly #commandArtifacts = new Map<
@@ -272,6 +288,8 @@ export class SessionOrchestrator {
     this.#artifactStorage = options.artifactStorage
     this.#onRuntimeHealth = options.onRuntimeHealth
     this.#onAuthTransition = options.onAuthTransition
+    this.#modelAliases = options.modelAliases ?? DEFAULT_MODEL_ALIAS_CONFIG
+    this.#priceCatalog = options.priceCatalog
     this.#registry = new WorkspaceRuntimeRegistry({
       ...(options.runtimeClientFactory
         ? { clientFactory: options.runtimeClientFactory }
@@ -452,8 +470,43 @@ export class SessionOrchestrator {
       ...input,
       sessionId: this.#sessionIdFactory(),
     }
+    const cwd =
+      typeof this.#workspaceCwd === 'function'
+        ? this.#workspaceCwd(input)
+        : this.#workspaceCwd
+
+    const runtime = await this.#registry.getOrInitialize({
+      ...input,
+      cwd,
+      codexHome: this.#codexHome(input),
+    })
+    const provider = new CodexProviderRuntimeAdapter({
+      transport: runtime.client,
+      events: this.#adapterFor(scope),
+      sourceVersion: this.#sourceVersion,
+    })
+    let resolved
+    try {
+      resolved = resolveModelPolicy(
+        DEFAULT_CONVERSATION_POLICY,
+        this.#modelAliases,
+        await provider.discoverModelCatalog(),
+      )
+    } catch (error) {
+      if (error instanceof ProviderConfigurationError)
+        throw new OrchestrationError(error.code, error.message, 500)
+      throw error
+    }
     this.#store.createSessionWithAudit(
-      { ...scope, status: 'starting' },
+      {
+        ...scope,
+        status: 'starting',
+        provider: resolved.provider,
+        requestedPolicy: resolved.requested,
+        resolvedModel: resolved.modelId,
+        reasoningEffort: resolved.reasoningEffort,
+        capabilitySnapshot: resolved.capabilitySnapshot,
+      },
       {
         ...scope,
         actor: 'system',
@@ -463,19 +516,11 @@ export class SessionOrchestrator {
         metadata: { toState: 'starting' },
       },
     )
-    const cwd =
-      typeof this.#workspaceCwd === 'function'
-        ? this.#workspaceCwd(input)
-        : this.#workspaceCwd
 
     try {
-      const runtime = await this.#registry.getOrInitialize({
-        ...input,
-        cwd,
-        codexHome: this.#codexHome(input),
-      })
       const params: ThreadStartParams = {
         cwd,
+        model: resolved.modelId,
         ...(this.#approvalPolicy
           ? { approvalPolicy: this.#approvalPolicy }
           : {}),
@@ -1318,9 +1363,22 @@ export class SessionOrchestrator {
           503,
         )
       }
+      const session = this.#store.getSession(scope)
+      if (
+        !session.resolvedModel ||
+        !session.reasoningEffort ||
+        !session.capabilitySnapshot
+      )
+        throw new OrchestrationError(
+          'MODEL_POLICY_NOT_RESOLVED',
+          'Session model policy is not resolved; recreate the session after configuring provider model aliases',
+          409,
+        )
       const params: TurnStartParams = {
         threadId: codexThreadId,
         input: [{ type: 'text', text: prompt, text_elements: [] }],
+        model: session.resolvedModel,
+        effort: session.reasoningEffort,
       }
       const upstream = await runtime.client.request<TurnStartResponse>(
         'turn/start',
@@ -1331,6 +1389,17 @@ export class SessionOrchestrator {
         codexThreadId,
         codexTurnId: upstream.turn.id,
         idempotencyKey,
+      })
+      this.#store.createTurn({
+        ...scope,
+        turnId: upstream.turn.id,
+        providerTurnId: upstream.turn.id,
+        provider: session.provider,
+        requestedPolicy: session.requestedPolicy,
+        resolvedModel: session.resolvedModel,
+        reasoningEffort: session.reasoningEffort,
+        capabilitySnapshot: session.capabilitySnapshot,
+        status: 'in_progress',
       })
       this.#store.appendAudit({
         ...scope,
@@ -1517,6 +1586,35 @@ export class SessionOrchestrator {
       event: adapted.event,
       ...(approval ? { approval } : {}),
     })
+    if (
+      adapted.event.type === 'token.usage.updated' &&
+      adapted.event.codexTurnId
+    ) {
+      const session = this.#store.getSession(scope)
+      if (session.resolvedModel)
+        this.#store.appendUsage({
+          ...scope,
+          turnId: adapted.event.codexTurnId,
+          modelId: session.resolvedModel,
+          report: {
+            schemaVersion: 1,
+            kind: 'cumulative',
+            provider: session.provider,
+            requestId: adapted.event.codexTurnId,
+            dedupeKey: `codex:${delivery.ingestKey}`,
+            counters: {
+              inputTokens: adapted.event.payload.last.inputTokens,
+              cachedInputTokens: adapted.event.payload.last.cachedInputTokens,
+              outputTokens: adapted.event.payload.last.outputTokens,
+              reasoningTokens: adapted.event.payload.last.reasoningOutputTokens,
+              toolUnits: 0,
+            },
+            completeness: 'partial',
+            occurredAt: adapted.event.occurredAt,
+          },
+          ...(this.#priceCatalog ? { priceCatalog: this.#priceCatalog } : {}),
+        })
+    }
     if (message.method === 'serverRequest/resolved') {
       const params = message.params as { requestId?: string | number }
       if (params?.requestId !== undefined) {
@@ -1535,6 +1633,28 @@ export class SessionOrchestrator {
       }
     }
     if (adapted.event.type === 'turn.completed') {
+      const turnId = adapted.event.codexTurnId
+      if (turnId) {
+        const outcome = adapted.event.payload.status as
+          'completed' | 'failed' | 'interrupted'
+        const session = this.#store.getSession(scope)
+        try {
+          this.#store.completeTurn(scope, turnId, outcome)
+        } catch (error) {
+          if (!(error instanceof StoreNotFoundError)) throw error
+        }
+        if (session.resolvedModel)
+          this.#store.appendUsageOutcome({
+            ...scope,
+            turnId,
+            provider: session.provider,
+            modelId: session.resolvedModel,
+            dedupeKey: `terminal:${turnId}:${outcome}`,
+            outcome,
+            completeness: 'partial',
+            occurredAt: adapted.event.occurredAt,
+          })
+      }
       this.#store.expireApprovals(scope, 'superseded')
       const activeTurnKey = this.#activeTurnKey(scope)
       const active = this.#activeTurns.get(activeTurnKey)

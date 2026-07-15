@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@persistent-codex/domain-events": "workspace:*",
+    "@persistent-codex/provider-platform": "workspace:*",
     "zod": "^4.4.3"
   }
 }

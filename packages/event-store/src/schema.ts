@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 6
+export const CURRENT_SCHEMA_VERSION = 9
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -12,6 +12,11 @@ export const CREATE_SCHEMA_SQL = `
     tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'codex',
+    requested_policy_json TEXT NOT NULL DEFAULT '{"alias":"sol","reasoningEffort":"medium"}',
+    resolved_model TEXT,
+    reasoning_effort TEXT,
+    capability_snapshot_json TEXT,
     codex_thread_id TEXT,
     status TEXT NOT NULL,
     recovery_error_code TEXT,
@@ -27,6 +32,72 @@ export const CREATE_SCHEMA_SQL = `
     WHERE codex_thread_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS sessions_workspace_status_idx
     ON sessions(tenant_id, workspace_id, status);
+
+  CREATE TABLE IF NOT EXISTS turns (
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    provider_turn_id TEXT,
+    provider TEXT NOT NULL,
+    requested_policy_json TEXT NOT NULL,
+    resolved_model TEXT NOT NULL,
+    reasoning_effort TEXT NOT NULL,
+    capability_snapshot_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    PRIMARY KEY (tenant_id, workspace_id, session_id, turn_id),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
+  CREATE INDEX IF NOT EXISTS turns_session_started_idx
+    ON turns(tenant_id, workspace_id, session_id, started_at);
+
+  CREATE TABLE IF NOT EXISTS usage_ledger (
+    ledger_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    request_id TEXT,
+    provider TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    entry_kind TEXT NOT NULL,
+    report_kind TEXT,
+    dedupe_key TEXT NOT NULL,
+    reported_json TEXT NOT NULL,
+    effective_json TEXT NOT NULL,
+    outcome TEXT,
+    completeness TEXT NOT NULL,
+    reconciliation_status TEXT NOT NULL,
+    price_catalog_version TEXT,
+    estimated_cost_micros INTEGER,
+    official_cost_micros INTEGER,
+    source_reference TEXT,
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(tenant_id, workspace_id, session_id, dedupe_key),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
+  CREATE INDEX IF NOT EXISTS usage_ledger_session_turn_idx
+    ON usage_ledger(tenant_id, workspace_id, session_id, turn_id, ledger_id);
+
+  CREATE TABLE IF NOT EXISTS usage_cursors (
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    accounted_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, workspace_id, session_id, turn_id, request_id),
+    FOREIGN KEY (tenant_id, workspace_id, session_id)
+      REFERENCES sessions(tenant_id, workspace_id, session_id)
+  );
 
   CREATE TABLE IF NOT EXISTS workspace_sequence (
     workspace_id TEXT PRIMARY KEY,
@@ -207,6 +278,22 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
     if (!hasColumn(database, 'sessions', 'runtime_generation'))
       database.exec(
         `ALTER TABLE sessions ADD COLUMN runtime_generation INTEGER`,
+      )
+    if (!hasColumn(database, 'sessions', 'provider'))
+      database.exec(
+        `ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'codex'`,
+      )
+    if (!hasColumn(database, 'sessions', 'requested_policy_json'))
+      database.exec(
+        `ALTER TABLE sessions ADD COLUMN requested_policy_json TEXT NOT NULL DEFAULT '{"alias":"sol","reasoningEffort":"medium"}'`,
+      )
+    if (!hasColumn(database, 'sessions', 'resolved_model'))
+      database.exec(`ALTER TABLE sessions ADD COLUMN resolved_model TEXT`)
+    if (!hasColumn(database, 'sessions', 'reasoning_effort'))
+      database.exec(`ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT`)
+    if (!hasColumn(database, 'sessions', 'capability_snapshot_json'))
+      database.exec(
+        `ALTER TABLE sessions ADD COLUMN capability_snapshot_json TEXT`,
       )
     if (
       tableExists(database, 'artifacts') &&

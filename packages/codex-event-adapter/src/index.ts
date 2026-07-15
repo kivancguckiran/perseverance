@@ -6,6 +6,7 @@ import type {
   ServerNotification,
   ServerRequest,
 } from '@persistent-codex/codex-protocol-generated'
+import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import {
   parseTimelineEvent,
   type TimelineEvent,
@@ -15,6 +16,150 @@ import {
   DEFAULT_COMMAND_TAIL_BYTES,
   StreamingRedactor,
 } from '@persistent-codex/artifact-storage'
+import {
+  PROVIDER_CONTRACT_VERSION,
+  providerNormalizedEventSchema,
+  providerModelCatalogSchema,
+  reasoningEffortSchema,
+  type ProviderApprovalResolution,
+  type ProviderIdentity,
+  type ProviderInterrupt,
+  type ProviderModelCatalog,
+  type ProviderRuntimeAdapterV1,
+  type ReasoningEffort,
+} from '@persistent-codex/provider-platform'
+
+const CODEX_CAPABILITIES = {
+  streaming: 'supported',
+  reasoningSummary: 'supported',
+  commandExecution: 'supported',
+  fileChanges: 'supported',
+  approvals: 'supported',
+  interrupt: 'supported',
+  resume: 'supported',
+  toolCalls: 'supported',
+} as const
+
+export function codexModelCatalog(
+  response: codexV2.ModelListResponse,
+  options: { sourceVersion: string; discoveredAt?: string },
+): ProviderModelCatalog {
+  return providerModelCatalogSchema.parse({
+    schemaVersion: 1,
+    identity: {
+      provider: 'codex',
+      adapter: 'codex-app-server',
+      adapterVersion: '1',
+      upstreamVersion: options.sourceVersion,
+    },
+    discoveredAt: options.discoveredAt ?? new Date().toISOString(),
+    models: response.data.map((model) => {
+      const reasoningEfforts = model.supportedReasoningEfforts
+        .map(({ reasoningEffort }) =>
+          reasoningEffortSchema.safeParse(reasoningEffort),
+        )
+        .filter((result) => result.success)
+        .map((result) => result.data)
+      const parsedDefault = reasoningEffortSchema.safeParse(
+        model.defaultReasoningEffort,
+      )
+      const defaultReasoningEffort: ReasoningEffort = parsedDefault.success
+        ? parsedDefault.data
+        : (reasoningEfforts[0] ?? 'none')
+      return {
+        provider: 'codex',
+        modelId: model.model,
+        displayName: model.displayName,
+        hidden: model.hidden,
+        isDefault: model.isDefault,
+        reasoningEfforts,
+        defaultReasoningEffort,
+        inputModalities: model.inputModalities,
+        capabilities: {
+          ...CODEX_CAPABILITIES,
+          reasoningSummary:
+            reasoningEfforts.length > 0 ? 'supported' : 'degraded',
+          imageInput: model.inputModalities.includes('image')
+            ? 'supported'
+            : 'unsupported',
+        },
+      }
+    }),
+  })
+}
+
+export interface CodexProviderTransport {
+  request<TResult = unknown>(method: string, params: unknown): Promise<TResult>
+  respond(id: string | number, result: unknown): void
+}
+
+export class CodexProviderRuntimeAdapter implements ProviderRuntimeAdapterV1 {
+  readonly contractVersion = PROVIDER_CONTRACT_VERSION
+  readonly identity: ProviderIdentity
+  readonly #transport: CodexProviderTransport
+  readonly #events: CodexEventAdapter
+
+  constructor(input: {
+    transport: CodexProviderTransport
+    events: CodexEventAdapter
+    sourceVersion: string
+  }) {
+    this.#transport = input.transport
+    this.#events = input.events
+    this.identity = {
+      provider: 'codex',
+      adapter: 'codex-app-server',
+      adapterVersion: '1',
+      upstreamVersion: input.sourceVersion,
+    }
+  }
+
+  async discoverModelCatalog(): Promise<ProviderModelCatalog> {
+    const models: ModelListResponseData = []
+    let cursor: string | null = null
+    do {
+      const page: codexV2.ModelListResponse =
+        await this.#transport.request<codexV2.ModelListResponse>('model/list', {
+          cursor,
+          includeHidden: true,
+        } satisfies codexV2.ModelListParams)
+      models.push(...page.data)
+      cursor = page.nextCursor
+    } while (cursor)
+    return codexModelCatalog(
+      { data: models, nextCursor: null },
+      { sourceVersion: this.identity.upstreamVersion },
+    )
+  }
+
+  normalizeEvent(input: unknown) {
+    const adapted = this.#events.adapt(input)
+    return providerNormalizedEventSchema.parse({
+      schemaVersion: 1,
+      provider: 'codex',
+      rawEnvelopeChecksum: adapted.checksum,
+      event: adapted.event,
+    })
+  }
+
+  async interrupt(input: ProviderInterrupt): Promise<void> {
+    await this.#transport.request('turn/interrupt', {
+      threadId: input.sessionId,
+      turnId: input.turnId,
+    } satisfies codexV2.TurnInterruptParams)
+  }
+
+  async resolveApproval(input: ProviderApprovalResolution): Promise<void> {
+    this.#transport.respond(input.providerRequestId, {
+      decision:
+        input.decision === 'accept_for_session'
+          ? 'acceptForSession'
+          : input.decision,
+    })
+  }
+}
+
+type ModelListResponseData = codexV2.ModelListResponse['data']
 
 export interface EventAdapterContext {
   tenantId: string

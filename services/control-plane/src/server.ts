@@ -34,11 +34,16 @@ import {
   gitSnapshotSchema,
   gitSnapshotListResponseSchema,
   metricsResponseSchema,
+  usageCostSummarySchema,
   serverMessageSchema,
   type ServerMessage,
   type SubscribeMessage,
   type Approval,
 } from '@persistent-codex/control-plane-contracts'
+import type {
+  ModelAliasConfig,
+  PriceCatalog,
+} from '@persistent-codex/provider-platform'
 import { createHash } from 'node:crypto'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import {
@@ -98,6 +103,8 @@ export interface ControlPlaneOptions {
   metricRecorder?: BoundedMetricRecorder
   now?: () => Date
   readinessProbeTimeoutMs?: number
+  modelAliases?: ModelAliasConfig
+  priceCatalog?: PriceCatalog
 }
 
 interface SubscriptionState extends StoreScope {
@@ -439,6 +446,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     ...(options.approvalPolicy
       ? { approvalPolicy: options.approvalPolicy }
       : {}),
+    ...(options.modelAliases ? { modelAliases: options.modelAliases } : {}),
+    ...(options.priceCatalog ? { priceCatalog: options.priceCatalog } : {}),
     onDeliveryError: (runtime, delivery, error) => {
       app.log.error(
         {
@@ -1164,6 +1173,52 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       try {
         return sessionResponseSchema.parse(orchestrator.getSession(scope))
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/usage',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        store.getSession(scope)
+        return usageCostSummarySchema.parse(store.getUsageSummary(scope))
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.get<{ Params: { sessionId: string; turnId: string } }>(
+    '/v1/sessions/:sessionId/turns/:turnId/usage',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        store.getTurn(scope, request.params.turnId)
+        return usageCostSummarySchema.parse(
+          store.getUsageSummary(scope, request.params.turnId),
+        )
       } catch (error) {
         if (error instanceof StoreNotFoundError)
           return reply
