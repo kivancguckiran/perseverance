@@ -100,6 +100,50 @@ describe('SqliteEventStore sessions', () => {
       ).toThrow(StoreNotFoundError)
     })
   })
+
+  it('persists scoped conversation folders and organization metadata', () => {
+    withStore((store) => {
+      const folder = store.createConversationFolder({
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        folderId: 'fol_product',
+        name: 'Product',
+      })
+      expect(store.listConversationFolders(scope)).toEqual([folder])
+      expect(
+        store.updateConversation(scope, {
+          folderId: folder.folderId,
+          title: 'Folder destekli chat',
+        }),
+      ).toMatchObject({
+        folderId: 'fol_product',
+        title: 'Folder destekli chat',
+      })
+      expect(
+        store.listConversationFolders({
+          tenantId: 'ten_other',
+          workspaceId: scope.workspaceId,
+        }),
+      ).toEqual([])
+      expect(
+        store.setConversationFolderArchived(
+          {
+            tenantId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+            folderId: folder.folderId,
+          },
+          true,
+        ).archivedAt,
+      ).not.toBeNull()
+      store.deleteConversationFolder({
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        folderId: folder.folderId,
+      })
+      expect(store.listConversationFolders(scope)).toEqual([])
+      expect(store.getSession(scope).folderId).toBeNull()
+    })
+  })
 })
 
 describe('SqliteEventStore atomic ingest', () => {

@@ -14,6 +14,8 @@ import {
 } from '@persistent-codex/codex-event-adapter'
 import { codexV2 } from '@persistent-codex/codex-protocol-generated'
 import {
+  attachmentContextEnd,
+  attachmentContextStart,
   readinessResponseSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
@@ -61,6 +63,14 @@ type ThreadResumeResponse = codexV2.ThreadResumeResponse
 type TurnSteerParams = codexV2.TurnSteerParams
 type TurnSteerResponse = codexV2.TurnSteerResponse
 type TurnInterruptParams = codexV2.TurnInterruptParams
+
+export interface TurnAttachmentInput {
+  attachmentId: string
+  name: string
+  mediaType: string
+  kind: 'image' | 'file'
+  path: string
+}
 
 interface RecoveryFailure {
   code:
@@ -156,8 +166,35 @@ function isUnauthorizedDisconnect(message: Record<string, unknown>): boolean {
   )
 }
 
-function requestHash(prompt: string): string {
-  return createHash('sha256').update(JSON.stringify({ prompt })).digest('hex')
+function requestHash(
+  prompt: string,
+  attachments: TurnAttachmentInput[],
+): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        prompt,
+        attachmentIds: attachments.map((attachment) => attachment.attachmentId),
+      }),
+    )
+    .digest('hex')
+}
+
+function turnPromptWithAttachmentContext(
+  prompt: string,
+  attachments: TurnAttachmentInput[],
+): string {
+  const files = attachments.filter((attachment) => attachment.kind === 'file')
+  if (files.length === 0) return prompt
+  const context = [
+    attachmentContextStart,
+    'The following local files are attached to this message. Open and inspect them using their exact paths when answering:',
+    ...files.map(
+      (file) => `- ${JSON.stringify(file.name)}: ${JSON.stringify(file.path)}`,
+    ),
+    attachmentContextEnd,
+  ].join('\n')
+  return prompt ? `${prompt}\n\n${context}` : context
 }
 
 function approvalResponse(
@@ -464,6 +501,8 @@ export class SessionOrchestrator {
   async createSession(input: {
     tenantId: string
     workspaceId: string
+    folderId?: string | null
+    title?: string
   }): Promise<SessionResponse> {
     await this.requireAuthReady(input)
     const scope: StoreScope = {
@@ -501,6 +540,8 @@ export class SessionOrchestrator {
       {
         ...scope,
         status: 'starting',
+        folderId: input.folderId ?? null,
+        title: input.title ?? 'Yeni konuşma',
         provider: resolved.provider,
         requestedPolicy: resolved.requested,
         resolvedModel: resolved.modelId,
@@ -1167,6 +1208,7 @@ export class SessionOrchestrator {
     scope: StoreScope,
     prompt: string,
     idempotencyKey: string,
+    attachments: TurnAttachmentInput[] = [],
   ): Promise<TurnAcceptedResponse> {
     await this.requireAuthReady(scope)
     const session = this.#store.getSession(scope)
@@ -1177,7 +1219,15 @@ export class SessionOrchestrator {
         409,
       )
     }
-    const hash = requestHash(prompt)
+    if (
+      !this.#threadScopes.has(this.#threadKey(scope, session.codexThreadId))
+    ) {
+      await this.resumeSession(
+        scope,
+        `turn:${idempotencyKey}:ensure-thread-resumed`,
+      )
+    }
+    const hash = requestHash(prompt, attachments)
     const keyScope = `turn:${scope.sessionId}`
     const reservation = this.#store.reserveIdempotencyKey({
       ...scope,
@@ -1238,6 +1288,7 @@ export class SessionOrchestrator {
       prompt,
       idempotencyKey,
       keyScope,
+      attachments,
     )
     this.#turnsInFlight.set(flightKey, operation)
     try {
@@ -1347,6 +1398,7 @@ export class SessionOrchestrator {
     prompt: string,
     idempotencyKey: string,
     keyScope: string,
+    attachments: TurnAttachmentInput[],
   ): Promise<TurnAcceptedResponse> {
     try {
       const before = await this.captureGitSnapshot(
@@ -1376,9 +1428,29 @@ export class SessionOrchestrator {
         )
       const params: TurnStartParams = {
         threadId: codexThreadId,
-        input: [{ type: 'text', text: prompt, text_elements: [] }],
         model: session.resolvedModel,
         effort: session.reasoningEffort,
+        input: [
+          ...(prompt ||
+          attachments.some((attachment) => attachment.kind === 'file')
+            ? [
+                {
+                  type: 'text' as const,
+                  text: turnPromptWithAttachmentContext(prompt, attachments),
+                  text_elements: [],
+                },
+              ]
+            : []),
+          ...attachments.map((attachment) =>
+            attachment.kind === 'image'
+              ? ({ type: 'localImage', path: attachment.path } as const)
+              : ({
+                  type: 'mention',
+                  name: attachment.name,
+                  path: attachment.path,
+                } as const),
+          ),
+        ],
       }
       const upstream = await runtime.client.request<TurnStartResponse>(
         'turn/start',
@@ -1429,7 +1501,35 @@ export class SessionOrchestrator {
       return response
     } catch (error) {
       this.#activeTurns.delete(this.#activeTurnKey(scope))
-      const failure = errorPayload(error)
+      const recoveryFailure = classifyRecoveryError(error)
+      const turnError = recoveryFailure.permanent
+        ? new OrchestrationError(
+            recoveryFailure.code,
+            recoveryFailure.message,
+            recoveryFailure.statusCode,
+          )
+        : error
+      if (recoveryFailure.permanent) {
+        this.#store.updateSessionRecoveryWithAudit(
+          scope,
+          {
+            status: 'recovery_required',
+            recoveryErrorCode: recoveryFailure.code,
+          },
+          {
+            ...scope,
+            actor: 'system',
+            action: 'recovery.failed',
+            outcome: 'failure',
+            idempotencyKey: `turn:${idempotencyKey}:recovery-required`,
+            metadata: {
+              recoveryCode: recoveryFailure.code,
+              toState: 'recovery_required',
+            },
+          },
+        )
+      }
+      const failure = errorPayload(turnError)
       this.#store.appendAudit({
         ...scope,
         actor: 'system',
@@ -1445,7 +1545,7 @@ export class SessionOrchestrator {
         status: 'failed',
         response: failure,
       })
-      if (error instanceof OrchestrationError) throw error
+      if (turnError instanceof OrchestrationError) throw turnError
       throw new OrchestrationError(failure.code, failure.message)
     }
   }

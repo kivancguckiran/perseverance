@@ -8,10 +8,25 @@ export const CREATE_SCHEMA_SQL = `
     applied_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS conversation_folders (
+    tenant_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    folder_id TEXT NOT NULL,
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 80),
+    archived_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, workspace_id, folder_id)
+  );
+  CREATE INDEX IF NOT EXISTS conversation_folders_workspace_idx
+    ON conversation_folders(tenant_id, workspace_id, updated_at DESC);
+
   CREATE TABLE IF NOT EXISTS sessions (
     tenant_id TEXT NOT NULL,
     workspace_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
+    folder_id TEXT,
+    title TEXT NOT NULL DEFAULT 'Yeni konuşma',
     provider TEXT NOT NULL DEFAULT 'codex',
     requested_policy_json TEXT NOT NULL DEFAULT '{"alias":"sol","reasoningEffort":"medium"}',
     resolved_model TEXT,
@@ -25,7 +40,9 @@ export const CREATE_SCHEMA_SQL = `
     last_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_sequence >= 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    PRIMARY KEY (tenant_id, workspace_id, session_id)
+    PRIMARY KEY (tenant_id, workspace_id, session_id),
+    FOREIGN KEY (tenant_id, workspace_id, folder_id)
+      REFERENCES conversation_folders(tenant_id, workspace_id, folder_id)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS sessions_codex_thread_idx
     ON sessions(tenant_id, workspace_id, codex_thread_id)
@@ -279,6 +296,12 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
       database.exec(
         `ALTER TABLE sessions ADD COLUMN runtime_generation INTEGER`,
       )
+    if (!hasColumn(database, 'sessions', 'folder_id'))
+      database.exec(`ALTER TABLE sessions ADD COLUMN folder_id TEXT`)
+    if (!hasColumn(database, 'sessions', 'title'))
+      database.exec(
+        `ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT 'Yeni konuşma'`,
+      )
     if (!hasColumn(database, 'sessions', 'provider'))
       database.exec(
         `ALTER TABLE sessions ADD COLUMN provider TEXT NOT NULL DEFAULT 'codex'`,
@@ -294,6 +317,13 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
     if (!hasColumn(database, 'sessions', 'capability_snapshot_json'))
       database.exec(
         `ALTER TABLE sessions ADD COLUMN capability_snapshot_json TEXT`,
+      )
+    if (
+      tableExists(database, 'conversation_folders') &&
+      !hasColumn(database, 'conversation_folders', 'archived_at')
+    )
+      database.exec(
+        `ALTER TABLE conversation_folders ADD COLUMN archived_at TEXT`,
       )
     if (
       tableExists(database, 'artifacts') &&

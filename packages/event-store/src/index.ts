@@ -130,6 +130,8 @@ export interface ArtifactRecord extends StoreScope {
 }
 
 export interface SessionRecord extends StoreScope {
+  folderId: string | null
+  title: string
   provider: ProviderId
   requestedPolicy: ModelPolicy
   resolvedModel: string | null
@@ -147,6 +149,8 @@ export interface SessionRecord extends StoreScope {
 
 export interface CreateSessionInput extends StoreScope {
   status?: string
+  folderId?: string | null
+  title?: string
   provider?: ProviderId
   requestedPolicy?: ModelPolicy
   resolvedModel?: string | null
@@ -198,6 +202,16 @@ export interface UsageSummary extends StoreScope {
   officialCostMicros: number | null
   currency: 'USD'
   priceCatalogVersions: string[]
+}
+
+export interface ConversationFolderRecord {
+  tenantId: string
+  workspaceId: string
+  folderId: string
+  name: string
+  archivedAt: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface GitSnapshotRecord extends StoreScope {
@@ -357,6 +371,8 @@ interface SessionRow {
   tenant_id: string
   workspace_id: string
   session_id: string
+  folder_id: string | null
+  title: string
   provider: ProviderId
   requested_policy_json: string
   resolved_model: string | null
@@ -492,6 +508,8 @@ function sessionFromRow(row: SessionRow): SessionRecord {
     tenantId: row.tenant_id,
     workspaceId: row.workspace_id,
     sessionId: row.session_id,
+    folderId: row.folder_id,
+    title: row.title,
     provider: row.provider,
     requestedPolicy: modelPolicySchema.parse(
       JSON.parse(row.requested_policy_json),
@@ -924,15 +942,17 @@ export class SqliteEventStore {
     this.#database
       .prepare(
         `INSERT OR IGNORE INTO sessions (
-          tenant_id, workspace_id, session_id, provider,
+          tenant_id, workspace_id, session_id, folder_id, title, provider,
           requested_policy_json, resolved_model, reasoning_effort,
           capability_snapshot_json, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.tenantId,
         input.workspaceId,
         input.sessionId,
+        input.folderId ?? null,
+        input.title ?? 'Yeni konuşma',
         input.provider ?? 'codex',
         JSON.stringify(requestedPolicy),
         input.resolvedModel ?? null,
@@ -968,15 +988,17 @@ export class SqliteEventStore {
       this.#database
         .prepare(
           `INSERT OR IGNORE INTO sessions (
-            tenant_id, workspace_id, session_id, provider,
+            tenant_id, workspace_id, session_id, folder_id, title, provider,
             requested_policy_json, resolved_model, reasoning_effort,
             capability_snapshot_json, status, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.tenantId,
           input.workspaceId,
           input.sessionId,
+          input.folderId ?? null,
+          input.title ?? 'Yeni konuşma',
           input.provider ?? 'codex',
           JSON.stringify(requestedPolicy),
           input.resolvedModel ?? null,
@@ -999,6 +1021,159 @@ export class SqliteEventStore {
       throw error
     }
     return this.getSession(input)
+  }
+
+  createConversationFolder(input: {
+    tenantId: string
+    workspaceId: string
+    folderId: string
+    name: string
+  }): ConversationFolderRecord {
+    assertIdentifier(input.tenantId, 'tenantId')
+    assertIdentifier(input.workspaceId, 'workspaceId')
+    assertIdentifier(input.folderId, 'folderId')
+    const name = input.name.trim()
+    if (!name || name.length > 80)
+      throw new StoreError('INVALID_FOLDER_NAME', 'Folder name is invalid')
+    const timestamp = this.#timestamp()
+    this.#database
+      .prepare(
+        `INSERT INTO conversation_folders
+         (tenant_id, workspace_id, folder_id, name, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId,
+        input.folderId,
+        name,
+        timestamp,
+        timestamp,
+      )
+    return {
+      ...input,
+      name,
+      archivedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+  }
+
+  listConversationFolders(scope: {
+    tenantId: string
+    workspaceId: string
+  }): ConversationFolderRecord[] {
+    assertIdentifier(scope.tenantId, 'tenantId')
+    assertIdentifier(scope.workspaceId, 'workspaceId')
+    const rows = this.#database
+      .prepare(
+        `SELECT folder_id, name, archived_at, created_at, updated_at
+         FROM conversation_folders
+         WHERE tenant_id = ? AND workspace_id = ?
+         ORDER BY archived_at IS NOT NULL, name COLLATE NOCASE, folder_id`,
+      )
+      .all(scope.tenantId, scope.workspaceId) as unknown as Array<{
+      folder_id: string
+      name: string
+      archived_at: string | null
+      created_at: string
+      updated_at: string
+    }>
+    return rows.map((row) => ({
+      tenantId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+      folderId: row.folder_id,
+      name: row.name,
+      archivedAt: row.archived_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }))
+  }
+
+  setConversationFolderArchived(
+    scope: { tenantId: string; workspaceId: string; folderId: string },
+    archived: boolean,
+  ): ConversationFolderRecord {
+    assertIdentifier(scope.tenantId, 'tenantId')
+    assertIdentifier(scope.workspaceId, 'workspaceId')
+    assertIdentifier(scope.folderId, 'folderId')
+    const timestamp = this.#timestamp()
+    const result = this.#database
+      .prepare(
+        `UPDATE conversation_folders
+         SET archived_at = ?, updated_at = ?
+         WHERE tenant_id = ? AND workspace_id = ? AND folder_id = ?`,
+      )
+      .run(
+        archived ? timestamp : null,
+        timestamp,
+        scope.tenantId,
+        scope.workspaceId,
+        scope.folderId,
+      )
+    if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+    return this.listConversationFolders(scope).find(
+      (folder) => folder.folderId === scope.folderId,
+    )!
+  }
+
+  deleteConversationFolder(scope: {
+    tenantId: string
+    workspaceId: string
+    folderId: string
+  }): void {
+    assertIdentifier(scope.tenantId, 'tenantId')
+    assertIdentifier(scope.workspaceId, 'workspaceId')
+    assertIdentifier(scope.folderId, 'folderId')
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const timestamp = this.#timestamp()
+      this.#database
+        .prepare(
+          `UPDATE sessions SET folder_id = NULL, updated_at = ?
+           WHERE tenant_id = ? AND workspace_id = ? AND folder_id = ?`,
+        )
+        .run(timestamp, scope.tenantId, scope.workspaceId, scope.folderId)
+      const result = this.#database
+        .prepare(
+          `DELETE FROM conversation_folders
+           WHERE tenant_id = ? AND workspace_id = ? AND folder_id = ?`,
+        )
+        .run(scope.tenantId, scope.workspaceId, scope.folderId)
+      if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  updateConversation(
+    scope: StoreScope,
+    changes: { folderId?: string | null; title?: string },
+  ): SessionRecord {
+    assertScope(scope)
+    const current = this.getSession(scope)
+    const title = changes.title?.trim() ?? current.title
+    if (!title || title.length > 120)
+      throw new StoreError('INVALID_CONVERSATION_TITLE', 'Title is invalid')
+    const folderId =
+      changes.folderId === undefined ? current.folderId : changes.folderId
+    const result = this.#database
+      .prepare(
+        `UPDATE sessions SET folder_id = ?, title = ?, updated_at = ?
+         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+      )
+      .run(
+        folderId,
+        title,
+        this.#timestamp(),
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      )
+    if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+    return this.getSession(scope)
   }
 
   upsertArtifact(input: ArtifactRecord): ArtifactRecord {

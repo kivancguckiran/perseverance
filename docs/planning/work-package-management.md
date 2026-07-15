@@ -3,7 +3,8 @@
 - Belge durumu: Aktif
 - Başlangıç tarihi: 14 Temmuz 2026
 - Yönetim kaynakları: `docs/planning/poc-implementation-plan.md` ve
-  `docs/planning/phase-1-alpha-plan.md`
+  `docs/planning/phase-1-alpha-plan.md` ve
+  `docs/planning/phase-2-provider-platform-plan.md`
 
 ## Bu task'ın rolü
 
@@ -64,6 +65,10 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP10 — Workspace ve Git görünürlüğü          | Tamamlandı | Scoped session navigasyonu, durable Git snapshot ve responsive salt-okunur yüzey doğrulandı                 |
 | WP11 — Audit ve temel metrics                | Tamamlandı | Atomik durable audit, dinamik readiness, bounded metrics ve contention davranışı doğrulandı                 |
 | WP12 — Alfa hardening ve kabul               | Tamamlandı | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                        |
+| WP13 — Platform ve usage ledger temeli       | Aktif      | Provider-neutral sözleşme, model/capability politikası ve maliyet temeli uygulanacak                        |
+| WP14 — Durable detached execution            | Bekliyor   | Browser'dan bağımsız çalışma, recovery ve terminal accounting uygulanacak                                   |
+| WP15 — Çok sağlayıcılı conversation          | Bekliyor   | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
+| WP16 — PWA ve Faz 2 kabulü                   | Bekliyor   | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlanacak                                    |
 
 ## WP1 nihai denetim sonucu
 
@@ -662,3 +667,16 @@ Doğrulananlar:
 Uygulama commit'i: `0d4fb67` (`feat: complete single-tenant alpha acceptance`).
 
 Aktif iş paketi yoktur. Yeni çalışma Faz 2 planı hazırlanıp kabul edilmeden başlatılmaz.
+
+## Faz 2 plan aktivasyonu
+
+Faz 2 kalıcı çok sağlayıcılı ajan platformu planı
+`docs/planning/phase-2-provider-platform-plan.md` içinde WP13–WP16 olarak tanımlandı.
+Faz 1'in app-server supervision, durable event/replay, approval, artifact, audit ve
+responsive conversation temeli yeniden uygulanmayacaktır. WP13 tek aktif pakettir;
+WP14–WP16 bağımlılık sırasıyla beklemektedir.
+
+Maliyet kayıtlarında `completed`, `failed` ve `interrupted` lifecycle sonuçları
+ayrıştırılır; ölçülmüş kullanım her durumda korunur, eksik terminal usage sıfır kabul
+edilmez. `sol` ve `luna` gerçek provider model ID'si değil, config ve discovered model
+catalog üzerinden çözülen ürün politikası alias'larıdır.

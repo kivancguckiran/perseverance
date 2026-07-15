@@ -9,6 +9,7 @@ const sessionResponse = {
   tenantId: 'ten_local',
   workspaceId: 'wsp_local',
   sessionId: 'route-param-test',
+  folderId: null,
   title: 'Yeni konuşma',
   provider: 'codex',
   requestedPolicy: { alias: 'sol', reasoningEffort: 'medium' },

@@ -49,9 +49,9 @@ açıldı. Faz 0 tamamlandı ve yeni işler Faz 1 planına taşındı.
 ## Sonraki faz
 
 Faz 1 tek kiracılı alfa kapsamı WP9–WP12 olarak
-`docs/planning/phase-1-alpha-plan.md` içinde tanımlanmıştır. Yalnız WP9 aktiftir;
-Faz 0'da tamamlanan supervisor, replay/resume, WebSocket, artifact ve responsive
-timeline yeniden uygulanmayacaktır.
+`docs/planning/phase-1-alpha-plan.md` içinde tamamlanmıştır. Faz 2 maliyet, browser'dan
+bağımsız kalıcı çalışma, PWA ve Codex/Claude/Gemini provider platformu kapsamı WP13–WP16
+olarak `docs/planning/phase-2-provider-platform-plan.md` içinde aktiftir.
 
 ## Uygulama sırası
 
