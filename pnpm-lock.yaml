@@ -141,6 +141,15 @@ importers:
         specifier: workspace:*
         version: link:../codex-event-adapter
 
+  packages/provider-cli-adapters:
+    dependencies:
+      '@persistent-codex/domain-events':
+        specifier: workspace:*
+        version: link:../domain-events
+      '@persistent-codex/provider-platform':
+        specifier: workspace:*
+        version: link:../provider-platform
+
   packages/provider-platform:
     dependencies:
       '@persistent-codex/domain-events':
@@ -183,6 +192,9 @@ importers:
       '@persistent-codex/event-store':
         specifier: workspace:*
         version: link:../../packages/event-store
+      '@persistent-codex/provider-cli-adapters':
+        specifier: workspace:*
+        version: link:../../packages/provider-cli-adapters
       '@persistent-codex/provider-platform':
         specifier: workspace:*
         version: link:../../packages/provider-platform

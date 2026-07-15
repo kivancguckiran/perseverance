@@ -146,6 +146,175 @@ describe('SqliteEventStore sessions', () => {
   })
 })
 
+describe('WP15 conversation title jobs', () => {
+  const titleScope = {
+    tenantId: 'ten_title',
+    workspaceId: 'wsp_title',
+    sessionId: 'ses_title',
+  }
+
+  it('queues exactly once after the second durable user message', () => {
+    const store = new SqliteEventStore()
+    store.createSession(titleScope)
+    expect(
+      store.recordDurableUserMessage({
+        ...titleScope,
+        messageId: 'msg_1',
+        idempotencyKey: 'turn-1',
+        content: 'İlk mesaj',
+      }),
+    ).toBe(1)
+    expect(store.enqueueConversationTitleJob(titleScope)).toBeNull()
+    expect(
+      store.recordDurableUserMessage({
+        ...titleScope,
+        messageId: 'msg_2',
+        idempotencyKey: 'turn-2',
+        content: 'İkinci mesaj',
+      }),
+    ).toBe(2)
+    const queued = store.enqueueConversationTitleJob(titleScope)
+    expect(queued).toMatchObject({ status: 'queued', attempt: 0 })
+    expect(store.enqueueConversationTitleJob(titleScope)?.jobId).toBe(
+      queued?.jobId,
+    )
+    expect(store.claimConversationTitleJob(titleScope)).toMatchObject({
+      status: 'running',
+      attempt: 1,
+    })
+    expect(store.claimConversationTitleJob(titleScope)).toBeNull()
+    expect(
+      store.completeConversationTitleJob(titleScope, '  Güvenli\nbaşlık  '),
+    ).toBe(true)
+    expect(store.getSession(titleScope).title).toBe('Güvenli başlık')
+  })
+
+  it('keeps a manual title and bounds retries', () => {
+    const store = new SqliteEventStore()
+    store.createSession(titleScope)
+    store.recordDurableUserMessage({
+      ...titleScope,
+      messageId: 'msg_1',
+      idempotencyKey: 'turn-1',
+      content: 'Bir',
+    })
+    store.recordDurableUserMessage({
+      ...titleScope,
+      messageId: 'msg_2',
+      idempotencyKey: 'turn-2',
+      content: 'İki',
+    })
+    store.enqueueConversationTitleJob(titleScope)
+    store.claimConversationTitleJob(titleScope)
+    store.updateConversation(titleScope, { title: 'Kullanıcının başlığı' })
+    store.completeConversationTitleJob(titleScope, 'Otomatik başlık')
+    expect(store.getSession(titleScope).title).toBe('Kullanıcının başlığı')
+
+    const retryScope = { ...titleScope, sessionId: 'ses_retry' }
+    store.createSession(retryScope)
+    store.recordDurableUserMessage({
+      ...retryScope,
+      messageId: 'msg_1',
+      idempotencyKey: 'turn-1',
+      content: 'Bir',
+    })
+    store.recordDurableUserMessage({
+      ...retryScope,
+      messageId: 'msg_2',
+      idempotencyKey: 'turn-2',
+      content: 'İki',
+    })
+    store.enqueueConversationTitleJob(retryScope)
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      expect(store.claimConversationTitleJob(retryScope)?.attempt).toBe(attempt)
+      store.failConversationTitleJob(retryScope, 'FIXTURE_FAILURE')
+    }
+    expect(store.getConversationTitleJob(retryScope)).toMatchObject({
+      status: 'failed',
+      attempt: 3,
+    })
+    expect(store.getSession(retryScope).title).toBe('Yeni konuşma')
+  })
+
+  it('recovers a running job on reopen and records title usage purpose', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'title-job-reopen-'))
+    const path = join(directory, 'events.sqlite')
+    const first = new SqliteEventStore(path)
+    first.createSession(titleScope)
+    first.recordDurableUserMessage({
+      ...titleScope,
+      messageId: 'msg_1',
+      idempotencyKey: 'turn-1',
+      content: 'Bir',
+    })
+    first.recordDurableUserMessage({
+      ...titleScope,
+      messageId: 'msg_2',
+      idempotencyKey: 'turn-2',
+      content: 'İki',
+    })
+    const job = first.enqueueConversationTitleJob(titleScope)!
+    first.claimConversationTitleJob(titleScope)
+    first.close()
+    const reopened = new SqliteEventStore(path)
+    try {
+      expect(reopened.getConversationTitleJob(titleScope)?.status).toBe(
+        'queued',
+      )
+      const usage = reopened.appendUsage({
+        ...titleScope,
+        turnId: `title:${job.jobId}`,
+        modelId: 'fixture-title-model',
+        purpose: 'conversation_title',
+        report: {
+          schemaVersion: 1,
+          kind: 'cumulative',
+          provider: 'codex',
+          requestId: job.jobId,
+          dedupeKey: `title:${job.jobId}:usage`,
+          counters: {
+            inputTokens: 10,
+            cachedInputTokens: 0,
+            outputTokens: 2,
+            reasoningTokens: 0,
+            toolUnits: 0,
+          },
+          completeness: 'complete',
+          occurredAt: '2026-07-15T00:00:00.000Z',
+        },
+      })
+      expect(usage.purpose).toBe('conversation_title')
+      expect(
+        reopened.appendUsage({
+          ...titleScope,
+          turnId: `title:${job.jobId}`,
+          modelId: 'fixture-title-model',
+          purpose: 'conversation_title',
+          report: {
+            schemaVersion: 1,
+            kind: 'cumulative',
+            provider: 'codex',
+            requestId: job.jobId,
+            dedupeKey: `title:${job.jobId}:usage`,
+            counters: {
+              inputTokens: 10,
+              cachedInputTokens: 0,
+              outputTokens: 2,
+              reasoningTokens: 0,
+              toolUnits: 0,
+            },
+            completeness: 'complete',
+            occurredAt: '2026-07-15T00:00:00.000Z',
+          },
+        }).ledgerId,
+      ).toBe(usage.ledgerId)
+    } finally {
+      reopened.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('SqliteEventStore atomic ingest', () => {
   it('persists an approval atomically and enforces optimistic locking', () => {
     withStore((store) => {
@@ -599,7 +768,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 10,
+        user_version: 11,
       })
       database.close()
     } finally {
@@ -843,7 +1012,7 @@ describe('WP11 durable audit', () => {
       expect(reopened.listAudit(scope).records).toHaveLength(1)
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
-        user_version: 10,
+        user_version: 11,
       })
       database.close()
     } finally {
@@ -1193,7 +1362,7 @@ describe('WP14 durable detached run lifecycle', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 10,
+        user_version: 11,
       })
       database.close()
     } finally {

@@ -5,6 +5,7 @@ import {
   runAlphaPreflight,
   type AlphaConfig,
 } from '@persistent-codex/workspace-agent'
+import { providerModelCatalogSchema } from '@persistent-codex/provider-platform'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -35,6 +36,14 @@ const config: AlphaConfig = {
   ...(provisioningSource ? { provisioningSource } : {}),
 }
 const preflightChecks = runAlphaPreflight(config)
+const providerCatalogs = (() => {
+  const raw = process.env.PERSISTENT_PROVIDER_CATALOGS_JSON
+  if (!raw) return []
+  const parsed = JSON.parse(raw) as unknown
+  if (!Array.isArray(parsed))
+    throw new Error('PERSISTENT_PROVIDER_CATALOGS_JSON must be a JSON array')
+  return parsed.map((catalog) => providerModelCatalogSchema.parse(catalog))
+})()
 const provisioningReady = !preflightChecks.some(
   (check) =>
     check.name === 'provisioning' &&
@@ -47,6 +56,7 @@ const app = await buildControlPlane({
   codexHomeRoot: config.codexHomeRoot,
   artifactRoot: config.artifactRoot,
   preflightChecks,
+  ...(providerCatalogs.length > 0 ? { providerCatalogs } : {}),
   ...(provisioningSource && provisioningReady
     ? {
         codexProvisioningSource: provisioningSource,

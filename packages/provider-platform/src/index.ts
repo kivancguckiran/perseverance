@@ -61,6 +61,14 @@ export const modelPolicySchema = z.object({
   alias: modelPolicyAliasSchema,
   reasoningEffort: reasoningEffortSchema,
 })
+export const directModelSelectionSchema = z.object({
+  modelId: identifierSchema,
+  reasoningEffort: reasoningEffortSchema,
+})
+export const modelSelectionSchema = z.union([
+  modelPolicySchema,
+  directModelSelectionSchema,
+])
 export const modelAliasConfigSchema = z.record(
   modelPolicyAliasSchema,
   z.object({
@@ -72,7 +80,7 @@ export const modelAliasConfigSchema = z.record(
   }),
 )
 export const resolvedModelPolicySchema = z.object({
-  requested: modelPolicySchema,
+  requested: modelSelectionSchema,
   provider: providerIdSchema,
   modelId: identifierSchema,
   reasoningEffort: reasoningEffortSchema,
@@ -100,6 +108,7 @@ export type ProviderIdentity = z.infer<typeof providerIdentitySchema>
 export type ProviderModel = z.infer<typeof providerModelSchema>
 export type ProviderModelCatalog = z.infer<typeof providerModelCatalogSchema>
 export type ModelPolicy = z.infer<typeof modelPolicySchema>
+export type ModelSelection = z.infer<typeof modelSelectionSchema>
 export type ModelAliasConfig = z.infer<typeof modelAliasConfigSchema>
 export type ResolvedModelPolicy = z.infer<typeof resolvedModelPolicySchema>
 
@@ -154,6 +163,44 @@ export function resolveModelPolicy(
   return resolvedModelPolicySchema.parse({
     requested,
     provider: model.provider,
+    modelId: model.modelId,
+    reasoningEffort: requested.reasoningEffort,
+    capabilitySnapshot: model.capabilities,
+    catalogDiscoveredAt: catalog.discoveredAt,
+  })
+}
+
+export function resolveModelSelection(
+  provider: ProviderId,
+  requestedInput: ModelSelection,
+  configInput: ModelAliasConfig,
+  catalogInput: ProviderModelCatalog,
+): ResolvedModelPolicy {
+  const requested = modelSelectionSchema.parse(requestedInput)
+  const catalog = providerModelCatalogSchema.parse(catalogInput)
+  if (catalog.identity.provider !== provider)
+    throw new ProviderConfigurationError(
+      'MODEL_ALIAS_PROVIDER_MISMATCH',
+      `Requested provider ${provider}, but the discovered catalog belongs to ${catalog.identity.provider}`,
+    )
+  if ('alias' in requested)
+    return resolveModelPolicy(requested, configInput, catalog)
+  const model = catalog.models.find(
+    (entry) => entry.modelId === requested.modelId && !entry.hidden,
+  )
+  if (!model)
+    throw new ProviderConfigurationError(
+      'MODEL_ALIAS_UNRESOLVED',
+      `Model ${requested.modelId} is not present in the discovered ${provider} catalog; refresh the catalog or choose an available model`,
+    )
+  if (!model.reasoningEfforts.includes(requested.reasoningEffort))
+    throw new ProviderConfigurationError(
+      'REASONING_EFFORT_UNSUPPORTED',
+      `Model ${requested.modelId} does not support reasoning effort ${requested.reasoningEffort}; choose one of ${model.reasoningEfforts.join(', ')}`,
+    )
+  return resolvedModelPolicySchema.parse({
+    requested,
+    provider,
     modelId: model.modelId,
     reasoningEffort: requested.reasoningEffort,
     capabilitySnapshot: model.capabilities,
@@ -266,6 +313,33 @@ export type ProviderApprovalResolution = z.infer<
   typeof providerApprovalResolutionSchema
 >
 
+export interface ProviderTurnStartInput {
+  sessionId: string | null
+  prompt: string
+  cwd: string
+  modelId: string
+  reasoningEffort: ReasoningEffort
+}
+export interface ProviderTurnStreamEvent {
+  rawEnvelope: Record<string, unknown>
+  normalized: ProviderNormalizedEvent
+  usage?: UsageReport
+}
+export interface ProviderTurnTerminal {
+  providerSessionId: string
+  providerTurnId: string
+  outcome: 'completed' | 'failed' | 'interrupted'
+  usage?: UsageReport
+  error?: ProviderError
+}
+export interface ProviderReadiness {
+  ready: boolean
+  version: string | null
+  authReady: boolean
+  code: 'ready' | 'binary_missing' | 'version_mismatch' | 'auth_required'
+  instruction: string | null
+}
+
 export interface ProviderRuntimeAdapterV1 {
   readonly contractVersion: typeof PROVIDER_CONTRACT_VERSION
   readonly identity: ProviderIdentity
@@ -275,6 +349,11 @@ export interface ProviderRuntimeAdapterV1 {
   resolveApproval(
     input: z.infer<typeof providerApprovalResolutionSchema>,
   ): Promise<void>
+  checkReadiness?(): Promise<ProviderReadiness>
+  startTurn?(
+    input: ProviderTurnStartInput,
+    onEvent: (event: ProviderTurnStreamEvent) => void | Promise<void>,
+  ): Promise<ProviderTurnTerminal>
 }
 
 export const priceCatalogSchema = z.object({

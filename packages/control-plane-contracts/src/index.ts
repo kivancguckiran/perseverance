@@ -1,7 +1,8 @@
 import { timelineEventSchema } from '@persistent-codex/domain-events'
 import {
   capabilityMatrixSchema,
-  modelPolicySchema,
+  modelSelectionSchema,
+  providerModelCatalogSchema,
   providerIdSchema,
   reasoningEffortSchema,
   turnOutcomeSchema,
@@ -226,6 +227,8 @@ export const createSessionRequestSchema = z
   .object({
     folderId: identifierSchema.nullable().optional(),
     title: conversationTitleSchema.optional(),
+    provider: providerIdSchema.optional().default('codex'),
+    model: modelSelectionSchema.optional(),
   })
   .strict()
 
@@ -233,7 +236,7 @@ export const sessionResponseSchema = scopeSchema.extend({
   folderId: identifierSchema.nullable(),
   title: conversationTitleSchema,
   provider: providerIdSchema,
-  requestedPolicy: modelPolicySchema,
+  requestedPolicy: modelSelectionSchema,
   resolvedModel: identifierSchema.nullable(),
   reasoningEffort: reasoningEffortSchema.nullable(),
   capabilitySnapshot: capabilityMatrixSchema.nullable(),
@@ -275,6 +278,10 @@ export const sessionSummarySchema = sessionResponseSchema
 export const sessionListResponseSchema = z.object({
   sessions: z.array(sessionSummarySchema),
   nextCursor: z.string().min(1).nullable(),
+})
+
+export const providerCatalogListResponseSchema = z.object({
+  catalogs: z.array(providerModelCatalogSchema),
 })
 
 export const conversationFolderSchema = scopeSchema
@@ -508,6 +515,9 @@ export type SessionResponse = z.infer<typeof sessionResponseSchema>
 export type DurableRun = z.infer<typeof durableRunSchema>
 export type SessionSummary = z.infer<typeof sessionSummarySchema>
 export type SessionListResponse = z.infer<typeof sessionListResponseSchema>
+export type ProviderCatalogListResponse = z.infer<
+  typeof providerCatalogListResponseSchema
+>
 export type ConversationFolder = z.infer<typeof conversationFolderSchema>
 export type ConversationFolderListResponse = z.infer<
   typeof conversationFolderListResponseSchema

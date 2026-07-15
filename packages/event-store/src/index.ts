@@ -8,11 +8,11 @@ import {
 } from '@persistent-codex/domain-events'
 import {
   estimateUsageCostMicros,
-  modelPolicySchema,
+  modelSelectionSchema,
   capabilityMatrixSchema,
   usageCountersSchema,
   type CapabilityMatrix,
-  type ModelPolicy,
+  type ModelSelection,
   type PriceCatalog,
   type ProviderCostReconciliationResult,
   type ProviderId,
@@ -132,8 +132,9 @@ export interface ArtifactRecord extends StoreScope {
 export interface SessionRecord extends StoreScope {
   folderId: string | null
   title: string
+  manualTitleAt: string | null
   provider: ProviderId
-  requestedPolicy: ModelPolicy
+  requestedPolicy: ModelSelection
   resolvedModel: string | null
   reasoningEffort: ReasoningEffort | null
   capabilitySnapshot: CapabilityMatrix | null
@@ -152,7 +153,7 @@ export interface CreateSessionInput extends StoreScope {
   folderId?: string | null
   title?: string
   provider?: ProviderId
-  requestedPolicy?: ModelPolicy
+  requestedPolicy?: ModelSelection
   resolvedModel?: string | null
   reasoningEffort?: ReasoningEffort | null
   capabilitySnapshot?: CapabilityMatrix | null
@@ -162,7 +163,7 @@ export interface TurnRecord extends StoreScope {
   turnId: string
   providerTurnId: string | null
   provider: ProviderId
-  requestedPolicy: ModelPolicy
+  requestedPolicy: ModelSelection
   resolvedModel: string
   reasoningEffort: ReasoningEffort
   capabilitySnapshot: CapabilityMatrix
@@ -207,6 +208,7 @@ export interface UsageLedgerRecord extends StoreScope {
   provider: ProviderId
   modelId: string
   entryKind: 'usage' | 'terminal' | 'reconciliation'
+  purpose: 'conversation_turn' | 'conversation_title'
   reportKind: 'delta' | 'cumulative' | null
   dedupeKey: string
   reported: UsageCounters
@@ -219,6 +221,19 @@ export interface UsageLedgerRecord extends StoreScope {
   officialCostMicros: number | null
   sourceReference: string | null
   occurredAt: string
+}
+
+export interface ConversationTitleJob extends StoreScope {
+  jobId: string
+  idempotencyKey: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  attempt: number
+  maxAttempts: number
+  lastErrorCode: string | null
+  queuedAt: string
+  startedAt: string | null
+  completedAt: string | null
+  updatedAt: string
 }
 
 export interface UsageSummary extends StoreScope {
@@ -402,6 +417,7 @@ interface SessionRow {
   session_id: string
   folder_id: string | null
   title: string
+  manual_title_at: string | null
   provider: ProviderId
   requested_policy_json: string
   resolved_model: string | null
@@ -466,6 +482,7 @@ interface UsageLedgerRow {
   provider: ProviderId
   model_id: string
   entry_kind: UsageLedgerRecord['entryKind']
+  purpose: UsageLedgerRecord['purpose']
   report_kind: UsageLedgerRecord['reportKind']
   dedupe_key: string
   reported_json: string
@@ -562,8 +579,9 @@ function sessionFromRow(row: SessionRow): SessionRecord {
     sessionId: row.session_id,
     folderId: row.folder_id,
     title: row.title,
+    manualTitleAt: row.manual_title_at,
     provider: row.provider,
-    requestedPolicy: modelPolicySchema.parse(
+    requestedPolicy: modelSelectionSchema.parse(
       JSON.parse(row.requested_policy_json),
     ),
     resolvedModel: row.resolved_model,
@@ -593,7 +611,7 @@ function turnFromRow(row: TurnRow): TurnRecord {
     turnId: row.turn_id,
     providerTurnId: row.provider_turn_id,
     provider: row.provider,
-    requestedPolicy: modelPolicySchema.parse(
+    requestedPolicy: modelSelectionSchema.parse(
       JSON.parse(row.requested_policy_json),
     ),
     resolvedModel: row.resolved_model,
@@ -643,6 +661,7 @@ function usageFromRow(row: UsageLedgerRow): UsageLedgerRecord {
     provider: row.provider,
     modelId: row.model_id,
     entryKind: row.entry_kind,
+    purpose: row.purpose,
     reportKind: row.report_kind,
     dedupeKey: row.dedupe_key,
     reported: usageCountersSchema.parse(JSON.parse(row.reported_json)),
@@ -1018,7 +1037,7 @@ export class SqliteEventStore {
   createSession(input: CreateSessionInput): SessionRecord {
     assertScope(input)
     const status = input.status ?? 'active'
-    const requestedPolicy = modelPolicySchema.parse(
+    const requestedPolicy = modelSelectionSchema.parse(
       input.requestedPolicy ?? {
         alias: 'sol',
         reasoningEffort: 'medium',
@@ -1062,7 +1081,7 @@ export class SqliteEventStore {
   ): SessionRecord {
     assertScope(input)
     const status = input.status ?? 'active'
-    const requestedPolicy = modelPolicySchema.parse(
+    const requestedPolicy = modelSelectionSchema.parse(
       input.requestedPolicy ?? {
         alias: 'sol',
         reasoningEffort: 'medium',
@@ -1248,12 +1267,16 @@ export class SqliteEventStore {
       changes.folderId === undefined ? current.folderId : changes.folderId
     const result = this.#database
       .prepare(
-        `UPDATE sessions SET folder_id = ?, title = ?, updated_at = ?
+        `UPDATE sessions SET folder_id = ?, title = ?,
+           manual_title_at = CASE WHEN ? THEN ? ELSE manual_title_at END,
+           updated_at = ?
          WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
       )
       .run(
         folderId,
         title,
+        changes.title !== undefined ? 1 : 0,
+        this.#timestamp(),
         this.#timestamp(),
         scope.tenantId,
         scope.workspaceId,
@@ -1261,6 +1284,222 @@ export class SqliteEventStore {
       )
     if (Number(result.changes) !== 1) throw new StoreNotFoundError()
     return this.getSession(scope)
+  }
+
+  recordDurableUserMessage(
+    input: StoreScope & {
+      messageId: string
+      idempotencyKey: string
+      content: string
+    },
+  ): number {
+    assertScope(input)
+    assertIdentifier(input.messageId, 'messageId')
+    assertIdentifier(input.idempotencyKey, 'idempotencyKey')
+    const content = input.content.trim()
+    if (!content)
+      throw new StoreError('INVALID_MESSAGE', 'Message content is required')
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO conversation_user_messages
+       (tenant_id,workspace_id,session_id,message_id,idempotency_key,content,created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+      )
+      .run(
+        input.tenantId,
+        input.workspaceId,
+        input.sessionId,
+        input.messageId,
+        input.idempotencyKey,
+        content,
+        this.#timestamp(),
+      )
+    const row = this.#database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM conversation_user_messages
+       WHERE tenant_id=? AND workspace_id=? AND session_id=?`,
+      )
+      .get(input.tenantId, input.workspaceId, input.sessionId) as {
+      count: number
+    }
+    return row.count
+  }
+
+  listDurableUserMessages(scope: StoreScope, limit = 2): string[] {
+    assertScope(scope)
+    return (
+      this.#database
+        .prepare(
+          `SELECT content FROM conversation_user_messages
+       WHERE tenant_id=? AND workspace_id=? AND session_id=?
+       ORDER BY created_at, message_id LIMIT ?`,
+        )
+        .all(
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+          limit,
+        ) as Array<{ content: string }>
+    ).map((row) => row.content)
+  }
+
+  enqueueConversationTitleJob(scope: StoreScope): ConversationTitleJob | null {
+    assertScope(scope)
+    const session = this.getSession(scope)
+    if (session.manualTitleAt) return null
+    const timestamp = this.#timestamp()
+    const jobId = `title_${createHash('sha256').update(`${scope.tenantId}:${scope.workspaceId}:${scope.sessionId}`).digest('hex').slice(0, 24)}`
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO conversation_title_jobs
+       (tenant_id,workspace_id,session_id,job_id,idempotency_key,status,attempt,max_attempts,queued_at,updated_at)
+       SELECT ?,?,?,?,?, 'queued',0,3,?,?
+       WHERE (SELECT COUNT(*) FROM conversation_user_messages
+              WHERE tenant_id=? AND workspace_id=? AND session_id=?) >= 2`,
+      )
+      .run(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        jobId,
+        `conversation-title:${scope.sessionId}:v1`,
+        timestamp,
+        timestamp,
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      )
+    return this.getConversationTitleJob(scope)
+  }
+
+  getConversationTitleJob(scope: StoreScope): ConversationTitleJob | null {
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM conversation_title_jobs WHERE tenant_id=? AND workspace_id=? AND session_id=?`,
+      )
+      .get(scope.tenantId, scope.workspaceId, scope.sessionId) as any
+    return row
+      ? {
+          ...scope,
+          jobId: row.job_id,
+          idempotencyKey: row.idempotency_key,
+          status: row.status,
+          attempt: row.attempt,
+          maxAttempts: row.max_attempts,
+          lastErrorCode: row.last_error_code,
+          queuedAt: row.queued_at,
+          startedAt: row.started_at,
+          completedAt: row.completed_at,
+          updatedAt: row.updated_at,
+        }
+      : null
+  }
+
+  listRunnableConversationTitleJobs(): ConversationTitleJob[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT tenant_id,workspace_id,session_id FROM conversation_title_jobs
+       WHERE status='queued' OR (status='running' AND attempt < max_attempts)
+       ORDER BY queued_at`,
+      )
+      .all() as Array<{
+      tenant_id: string
+      workspace_id: string
+      session_id: string
+    }>
+    return rows.flatMap((row) => {
+      const job = this.getConversationTitleJob({
+        tenantId: row.tenant_id,
+        workspaceId: row.workspace_id,
+        sessionId: row.session_id,
+      })
+      return job ? [job] : []
+    })
+  }
+
+  claimConversationTitleJob(scope: StoreScope): ConversationTitleJob | null {
+    const timestamp = this.#timestamp()
+    const result = this.#database
+      .prepare(
+        `UPDATE conversation_title_jobs SET status='running', attempt=attempt+1,
+       started_at=?, updated_at=? WHERE tenant_id=? AND workspace_id=? AND session_id=?
+       AND status='queued' AND attempt < max_attempts`,
+      )
+      .run(
+        timestamp,
+        timestamp,
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      )
+    return Number(result.changes) === 1
+      ? this.getConversationTitleJob(scope)
+      : null
+  }
+
+  completeConversationTitleJob(scope: StoreScope, title: string): boolean {
+    const normalized = title
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80)
+    if (!normalized) return false
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      this.#database
+        .prepare(
+          `UPDATE sessions SET title=?, updated_at=? WHERE tenant_id=? AND workspace_id=? AND session_id=?
+         AND manual_title_at IS NULL`,
+        )
+        .run(
+          normalized,
+          timestamp,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+        )
+      this.#database
+        .prepare(
+          `UPDATE conversation_title_jobs SET status='completed', completed_at=?, updated_at=?
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?`,
+        )
+        .run(
+          timestamp,
+          timestamp,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+        )
+      this.#database.exec('COMMIT')
+      return true
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  failConversationTitleJob(
+    scope: StoreScope,
+    errorCode: string,
+  ): ConversationTitleJob | null {
+    const job = this.getConversationTitleJob(scope)
+    if (!job) return null
+    const terminal = job.attempt >= job.maxAttempts
+    this.#database
+      .prepare(
+        `UPDATE conversation_title_jobs SET status=?, last_error_code=?, updated_at=?
+       WHERE tenant_id=? AND workspace_id=? AND session_id=?`,
+      )
+      .run(
+        terminal ? 'failed' : 'queued',
+        errorCode,
+        this.#timestamp(),
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      )
+    return this.getConversationTitleJob(scope)
   }
 
   upsertArtifact(input: ArtifactRecord): ArtifactRecord {
@@ -1377,7 +1616,7 @@ export class SqliteEventStore {
         input.turnId,
         input.providerTurnId,
         input.provider,
-        JSON.stringify(modelPolicySchema.parse(input.requestedPolicy)),
+        JSON.stringify(modelSelectionSchema.parse(input.requestedPolicy)),
         input.resolvedModel,
         input.reasoningEffort,
         JSON.stringify(capabilityMatrixSchema.parse(input.capabilitySnapshot)),
@@ -1548,7 +1787,7 @@ export class SqliteEventStore {
       runId: string
       turnId: string
       providerTurnId: string | null
-      runtimeGeneration: number
+      runtimeGeneration: number | null
     },
   ): DurableRunRecord {
     assertScope(input)
@@ -1805,6 +2044,7 @@ export class SqliteEventStore {
       modelId: string
       report: UsageReport
       priceCatalog?: PriceCatalog
+      purpose?: UsageLedgerRecord['purpose']
     },
   ): UsageLedgerRecord {
     assertScope(input)
@@ -1832,6 +2072,7 @@ export class SqliteEventStore {
           duplicate.request_id !== report.requestId ||
           duplicate.provider !== report.provider ||
           duplicate.model_id !== input.modelId ||
+          duplicate.purpose !== (input.purpose ?? 'conversation_turn') ||
           duplicate.report_kind !== report.kind ||
           duplicate.reported_json !== JSON.stringify(counters)
         )
@@ -1891,11 +2132,11 @@ export class SqliteEventStore {
         .prepare(
           `INSERT INTO usage_ledger (
             tenant_id, workspace_id, session_id, turn_id, request_id,
-            provider, model_id, entry_kind, report_kind, dedupe_key,
+            provider, model_id, entry_kind, purpose, report_kind, dedupe_key,
             reported_json, effective_json, completeness,
             reconciliation_status, price_catalog_version,
             estimated_cost_micros, occurred_at, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'usage', ?, ?, ?, ?, ?,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'usage', ?, ?, ?, ?, ?, ?,
                     'unreconciled', ?, ?, ?, ?)`,
         )
         .run(
@@ -1906,6 +2147,7 @@ export class SqliteEventStore {
           report.requestId,
           report.provider,
           input.modelId,
+          input.purpose ?? 'conversation_turn',
           report.kind,
           report.dedupeKey,
           JSON.stringify(counters),

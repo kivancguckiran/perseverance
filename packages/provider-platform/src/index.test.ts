@@ -6,6 +6,7 @@ import {
   ProviderConfigurationError,
   estimateUsageCostMicros,
   resolveModelPolicy,
+  resolveModelSelection,
   type ProviderModelCatalog,
   type ProviderCostReconciliationPort,
 } from './index'
@@ -103,6 +104,46 @@ describe('provider model policy', () => {
       expect(error).toMatchObject({ code: 'MODEL_ALIAS_UNRESOLVED' })
       expect(String(error)).toContain('providerModels.aliases.sol')
     }
+  })
+
+  it('validates direct provider/model/effort selections before runtime calls', () => {
+    expect(
+      resolveModelSelection(
+        'codex',
+        { modelId: 'fixture-model-a', reasoningEffort: 'none' },
+        {
+          sol: { provider: 'codex', selector: { kind: 'catalog_default' } },
+          luna: { provider: 'codex', selector: { kind: 'catalog_default' } },
+        },
+        catalog,
+      ),
+    ).toMatchObject({
+      requested: { modelId: 'fixture-model-a', reasoningEffort: 'none' },
+      provider: 'codex',
+      modelId: 'fixture-model-a',
+    })
+    expect(() =>
+      resolveModelSelection(
+        'claude',
+        { modelId: 'fixture-model-a', reasoningEffort: 'none' },
+        {
+          sol: { provider: 'codex', selector: { kind: 'catalog_default' } },
+          luna: { provider: 'codex', selector: { kind: 'catalog_default' } },
+        },
+        catalog,
+      ),
+    ).toThrow('Requested provider claude')
+    expect(() =>
+      resolveModelSelection(
+        'codex',
+        { modelId: 'fixture-model-a', reasoningEffort: 'xhigh' },
+        {
+          sol: { provider: 'codex', selector: { kind: 'catalog_default' } },
+          luna: { provider: 'codex', selector: { kind: 'catalog_default' } },
+        },
+        catalog,
+      ),
+    ).toThrow('choose one of none, medium')
   })
 })
 

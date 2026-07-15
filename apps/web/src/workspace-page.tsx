@@ -16,6 +16,7 @@ import {
   gitSnapshotListResponseSchema,
   gitSnapshotSchema,
   auditListResponseSchema,
+  providerCatalogListResponseSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
@@ -26,6 +27,7 @@ import {
   type ConversationAttachment,
   type SessionSummary,
   type DurableRun,
+  type ProviderCatalogListResponse,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
@@ -103,6 +105,14 @@ async function readReadiness(retry = false): Promise<ReadinessResponse> {
   })
   const body = readinessResponseSchema.parse(await response.json())
   return body
+}
+
+async function readProviderCatalogs(): Promise<ProviderCatalogListResponse> {
+  const response = await fetch(`${apiBaseUrl}/v1/provider-catalogs`, {
+    headers: scopeHeaders,
+  })
+  if (!response.ok) throw await apiError(response)
+  return providerCatalogListResponseSchema.parse(await response.json())
 }
 
 async function apiError(response: Response): Promise<Error> {
@@ -1458,6 +1468,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       query.state.data?.status === 'ready' ? false : 5_000,
   })
   const authReady = readiness.data?.status === 'ready'
+  const providerCatalogs = useQuery({
+    queryKey: ['provider-catalogs'],
+    queryFn: readProviderCatalogs,
+    staleTime: 60_000,
+  })
   const recentSessions = useInfiniteQuery({
     queryKey: ['recent-sessions'],
     queryFn: ({ pageParam }) => readRecentSessions(pageParam),
@@ -1504,6 +1519,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
   const [attachmentPending, setAttachmentPending] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState<
+    'codex' | 'claude' | 'gemini'
+  >('codex')
+  const [selectedModelId, setSelectedModelId] = useState('')
+  const [selectedEffort, setSelectedEffort] = useState<
+    'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  >('medium')
   const lastSequence = useRef(0)
   const timelineRef = useRef<HTMLDivElement>(null)
   const chatSurfaceRef = useRef<HTMLElement>(null)
@@ -1781,6 +1803,22 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     return () => observer.disconnect()
   }, [chatFeed.length > 0, sessionId])
 
+  const selectedCatalog = providerCatalogs.data?.catalogs.find(
+    (catalog) => catalog.identity.provider === selectedProvider,
+  )
+  const selectedModel = selectedModelId
+    ? selectedCatalog?.models.find((model) => model.modelId === selectedModelId)
+    : selectedCatalog?.models.find((model) => model.isDefault && !model.hidden)
+  const availableEfforts =
+    selectedModel?.reasoningEfforts ??
+    (selectedProvider === 'codex' ? ['medium'] : [])
+  const capabilityWarnings = selectedModel
+    ? Object.entries(selectedModel.capabilities).flatMap(
+        ([capability, support]) =>
+          support === 'supported' ? [] : [`${capability}: ${support}`],
+      )
+    : []
+
   async function createSession(folderId = selectedFolderId) {
     setSessionPending(true)
     setError(undefined)
@@ -1788,7 +1826,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       const response = await fetch(`${apiBaseUrl}/v1/sessions`, {
         method: 'POST',
         headers: scopeHeaders,
-        body: JSON.stringify({ folderId }),
+        body: JSON.stringify({
+          folderId,
+          provider: selectedProvider,
+          model: selectedModelId
+            ? { modelId: selectedModelId, reasoningEffort: selectedEffort }
+            : { alias: 'sol', reasoningEffort: selectedEffort },
+        }),
       })
       if (!response.ok) throw await apiError(response)
       const created = sessionResponseSchema.parse(await response.json())
@@ -2011,7 +2055,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       (!trimmed && attachments.length === 0) ||
       turnPending ||
       turnActive ||
-      !authReady
+      (!authReady && session.provider === 'codex')
     )
       return
     followChatRef.current = true
@@ -2039,24 +2083,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       )
       if (!response.ok) throw await apiError(response)
       turnAcceptedResponseSchema.parse(await response.json())
-      if (session.title === 'Yeni konuşma') {
-        const title = (trimmed || attachments[0]?.name || 'Yeni konuşma').slice(
-          0,
-          120,
-        )
-        const titleResponse = await fetch(
-          `${apiBaseUrl}/v1/sessions/${encodeURIComponent(session.sessionId)}/conversation`,
-          {
-            method: 'PATCH',
-            headers: scopeHeaders,
-            body: JSON.stringify({ title }),
-          },
-        )
-        if (titleResponse.ok) {
-          setSession(sessionResponseSchema.parse(await titleResponse.json()))
-          void recentSessions.refetch()
-        }
-      }
       setPrompt('')
       setAttachments([])
     } catch (cause) {
@@ -2181,10 +2207,107 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               <dd>{realtimeState}</dd>
             </div>
           </dl>
+          <fieldset className="provider-picker" disabled={sessionPending}>
+            <legend>Yeni conversation modeli</legend>
+            <label>
+              Provider
+              <select
+                aria-label="Provider"
+                value={selectedProvider}
+                onChange={(event) => {
+                  const provider = event.target.value as
+                    'codex' | 'claude' | 'gemini'
+                  const catalog = providerCatalogs.data?.catalogs.find(
+                    (entry) => entry.identity.provider === provider,
+                  )
+                  const model = catalog?.models.find(
+                    (entry) => entry.isDefault && !entry.hidden,
+                  )
+                  setSelectedProvider(provider)
+                  setSelectedModelId(
+                    provider === 'codex' ? '' : (model?.modelId ?? ''),
+                  )
+                  setSelectedEffort(
+                    provider === 'codex'
+                      ? 'medium'
+                      : (model?.defaultReasoningEffort ?? 'none'),
+                  )
+                }}
+              >
+                {(providerCatalogs.data?.catalogs ?? []).map((catalog) => (
+                  <option
+                    key={catalog.identity.provider}
+                    value={catalog.identity.provider}
+                  >
+                    {catalog.identity.provider}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Model
+              <select
+                aria-label="Model"
+                value={selectedModelId}
+                onChange={(event) => {
+                  const modelId = event.target.value
+                  const model = selectedCatalog?.models.find(
+                    (entry) => entry.modelId === modelId,
+                  )
+                  setSelectedModelId(modelId)
+                  setSelectedEffort(
+                    modelId
+                      ? (model?.defaultReasoningEffort ?? 'none')
+                      : 'medium',
+                  )
+                }}
+              >
+                {selectedProvider === 'codex' ? (
+                  <option value="">sol · catalog default</option>
+                ) : null}
+                {(selectedCatalog?.models ?? [])
+                  .filter((model) => !model.hidden)
+                  .map((model) => (
+                    <option key={model.modelId} value={model.modelId}>
+                      {model.displayName}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label>
+              Reasoning effort
+              <select
+                aria-label="Reasoning effort"
+                value={selectedEffort}
+                onChange={(event) =>
+                  setSelectedEffort(event.target.value as typeof selectedEffort)
+                }
+              >
+                {availableEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {capabilityWarnings.length > 0 ? (
+              <p className="capability-warning" role="note">
+                {capabilityWarnings.join(' · ')}
+              </p>
+            ) : null}
+            {providerCatalogs.isError ? (
+              <p className="form-error">Provider catalog alınamadı.</p>
+            ) : null}
+          </fieldset>
           <button
             className="session-button"
             type="button"
-            disabled={sessionPending || !authReady}
+            disabled={
+              sessionPending ||
+              (!authReady && selectedProvider === 'codex') ||
+              !selectedModel ||
+              !availableEfforts.includes(selectedEffort)
+            }
             onClick={() => void createSession()}
           >
             {sessionPending
@@ -2696,7 +2819,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 }}
                 placeholder="Kısa bir cevap ver…"
                 rows={2}
-                disabled={!session || turnPending || readOnly || !authReady}
+                disabled={
+                  !session ||
+                  turnPending ||
+                  readOnly ||
+                  (!authReady && session.provider === 'codex')
+                }
               />
               <button
                 type="submit"
@@ -2707,7 +2835,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   attachmentPending ||
                   turnActive ||
                   readOnly ||
-                  !authReady
+                  (!authReady && session?.provider === 'codex')
                 }
               >
                 {turnPending ? 'Gönderiliyor…' : 'Gönder'}

@@ -8,6 +8,10 @@ import type {
 } from '@persistent-codex/workspace-agent'
 import { RequestTimeoutError } from '@persistent-codex/workspace-agent'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
+import type {
+  ProviderModelCatalog,
+  ProviderRuntimeAdapterV1,
+} from '@persistent-codex/provider-platform'
 import {
   serverMessageSchema,
   sessionResponseSchema,
@@ -945,6 +949,217 @@ function ingest(store: SqliteEventStore, key: string): TimelineEvent {
     event: event(`evt_${key}`),
   }).event
 }
+
+describe('WP15 provider selection API', () => {
+  it('persists a direct provider/model/effort snapshot and rejects unsupported effort before start', async () => {
+    const catalog: ProviderModelCatalog = {
+      schemaVersion: 1,
+      identity: {
+        provider: 'claude',
+        adapter: 'fixture',
+        adapterVersion: '1',
+        upstreamVersion: 'fixture',
+      },
+      discoveredAt: '2026-07-15T00:00:00.000Z',
+      models: [
+        {
+          provider: 'claude',
+          modelId: 'claude-fixture',
+          displayName: 'Claude fixture',
+          hidden: false,
+          isDefault: true,
+          reasoningEfforts: ['none', 'medium'],
+          defaultReasoningEffort: 'medium',
+          inputModalities: ['text'],
+          capabilities: {
+            streaming: 'supported',
+            reasoningSummary: 'degraded',
+            commandExecution: 'supported',
+            fileChanges: 'supported',
+            approvals: 'unsupported',
+            interrupt: 'supported',
+            resume: 'supported',
+            toolCalls: 'supported',
+            imageInput: 'unsupported',
+          },
+        },
+      ],
+    }
+    let starts = 0
+    let titleCalls = 0
+    const adapter: ProviderRuntimeAdapterV1 = {
+      contractVersion: 1,
+      identity: catalog.identity,
+      discoverModelCatalog: async () => catalog,
+      normalizeEvent: () => {
+        throw new Error('not used')
+      },
+      interrupt: async () => undefined,
+      resolveApproval: async () => {
+        throw new Error('unsupported')
+      },
+      checkReadiness: async () => ({
+        ready: true,
+        version: 'fixture',
+        authReady: true,
+        code: 'ready',
+        instruction: null,
+      }),
+      startTurn: async () => {
+        starts += 1
+        return {
+          providerSessionId: 'claude-session',
+          providerTurnId: 'claude-turn',
+          outcome: 'completed',
+        }
+      },
+    }
+    const localStore = new SqliteEventStore()
+    const localApp = await buildControlPlane({
+      eventStore: localStore,
+      runtimeClientFactory: () => new FakeRuntimeClient(),
+      providerCatalogs: [catalog],
+      providerAdapterFactory: () => adapter,
+      titleGenerator: async ({ scope: titleScope }) => {
+        titleCalls += 1
+        return {
+          title: 'İki Mesajlık Başlık',
+          usage: {
+            schemaVersion: 1,
+            kind: 'cumulative',
+            provider: 'codex',
+            requestId: `title:${titleScope.sessionId}`,
+            dedupeKey: `title:${titleScope.sessionId}:v1`,
+            counters: {
+              inputTokens: 3,
+              cachedInputTokens: 0,
+              outputTokens: 2,
+              reasoningTokens: 0,
+              toolUnits: 0,
+            },
+            completeness: 'complete',
+            occurredAt: '2026-07-15T00:00:00.000Z',
+          },
+        }
+      },
+      sessionIdFactory: (() => {
+        let id = 0
+        return () => `ses_provider_${++id}`
+      })(),
+    })
+    const localHeaders = {
+      'x-tenant-id': 'ten_provider',
+      'x-workspace-id': 'wsp_provider',
+    }
+    try {
+      const invalid = await localApp.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: localHeaders,
+        payload: {
+          provider: 'claude',
+          model: { modelId: 'claude-fixture', reasoningEffort: 'xhigh' },
+        },
+      })
+      expect(invalid.statusCode).toBe(409)
+      expect(invalid.json()).toMatchObject({
+        code: 'REASONING_EFFORT_UNSUPPORTED',
+      })
+      expect(starts).toBe(0)
+
+      const created = await localApp.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: localHeaders,
+        payload: {
+          provider: 'claude',
+          model: { modelId: 'claude-fixture', reasoningEffort: 'none' },
+        },
+      })
+      expect(created.statusCode).toBe(201)
+      expect(created.json()).toMatchObject({
+        provider: 'claude',
+        resolvedModel: 'claude-fixture',
+        reasoningEffort: 'none',
+        requestedPolicy: { modelId: 'claude-fixture', reasoningEffort: 'none' },
+      })
+      expect(
+        localStore.getSession({
+          ...localHeaders,
+          tenantId: localHeaders['x-tenant-id'],
+          workspaceId: localHeaders['x-workspace-id'],
+          sessionId: 'ses_provider_2',
+        } as any),
+      ).toMatchObject({
+        provider: 'claude',
+        resolvedModel: 'claude-fixture',
+        reasoningEffort: 'none',
+      })
+      const sessionScope = {
+        tenantId: localHeaders['x-tenant-id'],
+        workspaceId: localHeaders['x-workspace-id'],
+        sessionId: 'ses_provider_2',
+      }
+      expect(
+        (
+          await localApp.inject({
+            method: 'POST',
+            url: '/v1/sessions/ses_provider_2/turns',
+            headers: {
+              ...localHeaders,
+              'idempotency-key': 'provider-turn-1',
+            },
+            payload: { prompt: 'İlk durable mesaj' },
+          })
+        ).statusCode,
+      ).toBe(202)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(localStore.getSession(sessionScope).title).toBe('Yeni konuşma')
+      expect(titleCalls).toBe(0)
+      expect(
+        (
+          await localApp.inject({
+            method: 'POST',
+            url: '/v1/sessions/ses_provider_2/turns',
+            headers: {
+              ...localHeaders,
+              'idempotency-key': 'provider-turn-2',
+            },
+            payload: { prompt: 'İkinci durable mesaj' },
+          })
+        ).statusCode,
+      ).toBe(202)
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (localStore.getSession(sessionScope).title !== 'Yeni konuşma') break
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      expect(localStore.getSession(sessionScope).title).toBe(
+        'İki Mesajlık Başlık',
+      )
+      expect(titleCalls).toBe(1)
+      expect(localStore.getUsageSummary(sessionScope).counters).toMatchObject({
+        inputTokens: 3,
+        outputTokens: 2,
+      })
+      const catalogs = await localApp.inject({
+        method: 'GET',
+        url: '/v1/provider-catalogs',
+        headers: localHeaders,
+      })
+      expect(catalogs.statusCode).toBe(200)
+      expect(catalogs.json().catalogs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            identity: expect.objectContaining({ provider: 'claude' }),
+          }),
+        ]),
+      )
+    } finally {
+      await localApp.close()
+      localStore.close()
+    }
+  })
+})
 
 interface TestSocket {
   send(data: string): void
