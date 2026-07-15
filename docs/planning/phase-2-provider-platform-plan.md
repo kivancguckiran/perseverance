@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 15 Temmuz 2026
-- Aktif iş paketi: WP13
+- Aktif iş paketi: WP14
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
@@ -91,12 +91,12 @@ conversation başlığı ikinci kullanıcı mesajından sonra `luna` model polit
 
 ## 4. İş paketi özeti
 
-| Paket | Durum    | Hedef                                                                         |
-| ----- | -------- | ----------------------------------------------------------------------------- |
-| WP13  | Aktif    | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
-| WP14  | Bekliyor | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
-| WP15  | Bekliyor | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
-| WP16  | Bekliyor | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
+| Paket | Durum      | Hedef                                                                         |
+| ----- | ---------- | ----------------------------------------------------------------------------- |
+| WP13  | Tamamlandı | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
+| WP14  | Aktif      | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
+| WP15  | Bekliyor   | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
+| WP16  | Bekliyor   | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
 
 ## 5. WP13 — Platform sözleşmesi ve maliyet temeli
 
@@ -159,6 +159,15 @@ usage ledger'ı kurmak.
 ### Teslimat commit'i
 
 `feat: add provider platform and usage ledger foundation`
+
+### Kabul sonucu
+
+WP13 bağımsız olarak kabul edildi. Uygulama commit'i `f2cde59` üzerinde ADR-0012,
+provider platform paketi, Codex model katalog köprüsü, schema v9 migration, append-only
+usage ledger, versioned fiyat tahmini ve scoped usage/cost API doğrulandı. Güncel HEAD
+üzerinde format, bütün typecheck'ler, 14 test dosyasında 158 test, production build ve
+localhost izniyle `/` ile `/sessions/:sessionId` SSR HTTP smoke'u geçti. WP14 tek aktif
+pakettir.
 
 ## 6. WP14 — Durable detached execution ve accounting finalization
 

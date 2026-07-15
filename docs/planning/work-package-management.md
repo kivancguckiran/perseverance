@@ -65,8 +65,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP10 — Workspace ve Git görünürlüğü          | Tamamlandı | Scoped session navigasyonu, durable Git snapshot ve responsive salt-okunur yüzey doğrulandı                 |
 | WP11 — Audit ve temel metrics                | Tamamlandı | Atomik durable audit, dinamik readiness, bounded metrics ve contention davranışı doğrulandı                 |
 | WP12 — Alfa hardening ve kabul               | Tamamlandı | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                        |
-| WP13 — Platform ve usage ledger temeli       | Aktif      | Provider-neutral sözleşme, model/capability politikası ve maliyet temeli uygulanacak                        |
-| WP14 — Durable detached execution            | Bekliyor   | Browser'dan bağımsız çalışma, recovery ve terminal accounting uygulanacak                                   |
+| WP13 — Platform ve usage ledger temeli       | Tamamlandı | Provider-neutral sözleşme, schema v9, model politikası ve append-only usage ledger doğrulandı               |
+| WP14 — Durable detached execution            | Aktif      | Browser'dan bağımsız çalışma, recovery ve terminal accounting uygulanacak                                   |
 | WP15 — Çok sağlayıcılı conversation          | Bekliyor   | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
 | WP16 — PWA ve Faz 2 kabulü                   | Bekliyor   | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlanacak                                    |
 
@@ -680,3 +680,30 @@ Maliyet kayıtlarında `completed`, `failed` ve `interrupted` lifecycle sonuçla
 ayrıştırılır; ölçülmüş kullanım her durumda korunur, eksik terminal usage sıfır kabul
 edilmez. `sol` ve `luna` gerçek provider model ID'si değil, config ve discovered model
 catalog üzerinden çözülen ürün politikası alias'larıdır.
+
+## WP13 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Uygulama commit'i `f2cde59` (`feat: add provider platform and usage ledger
+foundation`) mevcut ve WP13 kapsamını taşıyor.
+- ADR-0012 ile provider-neutral lifecycle/capability/usage sınırı tanımlandı; mevcut
+  Codex `app-server` adapter'ı yeniden yazılmadan `model/list` katalog köprüsüne bağlandı.
+- `sol` ve `luna` alias'ları config + discovered catalog üzerinden çözülüyor;
+  çözülemeyen model/effort typed ve actionable hata üretiyor.
+- Schema v9 migration; session ve turn provider/model/effort/capability snapshot'ları
+  ile append-only usage ledger'ı reopen ve tenant/session scope testleriyle koruyor.
+- Cumulative/delta usage dedupe, replay/restart, completed/failed/interrupted sonuçları,
+  eksik terminal usage için `partial/unreconciled` ve versioned fiyat tahmini fixture'larla
+  doğrulandı.
+- Güncel HEAD üzerinde Prettier, bütün package typecheck'leri, 14 test dosyasında 158
+  test ve production build geçti. Sandbox port kısıtı dışında yeniden çalıştırılan SSR
+  HTTP smoke'u `/` ve `/sessions/:sessionId` için geçti.
+- Kabul sonunda çalışma ağacı temizdi. Sonraki `fda8c1d` conversation/attachment commit'i
+  ayrı kapsamda olup WP13 regresyonu oluşturmadı.
+
+Uygulama commit'i: `f2cde59` (`feat: add provider platform and usage ledger foundation`).
+
+Aktif iş paketi WP14'tür. WP14 tamamlanmadan WP15'e geçilemez.
