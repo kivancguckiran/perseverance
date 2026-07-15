@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import appStyles from '../styles.css?url'
+import { PwaRuntime } from '../pwa-runtime'
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient
@@ -19,8 +20,15 @@ export const Route = createRootRouteWithContext<{
         content: 'width=device-width, initial-scale=1',
       },
       { title: 'Persistent Codex Workspace' },
+      { name: 'theme-color', content: '#0d1714' },
+      { name: 'application-name', content: 'Persistent Codex Workspace' },
     ],
-    links: [{ rel: 'stylesheet', href: appStyles }],
+    links: [
+      { rel: 'stylesheet', href: appStyles },
+      { rel: 'manifest', href: '/manifest.webmanifest' },
+      { rel: 'icon', href: '/icon.svg', type: 'image/svg+xml' },
+      { rel: 'apple-touch-icon', href: '/icon-192.png' },
+    ],
   }),
   notFoundComponent: NotFoundPage,
   component: RootComponent,
@@ -36,12 +44,13 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="tr">
+    <html lang="tr" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
         {children}
+        <PwaRuntime />
         <Scripts />
       </body>
     </html>

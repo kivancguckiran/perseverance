@@ -34,6 +34,40 @@ kalmalıdır. Terminal usage kesin değilse `completeness=partial`,
 `estimatedCostMicros=null` beklenir. Replay/reconnect sonrasında counter veya terminal
 ledger satırı artıyorsa stable ingest/dedupe key ihlali vardır.
 
+### Cost durumları ve resmi reconciliation
+
+- `estimated`: Versioned price catalog ve ölçülmüş provider usage'ından hesaplanan
+  tahmindir; resmi fatura tutarı değildir.
+- `reconciled`: Ayrı resmi provider cost kaynağından idempotent olarak eklenen tutardır.
+  Tahmin satırı mutasyona uğratılmaz; UI resmi tutarı ve katalog sürümlerini ayrıntıda
+  ayrı gösterir.
+- `partial`: Terminal usage eksik veya yalnız ara sayaçlar ölçülmüştür. Tutar varsa o
+  ana kadarki kullanımı anlatır; yoksa UI “Maliyet ölçülemedi” der, sıfır göstermez.
+- `unreconciled`: Resmi cost eşleştirmesi yapılmamıştır veya provider turn düzeyinde
+  güvenli resmi kaynak sunmuyordur. Bu durum normal ve görünürdür.
+
+Conversation toplamı turn satırlarını ve `purpose=conversation_title` otomatik başlık
+işlerini içerir. Başlık satırı ayrıntıda ayrı görünür. Her satırda input, cached input,
+output, reasoning token, tool unit, lifecycle outcome, currency ve price-catalog
+version incelenebilir.
+
+Normal inference credential ile admin/usage credential aynı güvenlik kapsamı değildir:
+
+- OpenAI resmi organization cost sorgusu için `OPENAI_ADMIN_KEY`; isteğe bağlı daraltma
+  için `OPENAI_RECONCILIATION_PROJECT_ID` ve `OPENAI_RECONCILIATION_API_KEY_ID` kullanır.
+- Anthropic Usage & Cost API için `ANTHROPIC_ADMIN_KEY`; isteğe bağlı workspace daraltması
+  için `ANTHROPIC_RECONCILIATION_WORKSPACE_ID` kullanır.
+- Canlı portlar yalnız `PERSISTENT_RECONCILIATION_DEDICATED_SCOPE=1` ile açılır. Admin
+  key inference key ile aynıysa servis başlamayı reddeder.
+- Gemini için turn'e güvenle bağlanabilen resmi cost portu yoktur; usage fiyat kataloğu
+  ile estimated kalır ve UI `unreconciled` gösterir.
+
+Organization cost API'leri zaman aralığı/toplam düzeyinde olduğu için dedicated
+project/workspace/API-key kapsamı olmadan bir turn'e resmi tutar dağıtmak yasaktır.
+Credential yoksa canlı reconciliation çalıştırılmaz; fixture/contract testleri resmi
+payload mapping ve idempotency'yi doğrular. Admin secret browser'a, event'e, log'a,
+fixture'a veya snapshot'a yazılmaz.
+
 ## Güvenli operatör eylemleri
 
 - Runtime tekrar erişilebilir olduğunda aynı session için explicit resume kullan.

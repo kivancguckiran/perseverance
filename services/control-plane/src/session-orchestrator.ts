@@ -1973,6 +1973,17 @@ export class SessionOrchestrator {
           'Generated title was empty or a manual title already exists',
           409,
         )
+      if (generated.usage)
+        this.#store.appendUsageOutcome({
+          ...scope,
+          turnId: `title:${job.jobId}`,
+          provider: 'codex',
+          modelId: resolved.modelId,
+          purpose: 'conversation_title',
+          dedupeKey: `title:${job.jobId}:terminal`,
+          outcome: 'completed',
+          completeness: generated.usage.completeness,
+        })
     } catch (error) {
       const failed = this.#store.failConversationTitleJob(
         scope,

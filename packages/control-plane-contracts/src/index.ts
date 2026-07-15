@@ -496,6 +496,26 @@ export const usageCostSummarySchema = scopeSchema.extend({
   priceCatalogVersions: z.array(identifierSchema),
 })
 
+export const usageCostItemSchema = usageCostSummarySchema.extend({
+  turnId: identifierSchema,
+  provider: z.enum(['codex', 'claude', 'gemini']),
+  modelId: identifierSchema,
+  purpose: z.enum(['conversation_turn', 'conversation_title']),
+  occurredAt: z.iso.datetime(),
+})
+
+export const conversationUsageCostSchema = z.object({
+  total: usageCostSummarySchema,
+  items: z.array(usageCostItemSchema),
+})
+
+export const usageReconciliationResponseSchema = z.object({
+  status: z.enum(['reconciled', 'unavailable', 'unsupported']),
+  provider: z.enum(['codex', 'claude', 'gemini']).nullable(),
+  reconciledItems: z.number().int().nonnegative(),
+  message: z.string().min(1),
+})
+
 export const approvalListResponseSchema = z.object({
   approvals: z.array(approvalSchema),
 })
@@ -571,3 +591,8 @@ export type AuditRecord = z.infer<typeof auditRecordSchema>
 export type AuditListResponse = z.infer<typeof auditListResponseSchema>
 export type MetricsResponse = z.infer<typeof metricsResponseSchema>
 export type UsageCostSummary = z.infer<typeof usageCostSummarySchema>
+export type UsageCostItem = z.infer<typeof usageCostItemSchema>
+export type ConversationUsageCost = z.infer<typeof conversationUsageCostSchema>
+export type UsageReconciliationResponse = z.infer<
+  typeof usageReconciliationResponseSchema
+>

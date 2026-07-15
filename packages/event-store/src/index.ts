@@ -248,6 +248,28 @@ export interface UsageSummary extends StoreScope {
   priceCatalogVersions: string[]
 }
 
+export interface UsageCostItem extends UsageSummary {
+  turnId: string
+  provider: ProviderId
+  modelId: string
+  purpose: UsageLedgerRecord['purpose']
+  occurredAt: string
+}
+
+export interface ConversationUsageCost {
+  total: UsageSummary
+  items: UsageCostItem[]
+}
+
+export interface UsageReconciliationCandidate {
+  turnId: string
+  provider: ProviderId
+  modelId: string
+  purpose: UsageLedgerRecord['purpose']
+  from: string
+  to: string
+}
+
 export interface ConversationFolderRecord {
   tenantId: string
   workspaceId: string
@@ -2200,6 +2222,7 @@ export class SqliteEventStore {
       dedupeKey: string
       outcome: 'completed' | 'failed' | 'interrupted'
       completeness: 'complete' | 'partial'
+      purpose?: UsageLedgerRecord['purpose']
       occurredAt?: string
     },
   ): UsageLedgerRecord {
@@ -2208,9 +2231,9 @@ export class SqliteEventStore {
       .prepare(
         `INSERT OR IGNORE INTO usage_ledger (
           tenant_id, workspace_id, session_id, turn_id, provider, model_id,
-          entry_kind, dedupe_key, reported_json, effective_json, outcome,
+          entry_kind, purpose, dedupe_key, reported_json, effective_json, outcome,
           completeness, reconciliation_status, occurred_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'terminal', ?, ?, ?, ?, ?,
+        ) VALUES (?, ?, ?, ?, ?, ?, 'terminal', ?, ?, ?, ?, ?, ?,
                   'unreconciled', ?, ?)`,
       )
       .run(
@@ -2220,6 +2243,7 @@ export class SqliteEventStore {
         input.turnId,
         input.provider,
         input.modelId,
+        input.purpose ?? 'conversation_turn',
         input.dedupeKey,
         JSON.stringify(zeroUsageCounters()),
         JSON.stringify(zeroUsageCounters()),
@@ -2247,6 +2271,7 @@ export class SqliteEventStore {
       turnId: string
       provider: ProviderId
       modelId: string
+      purpose?: UsageLedgerRecord['purpose']
       dedupeKey: string
       result: ProviderCostReconciliationResult
     },
@@ -2256,10 +2281,10 @@ export class SqliteEventStore {
       .prepare(
         `INSERT OR IGNORE INTO usage_ledger (
           tenant_id, workspace_id, session_id, turn_id, provider, model_id,
-          entry_kind, dedupe_key, reported_json, effective_json,
+          entry_kind, purpose, dedupe_key, reported_json, effective_json,
           completeness, reconciliation_status, official_cost_micros,
           source_reference, occurred_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'reconciliation', ?, ?, ?, 'complete',
+        ) VALUES (?, ?, ?, ?, ?, ?, 'reconciliation', ?, ?, ?, ?, 'complete',
                   'reconciled', ?, ?, ?, ?)`,
       )
       .run(
@@ -2269,6 +2294,7 @@ export class SqliteEventStore {
         input.turnId,
         input.provider,
         input.modelId,
+        input.purpose ?? 'conversation_turn',
         input.dedupeKey,
         JSON.stringify(zeroUsageCounters()),
         JSON.stringify(zeroUsageCounters()),
@@ -2370,6 +2396,89 @@ export class SqliteEventStore {
         ),
       ],
     }
+  }
+
+  getConversationUsageCost(scope: StoreScope): ConversationUsageCost {
+    assertScope(scope)
+    const rows = this.#database
+      .prepare(
+        `SELECT * FROM usage_ledger
+         WHERE tenant_id=? AND workspace_id=? AND session_id=?
+         ORDER BY ledger_id`,
+      )
+      .all(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      ) as unknown as UsageLedgerRow[]
+    const records = rows.map(usageFromRow)
+    const groups = new Map<string, UsageLedgerRecord[]>()
+    for (const record of records) {
+      const key = `${record.turnId}\u0000${record.purpose}`
+      const group = groups.get(key)
+      if (group) group.push(record)
+      else groups.set(key, [record])
+    }
+    const items = [...groups.values()]
+      .map((group): UsageCostItem => {
+        const first = group[0]!
+        return {
+          ...this.getUsageSummary(scope, first.turnId),
+          turnId: first.turnId,
+          provider: first.provider,
+          modelId: first.modelId,
+          purpose: first.purpose,
+          occurredAt: group.reduce(
+            (earliest, record) =>
+              record.occurredAt < earliest ? record.occurredAt : earliest,
+            first.occurredAt,
+          ),
+        }
+      })
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+    return { total: this.getUsageSummary(scope), items }
+  }
+
+  listUsageReconciliationCandidates(
+    scope: StoreScope,
+  ): UsageReconciliationCandidate[] {
+    assertScope(scope)
+    const rows = this.#database
+      .prepare(
+        `SELECT u.turn_id, u.provider, u.model_id, u.purpose,
+                MIN(COALESCE(t.started_at, u.occurred_at)) AS from_at,
+                MAX(COALESCE(t.completed_at, u.occurred_at)) AS to_at
+         FROM usage_ledger u
+         LEFT JOIN turns t
+           ON t.tenant_id=u.tenant_id AND t.workspace_id=u.workspace_id
+          AND t.session_id=u.session_id AND t.turn_id=u.turn_id
+         WHERE u.tenant_id=? AND u.workspace_id=? AND u.session_id=?
+           AND u.entry_kind='usage'
+           AND NOT EXISTS (
+             SELECT 1 FROM usage_ledger r
+             WHERE r.tenant_id=u.tenant_id AND r.workspace_id=u.workspace_id
+               AND r.session_id=u.session_id AND r.turn_id=u.turn_id
+               AND r.entry_kind='reconciliation'
+           )
+         GROUP BY u.turn_id, u.provider, u.model_id, u.purpose
+         ORDER BY from_at, u.turn_id`,
+      )
+      .all(scope.tenantId, scope.workspaceId, scope.sessionId) as Array<{
+      turn_id: string
+      provider: ProviderId
+      model_id: string
+      purpose: UsageLedgerRecord['purpose']
+      from_at: string
+      to_at: string
+    }>
+    return rows.map((row) => ({
+      turnId: row.turn_id,
+      provider: row.provider,
+      modelId: row.model_id,
+      purpose: row.purpose,
+      from: row.from_at,
+      to: new Date(Date.parse(row.to_at) + 1_000).toISOString(),
+    }))
   }
 
   hasUsage(scope: StoreScope, turnId: string): boolean {

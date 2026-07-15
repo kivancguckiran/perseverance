@@ -433,3 +433,226 @@ export interface ProviderCostReconciliationPort {
     request: ProviderCostReconciliationRequest,
   ): Promise<ProviderCostReconciliationResult[]>
 }
+
+export class ProviderReconciliationError extends Error {
+  readonly code:
+    | 'PROVIDER_MISMATCH'
+    | 'ADMIN_CREDENTIAL_REJECTED'
+    | 'OFFICIAL_COST_UNAVAILABLE'
+    | 'INVALID_OFFICIAL_COST_RESPONSE'
+
+  constructor(
+    code:
+      | 'PROVIDER_MISMATCH'
+      | 'ADMIN_CREDENTIAL_REJECTED'
+      | 'OFFICIAL_COST_UNAVAILABLE'
+      | 'INVALID_OFFICIAL_COST_RESPONSE',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ProviderReconciliationError'
+    this.code = code
+  }
+}
+
+function decimalUnitsToMicros(value: string | number, unitMicros: bigint) {
+  const normalized = String(value)
+  if (!/^\d+(?:\.\d+)?$/.test(normalized))
+    throw new ProviderReconciliationError(
+      'INVALID_OFFICIAL_COST_RESPONSE',
+      'Official cost amount was not a non-negative decimal',
+    )
+  const [whole, fraction = ''] = normalized.split('.')
+  const denominator = 10n ** BigInt(fraction.length)
+  const numerator = BigInt(`${whole}${fraction}`) * unitMicros
+  const rounded = (numerator + denominator / 2n) / denominator
+  if (rounded > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new ProviderReconciliationError(
+      'INVALID_OFFICIAL_COST_RESPONSE',
+      'Official cost amount exceeds the supported range',
+    )
+  return Number(rounded)
+}
+
+async function officialCostJson(
+  fetcher: typeof fetch,
+  url: URL,
+  headers: Record<string, string>,
+) {
+  const response = await fetcher(url, { headers })
+  if (response.status === 401 || response.status === 403)
+    throw new ProviderReconciliationError(
+      'ADMIN_CREDENTIAL_REJECTED',
+      'Provider rejected the server-side admin/usage credential',
+    )
+  if (!response.ok)
+    throw new ProviderReconciliationError(
+      'OFFICIAL_COST_UNAVAILABLE',
+      `Provider official cost endpoint returned HTTP ${response.status}`,
+    )
+  return response.json() as Promise<unknown>
+}
+
+export function createOpenAiCostReconciliationPort(input: {
+  adminApiKey: string
+  projectIds?: string[]
+  apiKeyIds?: string[]
+  fetcher?: typeof fetch
+}): ProviderCostReconciliationPort {
+  if (!input.adminApiKey.trim())
+    throw new ProviderReconciliationError(
+      'ADMIN_CREDENTIAL_REJECTED',
+      'OpenAI admin API key is required',
+    )
+  const fetcher = input.fetcher ?? fetch
+  return {
+    async reconcile(request) {
+      if (request.provider !== 'codex')
+        throw new ProviderReconciliationError(
+          'PROVIDER_MISMATCH',
+          'OpenAI cost reconciliation only accepts Codex usage',
+        )
+      let page: string | undefined
+      let pageCount = 0
+      let officialCostMicros = 0
+      do {
+        const url = new URL('https://api.openai.com/v1/organization/costs')
+        url.searchParams.set(
+          'start_time',
+          String(Math.floor(Date.parse(request.from) / 1000)),
+        )
+        url.searchParams.set(
+          'end_time',
+          String(Math.max(1, Math.ceil(Date.parse(request.to) / 1000))),
+        )
+        url.searchParams.set('limit', '180')
+        for (const projectId of input.projectIds ?? [])
+          url.searchParams.append('project_ids[]', projectId)
+        for (const apiKeyId of input.apiKeyIds ?? [])
+          url.searchParams.append('api_key_ids[]', apiKeyId)
+        if (page) url.searchParams.set('page', page)
+        const raw = (await officialCostJson(fetcher, url, {
+          authorization: `Bearer ${input.adminApiKey}`,
+          'content-type': 'application/json',
+        })) as {
+          data?: Array<{
+            results?: Array<{ amount?: { value?: number; currency?: string } }>
+          }>
+          has_more?: boolean
+          next_page?: string | null
+        }
+        for (const bucket of raw.data ?? [])
+          for (const result of bucket.results ?? []) {
+            if (result.amount?.currency?.toLowerCase() !== 'usd')
+              throw new ProviderReconciliationError(
+                'INVALID_OFFICIAL_COST_RESPONSE',
+                'OpenAI official cost currency was not USD',
+              )
+            officialCostMicros += decimalUnitsToMicros(
+              result.amount.value ?? Number.NaN,
+              1_000_000n,
+            )
+          }
+        pageCount += 1
+        page = raw.has_more ? (raw.next_page ?? undefined) : undefined
+        if (raw.has_more && !page)
+          throw new ProviderReconciliationError(
+            'INVALID_OFFICIAL_COST_RESPONSE',
+            'OpenAI official cost pagination cursor was missing',
+          )
+      } while (page && pageCount < 100)
+      if (page)
+        throw new ProviderReconciliationError(
+          'OFFICIAL_COST_UNAVAILABLE',
+          'OpenAI official cost pagination exceeded the safety limit',
+        )
+      return [
+        {
+          sourceReference: `openai:organization-costs:${request.from}:${request.to}`,
+          officialCostMicros,
+          currency: 'USD',
+          reconciledAt: new Date().toISOString(),
+        },
+      ]
+    },
+  }
+}
+
+export function createAnthropicCostReconciliationPort(input: {
+  adminApiKey: string
+  workspaceIds?: string[]
+  fetcher?: typeof fetch
+}): ProviderCostReconciliationPort {
+  if (!input.adminApiKey.trim())
+    throw new ProviderReconciliationError(
+      'ADMIN_CREDENTIAL_REJECTED',
+      'Anthropic admin API key is required',
+    )
+  const fetcher = input.fetcher ?? fetch
+  return {
+    async reconcile(request) {
+      if (request.provider !== 'claude')
+        throw new ProviderReconciliationError(
+          'PROVIDER_MISMATCH',
+          'Anthropic cost reconciliation only accepts Claude usage',
+        )
+      let page: string | undefined
+      let pageCount = 0
+      let officialCostMicros = 0
+      do {
+        const url = new URL(
+          'https://api.anthropic.com/v1/organizations/cost_report',
+        )
+        url.searchParams.set('starting_at', request.from)
+        url.searchParams.set('ending_at', request.to)
+        url.searchParams.set('bucket_width', '1d')
+        for (const workspaceId of input.workspaceIds ?? [])
+          url.searchParams.append('workspace_ids[]', workspaceId)
+        if (page) url.searchParams.set('page', page)
+        const raw = (await officialCostJson(fetcher, url, {
+          'x-api-key': input.adminApiKey,
+          'anthropic-version': '2023-06-01',
+          'user-agent': 'PersistentCodexWorkspace/phase2',
+        })) as {
+          data?: Array<{
+            results?: Array<{ amount?: string; currency?: string }>
+          }>
+          has_more?: boolean
+          next_page?: string | null
+        }
+        for (const bucket of raw.data ?? [])
+          for (const result of bucket.results ?? []) {
+            if (result.currency !== 'USD')
+              throw new ProviderReconciliationError(
+                'INVALID_OFFICIAL_COST_RESPONSE',
+                'Anthropic official cost currency was not USD',
+              )
+            officialCostMicros += decimalUnitsToMicros(
+              result.amount ?? 'invalid',
+              10_000n,
+            )
+          }
+        pageCount += 1
+        page = raw.has_more ? (raw.next_page ?? undefined) : undefined
+        if (raw.has_more && !page)
+          throw new ProviderReconciliationError(
+            'INVALID_OFFICIAL_COST_RESPONSE',
+            'Anthropic official cost pagination cursor was missing',
+          )
+      } while (page && pageCount < 100)
+      if (page)
+        throw new ProviderReconciliationError(
+          'OFFICIAL_COST_UNAVAILABLE',
+          'Anthropic official cost pagination exceeded the safety limit',
+        )
+      return [
+        {
+          sourceReference: `anthropic:organization-costs:${request.from}:${request.to}`,
+          officialCostMicros,
+          currency: 'USD',
+          reconciledAt: new Date().toISOString(),
+        },
+      ]
+    },
+  }
+}
