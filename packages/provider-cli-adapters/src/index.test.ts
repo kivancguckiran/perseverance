@@ -431,6 +431,10 @@ describe('provider-specific effort and readiness', () => {
 })
 
 describe('provider interrupt and timeout races', () => {
+  const isReady = (line: string, mode: string) => {
+    const event = JSON.parse(line) as Record<string, unknown>
+    return event.type === 'ready' && event.mode === mode
+  }
   const turnInput = {
     sessionId: null,
     prompt: 'fixture',
@@ -537,7 +541,9 @@ describe('provider interrupt and timeout races', () => {
       binary: process.execPath,
       args: [lifecycle, 'interrupt-exit'],
       cwd: '.',
-      onLine: () => started.resolve(),
+      onLine: (line) => {
+        if (isReady(line, 'interrupt-exit')) started.resolve()
+      },
     })
     await started.promise
     expect(runner.interrupt()).toBe(true)
@@ -560,7 +566,9 @@ describe('provider interrupt and timeout races', () => {
       binary: process.execPath,
       args: [lifecycle, 'ignore-signals'],
       cwd: '.',
-      onLine: () => started.resolve(),
+      onLine: (line) => {
+        if (isReady(line, 'ignore-signals')) started.resolve()
+      },
     })
     await started.promise
     expect(runner.interrupt()).toBe(true)
@@ -580,12 +588,17 @@ describe('provider interrupt and timeout races', () => {
     const lifecycle = fileURLToPath(
       new URL('../test/fixtures/process-lifecycle.mjs', import.meta.url),
     )
-    const result = await runner.run({
+    const started = Promise.withResolvers<void>()
+    const running = runner.run({
       binary: process.execPath,
       args: [lifecycle, 'ignore-signals'],
       cwd: '.',
-      onLine: () => undefined,
+      onLine: (line) => {
+        if (isReady(line, 'ignore-signals')) started.resolve()
+      },
     })
+    await started.promise
+    const result = await running
     expect(result).toMatchObject({ timedOut: true, signal: 'SIGKILL' })
     expect(runner.active).toBe(false)
   })
