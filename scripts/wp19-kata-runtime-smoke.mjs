@@ -9,7 +9,7 @@ function run(args, input) {
   const result = spawnSync('kubectl', args, {
     encoding: 'utf8',
     input,
-    timeout: 120_000,
+    timeout: 240_000,
   })
   if (result.error) throw result.error
   if (result.status !== 0)
@@ -20,10 +20,14 @@ function run(args, input) {
 }
 
 function cleanup() {
-  spawnSync('kubectl', ['delete', 'namespace', namespace, '--wait=false'], {
-    encoding: 'utf8',
-    timeout: 30_000,
-  })
+  spawnSync(
+    'kubectl',
+    ['delete', 'namespace', namespace, '--wait=true', '--timeout=120s'],
+    {
+      encoding: 'utf8',
+      timeout: 150_000,
+    },
+  )
 }
 
 if (!storageClass) {
@@ -128,7 +132,7 @@ spec:
   containers:
     - name: smoke
       image: ${image}
-      command: [httpd, -f, -p, "8080", -h, /tmp]
+      command: [sh, -c, "while true; do nc -l -p 8080 < /dev/null; done"]
       securityContext:
         allowPrivilegeEscalation: false
         privileged: false
@@ -162,6 +166,30 @@ spec:
   )
   if (pod.spec.runtimeClassName !== runtimeClass)
     throw new Error('pod did not use the selected Kata RuntimeClass')
+  const node = JSON.parse(run(['get', 'node', pod.spec.nodeName, '-o', 'json']))
+  const guestKernel = run([
+    'exec',
+    '-n',
+    namespace,
+    'workspace-a',
+    '--',
+    'uname',
+    '-r',
+  ])
+  if (!guestKernel || guestKernel === node.status.nodeInfo.kernelVersion)
+    throw new Error(
+      'pod kernel did not differ from the Kubernetes host kernel; Kata microVM execution was not proven',
+    )
+  const pvc = JSON.parse(
+    run(['get', 'pvc', 'workspace', '-n', namespace, '-o', 'json']),
+  )
+  if (
+    pvc.status.phase !== 'Bound' ||
+    pvc.spec.storageClassName !== storage.metadata.name
+  )
+    throw new Error(
+      'encrypted workspace PVC was not bound to the selected class',
+    )
   if (
     pod.spec.volumes.some(
       (volume) => volume.hostPath || volume.nfs || volume.local,
@@ -229,7 +257,9 @@ spec:
       runtimeClass: runtime.metadata.name,
       runtimeHandler: runtime.handler,
       isolationLevel: 'microvm',
+      guestKernelDistinctFromHost: true,
       encryptedStorageClass: storage.metadata.name,
+      encryptedPvc: 'bound',
       metadataAccess: 'denied',
       crossRuntimeAccess: 'denied',
       serviceAccountTokenMount: 'denied',

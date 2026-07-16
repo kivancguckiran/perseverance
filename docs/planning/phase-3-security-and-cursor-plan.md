@@ -215,12 +215,37 @@ policy'lerini ekledi.
 
 Gerçek PostgreSQL 17.10 migration 18+19, idempotent reapply, WP18 forced-RLS regresyonu
 ve cross-tenant crypto-state reddi geçti. Local adversarial crypto/network/path/secret
-testleri ve rotation/erasure/backup araçları geçti. Bu geliştirme ortamında Kubernetes
-current context ve encrypted StorageClass olmadığı için gerçek Kata smoke'u
-çalıştırılamadı. AWS identity doğrulandı; hesapta yalnız service-managed key bulunduğu
-ve geçici billable customer-managed key oluşturma yetkisi verilmediği için gerçek KMS
-encrypt/decrypt smoke'u çalıştırılamadı. Bu iki eksik kanıt nedeniyle WP19 kabul
-edilmiş sayılmaz ve WP20 beklemeye devam eder.
+testleri ve rotation/erasure/backup araçları geçti.
+
+2026-07-16 production isolation kanıtı için `eu-central-1` bölgesinde geçici,
+inbound erişimsiz tek node K3s `v1.36.2+k3s1` cluster kuruldu. Node
+`c7i.xlarge` nested virtualization ve `/dev/kvm` ile Kata Containers `3.31.0`
+çalıştırdı; seçilen RuntimeClass `kata-qemu` ve handler `kata-qemu` oldu.
+`wp19-encrypted-ebs` StorageClass, AWS-managed EBS key ile şifrelenmiş ayrı geçici
+`gp3` volume üzerindeki local PV'yi kullandı. Repository'nin gerçek
+`WP19_KATA_RUNTIME_CLASS=kata-qemu
+WP19_ENCRYPTED_STORAGE_CLASS=wp19-encrypted-ebs pnpm wp19:runtime-smoke` komutu
+başarıyla tamamlandı. Kanıt; guest kernel'in host kernel'den farklı olduğunu,
+encrypted PVC'nin bound olduğunu, pod spec'lerinde hostPath bulunmadığını, metadata
+erişiminin ve service-account token mount'unun reddedildiğini, default-deny egress'in
+ve runtime'lar arası bağlantı denemesinin engellendiğini doğruladı.
+
+Geçici customer-managed AWS KMS key ile gerçek
+`WP19_AWS_KMS_KEY_ID=<temporary-key> pnpm wp19:kms-smoke` komutu başarıyla
+tamamlandı. Secret içermeyen sonuç `keyIdHash=5c524caf9bd27639`, encrypt/decrypt
+round-trip başarılı ve değiştirilmiş `tenantId` encryption context'iyle decrypt
+reddedildi. Key ARN, ciphertext ve key ID repository'ye veya bu kayda yazılmadı;
+geçici key 7 günlük bekleme penceresiyle `PendingDeletion` durumuna alındı.
+
+Regresyonda `pnpm wp19:postgres` PostgreSQL `17.10` üzerinde geçti ve container'ı
+temizledi; `pnpm wp19:test` 11/11, `pnpm wp19:key-rotation`,
+`pnpm wp19:crypto-erasure`, `pnpm wp19:backup-restore` ve `pnpm verify` geçti.
+Tam doğrulama 20 dosyada 254/254 test, typecheck, production build ve SSR HTTP
+smoke'u kapsadı. Kata smoke namespace/pod/PVC kaynakları, PV/StorageClass, SSM
+tüneli, EC2 node, encrypted EBS volume, security group, instance profile ve IAM role
+silindi; geçici kubeconfig ve yerel kimlik dosyaları kaldırıldı. WP19 uygulandı ancak
+bağımsız kabul/ADR-0017 teyidi beklediği için kabul edilmiş sayılmaz; WP20 beklemeye
+devam eder.
 
 ## 6. WP20 — Admin access governance ve Faz 3 adversarial kabul
 

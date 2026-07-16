@@ -7,20 +7,21 @@ if (!keyId) {
   )
   process.exit(2)
 }
-const context = [
-  'tenantId=wp19-smoke',
-  'organizationId=wp19-smoke',
-  'workspaceId=wp19-smoke',
-  'purpose=persistent-codex-workspace-envelope-v1',
-]
+const context =
+  'tenantId=wp19-smoke,organizationId=wp19-smoke,workspaceId=wp19-smoke,purpose=persistent-codex-workspace-envelope-v1'
 function aws(args) {
   const result = spawnSync('aws', args, {
     encoding: 'utf8',
-    timeout: 30_000,
+    timeout: 120_000,
   })
-  if (result.error) throw result.error
+  if (result.error)
+    throw new Error(
+      `AWS KMS command failed before completion: ${result.error.code}`,
+    )
   if (result.status !== 0)
-    throw new Error(result.stderr.trim() || `aws ${args[0]} failed`)
+    throw new Error(
+      `AWS KMS ${args[1] ?? 'operation'} failed with exit status ${result.status}`,
+    )
   return result.stdout.trim()
 }
 
@@ -32,7 +33,7 @@ const ciphertext = aws([
   '--plaintext',
   'd3AxOS1zbW9rZQ==',
   '--encryption-context',
-  ...context,
+  context,
   '--output',
   'text',
   '--query',
@@ -44,7 +45,7 @@ const plaintext = aws([
   '--ciphertext-blob',
   ciphertext,
   '--encryption-context',
-  ...context,
+  context,
   '--output',
   'text',
   '--query',
@@ -60,17 +61,24 @@ const mismatch = spawnSync(
     '--ciphertext-blob',
     ciphertext,
     '--encryption-context',
-    'tenantId=other-tenant',
-    ...context.slice(1),
+    'tenantId=other-tenant,organizationId=wp19-smoke,workspaceId=wp19-smoke,purpose=persistent-codex-workspace-envelope-v1',
     '--output',
     'text',
     '--query',
     'Plaintext',
   ],
-  { encoding: 'utf8', timeout: 30_000 },
+  { encoding: 'utf8', timeout: 120_000 },
 )
+if (mismatch.error)
+  throw new Error(
+    `AWS KMS context-mismatch command failed before completion: ${mismatch.error.code}`,
+  )
 if (mismatch.status === 0)
   throw new Error('AWS KMS accepted a mismatched tenant encryption context')
+if (!mismatch.stderr.includes('InvalidCiphertextException'))
+  throw new Error(
+    `AWS KMS context-mismatch check failed with unexpected exit status ${mismatch.status}`,
+  )
 console.log(
   JSON.stringify({
     status: 'passed',
