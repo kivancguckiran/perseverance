@@ -7,7 +7,7 @@ import { z } from 'zod'
 export const PROVIDER_CONTRACT_VERSION = 1 as const
 
 const identifierSchema = z.string().min(1)
-export const providerIdSchema = z.enum(['codex', 'claude', 'gemini'])
+export const providerIdSchema = z.enum(['codex', 'claude', 'gemini', 'cursor'])
 export const reasoningEffortSchema = z.enum([
   'none',
   'minimal',
@@ -31,6 +31,8 @@ export const capabilityMatrixSchema = z.object({
   resume: capabilitySupportSchema,
   toolCalls: capabilitySupportSchema,
   imageInput: capabilitySupportSchema,
+  usage: capabilitySupportSchema.default('degraded'),
+  cost: capabilitySupportSchema.default('degraded'),
 })
 export const providerIdentitySchema = z.object({
   provider: providerIdSchema,
@@ -118,6 +120,8 @@ export class ProviderConfigurationError extends Error {
     | 'MODEL_ALIAS_PROVIDER_MISMATCH'
     | 'MODEL_ALIAS_UNRESOLVED'
     | 'REASONING_EFFORT_UNSUPPORTED'
+    | 'CURSOR_PERMISSION_POLICY_INVALID'
+    | 'CURSOR_PERMISSION_POLICY_TOO_BROAD'
 
   constructor(code: ProviderConfigurationError['code'], message: string) {
     super(message)
@@ -321,11 +325,17 @@ export interface ProviderTurnStartInput {
   cwd: string
   modelId: string
   reasoningEffort: ReasoningEffort
+  allowFileChanges?: boolean
 }
 export interface ProviderTurnStreamEvent {
   rawEnvelope: Record<string, unknown>
   normalized: ProviderNormalizedEvent
   usage?: UsageReport
+  spill?: {
+    data: Buffer
+    stream: 'stdout' | 'stderr' | 'combined'
+    chunkIndex: number
+  }
 }
 export interface ProviderTurnTerminal {
   providerSessionId: string
@@ -342,6 +352,8 @@ export interface ProviderReadiness {
   code:
     | 'ready'
     | 'binary_missing'
+    | 'binary_not_executable'
+    | 'version_unparseable'
     | 'version_mismatch'
     | 'auth_required'
     | 'auth_unknown'

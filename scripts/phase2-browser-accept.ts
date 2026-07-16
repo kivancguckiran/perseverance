@@ -45,6 +45,8 @@ const capabilities = {
   resume: 'supported',
   toolCalls: 'supported',
   imageInput: 'unsupported',
+  usage: 'supported',
+  cost: 'unsupported',
 } as const
 
 const catalog: ProviderModelCatalog = {

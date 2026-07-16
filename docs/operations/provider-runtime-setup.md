@@ -1,12 +1,13 @@
-# WP15 provider runtime kurulumu
+# Provider runtime kurulumu
 
-Control plane üç runtime’ı pinli sürüm ve machine-readable yüzeyle çalıştırır:
+Control plane runtime’ları pinli/test edilmiş sürüm ve machine-readable yüzeyle çalıştırır:
 
-| Provider    | Pin       | Kurulum                                            | Auth                                                                  |
-| ----------- | --------- | -------------------------------------------------- | --------------------------------------------------------------------- |
-| Codex       | `0.144.2` | Repository’deki mevcut pinli binary/provisioning   | `codex login` veya provision edilmiş `CODEX_HOME`                     |
-| Claude Code | `2.1.109` | `npm install -g @anthropic-ai/claude-code@2.1.109` | Mevcut CLI login veya yalnız server-side `ANTHROPIC_API_KEY`          |
-| Gemini CLI  | `0.25.0`  | `npm install -g @google/gemini-cli@0.25.0`         | Mevcut CLI login veya yalnız server-side `GEMINI_API_KEY`/Google auth |
+| Provider     | Pin            | Kurulum                                               | Auth                                                                  |
+| ------------ | -------------- | ----------------------------------------------------- | --------------------------------------------------------------------- |
+| Codex        | `0.144.2`      | Repository’deki mevcut pinli binary/provisioning      | `codex login` veya provision edilmiş `CODEX_HOME`                     |
+| Claude Code  | `2.1.109`      | `npm install -g @anthropic-ai/claude-code@2.1.109`    | Mevcut CLI login veya yalnız server-side `ANTHROPIC_API_KEY`          |
+| Gemini CLI   | `0.25.0`       | `npm install -g @google/gemini-cli@0.25.0`            | Mevcut CLI login veya yalnız server-side `GEMINI_API_KEY`/Google auth |
+| Cursor Agent | `2025.09.18-*` | Resmî Cursor CLI dokümantasyonuna göre manuel kurulum | `cursor-agent login` veya yalnız server-side `CURSOR_API_KEY`         |
 
 Secret değerlerini `PERSISTENT_PROVIDER_CATALOGS_JSON`, browser config’i, log, event,
 fixture veya ledger’a koymayın. Control plane provider process’lerine yalnız server
@@ -18,14 +19,17 @@ environment’ını ve mevcut CLI auth home’unu aktarır.
 codex --version
 claude --version
 gemini --version
+cursor-agent --version
+cursor-agent status
 ```
 
-Çıktılar sırasıyla `0.144.2`, `2.1.109`, `0.25.0` pinleriyle eşleşmelidir. Claude veya
+Çıktılar sırasıyla `0.144.2`, `2.1.109`, `0.25.0` ve Cursor için
+`2025.09.18-*` aralığıyla eşleşmelidir. Claude veya
 Gemini adapter readiness’i binary yoksa ya da pin farklıysa actionable install komutu
 döndürür. Auth failure terminal/fixture başarısı sayılmaz; gerçek provider smoke ayrıca
 çalıştırılmalıdır.
 
-## Claude/Gemini model katalog config’i
+## CLI model katalog config’i
 
 CLI’lar kararlı model-list discovery sözleşmesi vermediği için gerçek model ID ve effort
 desteği deployment config’inden gelir. Aşağıdaki değerler placeholder’dır; provider
@@ -74,5 +78,37 @@ için aynı shape’i `provider=gemini`, pin `0.25.0` ve hesabınızın gerçek 
 ekleyin. Capability veya effort desteğinden emin değilseniz supported yazmayın;
 `degraded`/`unsupported` kullanın.
 
+Cursor için `provider=cursor`, `upstreamVersion=2025.09.18-*`, gerçek ve smoke ile
+doğrulanmış model ID’si, `reasoningEfforts=["none"]` kullanın. Capability değerleri
+ADR-0015 ile uyumlu olmalıdır.
+
+## Cursor permission ve force politikası
+
+Her Cursor workspace’inde `.cursor/cli.json` bulunmalıdır. Relative ve dar allow
+kuralları kullanın; deny listesi en az `.env*`, `*.pem`, `*.key`, private-key ve
+credential dosyalarını kapsamalıdır. Workspace dışı absolute path, traversal, symlink
+config ve geniş `Read(**/*)`/`Write(**/*)` kuralları reddedilir.
+
+`--force` normalde eklenmez. Yazma gerekiyorsa hem server environment’ında
+`PERSISTENT_CURSOR_FORCE_ALLOWED=1` verilmeli hem project policy dar bir `Write(...)`
+allow kuralı içermelidir. Bu bayrak tek başına permission vermez.
+
+Binary server `PATH` içinde değilse `CURSOR_AGENT_BIN` değerini executable absolute
+binary path’ine ayarlayın. API key’i bu veya başka bir command argument’ına eklemeyin.
+
+## Cursor gerçek smoke
+
+```sh
+CURSOR_SMOKE_MODEL=YOUR_VERIFIED_MODEL pnpm provider:smoke:cursor
+```
+
+Smoke readiness, start/stream, tool event, resume, interrupt ve cleanup raporlar.
+`cursor-agent login` veya `CURSOR_API_KEY` yoksa komut başarısız olur; geçmiş sayılmaz.
+
 Resmî yüzeyler: [Claude Code CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage),
-[Gemini CLI headless reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/headless.md).
+[Gemini CLI headless reference](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/headless.md),
+[Cursor CLI overview](https://docs.cursor.com/en/cli/overview),
+[headless](https://docs.cursor.com/en/cli/headless),
+[output format](https://docs.cursor.com/en/cli/reference/output-format),
+[permissions](https://docs.cursor.com/cli/reference/permissions) ve
+[parameters](https://docs.cursor.com/en/cli/reference/parameters).

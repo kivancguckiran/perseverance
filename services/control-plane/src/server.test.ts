@@ -84,6 +84,8 @@ describe('WP13 scoped usage and cost API', () => {
         resume: 'supported',
         toolCalls: 'supported',
         imageInput: 'unsupported',
+        usage: 'supported',
+        cost: 'unsupported',
       },
     })
     store.createTurn({
@@ -1038,6 +1040,8 @@ describe('WP15 provider selection API', () => {
             resume: 'supported',
             toolCalls: 'supported',
             imageInput: 'unsupported',
+            usage: 'supported',
+            cost: 'unsupported',
           },
         },
       ],
@@ -1212,6 +1216,130 @@ describe('WP15 provider selection API', () => {
           }),
         ]),
       )
+    } finally {
+      await localApp.close()
+      localStore.close()
+    }
+  })
+
+  it('exposes Cursor catalog/readiness and creates a Cursor conversation with honest capabilities', async () => {
+    const cursorCatalog: ProviderModelCatalog = {
+      schemaVersion: 1,
+      identity: {
+        provider: 'cursor',
+        adapter: 'cursor-agent-stream-json',
+        adapterVersion: '1',
+        upstreamVersion: '2025.09.18-*',
+      },
+      discoveredAt: '2026-07-16T00:00:00.000Z',
+      models: [
+        {
+          provider: 'cursor',
+          modelId: 'cursor-fixture-model',
+          displayName: 'Cursor fixture',
+          hidden: false,
+          isDefault: true,
+          reasoningEfforts: ['none'],
+          defaultReasoningEffort: 'none',
+          inputModalities: ['text'],
+          capabilities: {
+            streaming: 'supported',
+            reasoningSummary: 'unsupported',
+            commandExecution: 'supported',
+            fileChanges: 'degraded',
+            approvals: 'unsupported',
+            interrupt: 'supported',
+            resume: 'supported',
+            toolCalls: 'supported',
+            imageInput: 'unsupported',
+            usage: 'degraded',
+            cost: 'unsupported',
+          },
+        },
+      ],
+    }
+    const adapter: ProviderRuntimeAdapterV1 = {
+      contractVersion: 1,
+      identity: cursorCatalog.identity,
+      discoverModelCatalog: async () => cursorCatalog,
+      normalizeEvent: () => {
+        throw new Error('not used')
+      },
+      interrupt: async () => undefined,
+      resolveApproval: async () => {
+        throw new Error('unsupported')
+      },
+      checkReadiness: async () => ({
+        ready: true,
+        version: '2025.09.18-fixture',
+        authReady: true,
+        authStatus: 'ready',
+        code: 'ready',
+        instruction: null,
+      }),
+    }
+    const localStore = new SqliteEventStore()
+    const localApp = await buildControlPlane({
+      eventStore: localStore,
+      runtimeClientFactory: () => new FakeRuntimeClient(),
+      providerCatalogs: [cursorCatalog],
+      providerAdapterFactory: () => adapter,
+      sessionIdFactory: () => 'ses_cursor_api',
+    })
+    const headers = {
+      'x-tenant-id': 'ten_cursor',
+      'x-workspace-id': 'wsp_cursor',
+    }
+    try {
+      const catalogs = await localApp.inject({
+        method: 'GET',
+        url: '/v1/provider-catalogs',
+        headers,
+      })
+      expect(catalogs.statusCode).toBe(200)
+      expect(catalogs.json().catalogs).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            identity: expect.objectContaining({ provider: 'cursor' }),
+            models: expect.arrayContaining([
+              expect.objectContaining({
+                reasoningEfforts: ['none'],
+                capabilities: expect.objectContaining({
+                  approvals: 'unsupported',
+                  reasoningSummary: 'unsupported',
+                  usage: 'degraded',
+                  cost: 'unsupported',
+                }),
+              }),
+            ]),
+          }),
+        ]),
+      )
+      expect(catalogs.json().readiness).toMatchObject({
+        cursor: { ready: true, authStatus: 'ready' },
+      })
+      const created = await localApp.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers,
+        payload: {
+          provider: 'cursor',
+          model: {
+            modelId: 'cursor-fixture-model',
+            reasoningEffort: 'none',
+          },
+        },
+      })
+      expect(created.statusCode).toBe(201)
+      expect(created.json()).toMatchObject({
+        provider: 'cursor',
+        resolvedModel: 'cursor-fixture-model',
+        reasoningEffort: 'none',
+        capabilitySnapshot: {
+          fileChanges: 'degraded',
+          approvals: 'unsupported',
+        },
+      })
     } finally {
       await localApp.close()
       localStore.close()

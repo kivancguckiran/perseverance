@@ -8,6 +8,7 @@ import {
   DEFAULT_ARTIFACT_CHUNK_BYTES,
   redactCommandOutput,
 } from '@persistent-codex/artifact-storage'
+import { parseTimelineEvent } from '@persistent-codex/domain-events'
 import {
   CodexEventAdapter,
   CodexProviderRuntimeAdapter,
@@ -46,6 +47,7 @@ import {
 } from '@persistent-codex/provider-platform'
 import {
   ClaudeCodeRuntimeAdapter,
+  CursorAgentRuntimeAdapter,
   GeminiCliRuntimeAdapter,
 } from '@persistent-codex/provider-cli-adapters'
 import { CodexTitleProcessRunner } from './title-process-runner'
@@ -150,10 +152,11 @@ export interface SessionOrchestratorOptions {
   priceCatalog?: PriceCatalog
   providerCatalogs?: ProviderModelCatalog[]
   providerAdapterFactory?: (input: {
-    provider: 'claude' | 'gemini'
+    provider: 'claude' | 'gemini' | 'cursor'
     catalog: ProviderModelCatalog
     scope: StoreScope
   }) => ProviderRuntimeAdapterV1
+  cursorForceAllowed?: boolean
   titleGenerator?: (input: {
     scope: StoreScope
     modelId: string
@@ -304,6 +307,7 @@ export class SessionOrchestrator {
   readonly #priceCatalog: PriceCatalog | undefined
   readonly #providerCatalogs: Map<ProviderId, ProviderModelCatalog>
   readonly #providerAdapterFactory: SessionOrchestratorOptions['providerAdapterFactory']
+  readonly #cursorForceAllowed: boolean
   readonly #titleGenerator: NonNullable<
     SessionOrchestratorOptions['titleGenerator']
   >
@@ -369,6 +373,8 @@ export class SessionOrchestrator {
       ]),
     )
     this.#providerAdapterFactory = options.providerAdapterFactory
+    this.#cursorForceAllowed = options.cursorForceAllowed ?? false
+    this.#store.markDetachedCliRunsRecoveryRequired()
     this.#titleGenerator =
       options.titleGenerator ?? ((input) => this.#generateCodexTitle(input))
     this.#registry = new WorkspaceRuntimeRegistry({
@@ -547,7 +553,7 @@ export class SessionOrchestrator {
   }
 
   #cliAdapter(
-    provider: 'claude' | 'gemini',
+    provider: 'claude' | 'gemini' | 'cursor',
     scope: StoreScope,
   ): ProviderRuntimeAdapterV1 {
     const key = JSON.stringify([
@@ -572,10 +578,15 @@ export class SessionOrchestrator {
             catalog,
             context: { ...scope, nextSequence: () => 0 },
           })
-        : new GeminiCliRuntimeAdapter({
-            catalog,
-            context: { ...scope, nextSequence: () => 0 },
-          }))
+        : provider === 'gemini'
+          ? new GeminiCliRuntimeAdapter({
+              catalog,
+              context: { ...scope, nextSequence: () => 0 },
+            })
+          : new CursorAgentRuntimeAdapter({
+              catalog,
+              context: { ...scope, nextSequence: () => 0 },
+            }))
     this.#cliAdapters.set(key, adapter)
     return adapter
   }
@@ -614,7 +625,7 @@ export class SessionOrchestrator {
     workspaceId: string
   }) {
     const entries = await Promise.all(
-      (['claude', 'gemini'] as const).flatMap((provider) =>
+      (['claude', 'gemini', 'cursor'] as const).flatMap((provider) =>
         this.#providerCatalogs.has(provider)
           ? [
               (async () =>
@@ -706,6 +717,19 @@ export class SessionOrchestrator {
         )
       throw error
     }
+    if (requestedProvider !== 'codex') {
+      const readiness = await (
+        provider as ProviderRuntimeAdapterV1
+      ).checkReadiness?.()
+      if (readiness && !readiness.ready)
+        throw new OrchestrationError(
+          readiness.code === 'auth_required'
+            ? 'AUTH_REQUIRED'
+            : 'PROVIDER_SETUP_REQUIRED',
+          readiness.instruction ?? `${requestedProvider} provider is not ready`,
+          readiness.code === 'auth_required' ? 401 : 503,
+        )
+    }
     this.#store.createSessionWithAudit(
       {
         ...scope,
@@ -729,17 +753,6 @@ export class SessionOrchestrator {
     )
 
     if (requestedProvider !== 'codex') {
-      const readiness = await (
-        provider as ProviderRuntimeAdapterV1
-      ).checkReadiness?.()
-      if (readiness && !readiness.ready)
-        throw new OrchestrationError(
-          readiness.code === 'auth_required'
-            ? 'AUTH_REQUIRED'
-            : 'PROVIDER_SETUP_REQUIRED',
-          readiness.instruction ?? `${requestedProvider} provider is not ready`,
-          readiness.code === 'auth_required' ? 401 : 503,
-        )
       this.#store.updateSessionRecoveryWithAudit(
         scope,
         { status: 'active', runtimeGeneration: null },
@@ -1720,7 +1733,7 @@ export class SessionOrchestrator {
 
   async #startCliTurn(
     scope: StoreScope,
-    provider: 'claude' | 'gemini',
+    provider: 'claude' | 'gemini' | 'cursor',
     prompt: string,
     idempotencyKey: string,
     attachments: TurnAttachmentInput[],
@@ -1827,9 +1840,79 @@ export class SessionOrchestrator {
           cwd,
           modelId: session.resolvedModel,
           reasoningEffort: session.reasoningEffort,
+          ...(provider === 'cursor'
+            ? { allowFileChanges: this.#cursorForceAllowed }
+            : {}),
         },
         (delivery) => {
           ordinal += 1
+          const cursorInit =
+            provider === 'cursor' &&
+            delivery.rawEnvelope.type === 'system' &&
+            delivery.rawEnvelope.subtype === 'init'
+              ? {
+                  cursorSessionId:
+                    typeof delivery.rawEnvelope.session_id === 'string'
+                      ? delivery.rawEnvelope.session_id
+                      : null,
+                  cursorModel:
+                    typeof delivery.rawEnvelope.model === 'string'
+                      ? delivery.rawEnvelope.model
+                      : null,
+                  cursorPermissionMode:
+                    typeof delivery.rawEnvelope.permissionMode === 'string'
+                      ? delivery.rawEnvelope.permissionMode
+                      : null,
+                }
+              : {}
+          if (
+            delivery.spill &&
+            this.#artifactStorage &&
+            (delivery.normalized.event.type === 'command.completed' ||
+              delivery.normalized.event.type === 'tool.completed')
+          ) {
+            const artifactScope: ArtifactScope = {
+              ...scope,
+              turnId,
+              itemId:
+                delivery.normalized.event.codexItemId ??
+                `cursor-command-${ordinal}`,
+            }
+            let metadata = this.#artifactStorage.create(
+              artifactScope,
+              'command-output',
+            )
+            metadata = this.#artifactStorage.append({
+              artifactId: metadata.artifactId,
+              scope: artifactScope,
+              chunkIndex: delivery.spill.chunkIndex,
+              stream: delivery.spill.stream,
+              data: delivery.spill.data,
+              sourceKey: `${provider}:${runId}:${ordinal}`,
+            })
+            metadata = this.#artifactStorage.finalize(
+              metadata.artifactId,
+              artifactScope,
+            )
+            this.#persistArtifact(metadata)
+            const artifact = {
+              artifactId: metadata.artifactId,
+              startByte: 0,
+              endByte: metadata.byteLength,
+              byteLength: metadata.byteLength,
+            }
+            if (delivery.normalized.event.type === 'command.completed')
+              delivery.normalized.event.payload.output.artifact = artifact
+            else if (
+              delivery.normalized.event.payload.result &&
+              typeof delivery.normalized.event.payload.result === 'object' &&
+              !Array.isArray(delivery.normalized.event.payload.result)
+            ) {
+              const payloadResult = delivery.normalized.event.payload
+                .result as Record<string, unknown>
+              payloadResult.artifact = artifact
+            }
+          }
           this.#store.ingest({
             ...scope,
             ingestKey: `${provider}:${runId}:${ordinal}:${delivery.normalized.rawEnvelopeChecksum}`,
@@ -1838,7 +1921,7 @@ export class SessionOrchestrator {
               checksum: delivery.normalized.rawEnvelopeChecksum,
               sourceMethod: delivery.normalized.event.sourceMethod,
               sourceVersion: adapter.identity.upstreamVersion,
-              sourceMetadata: { provider, runId, ordinal },
+              sourceMetadata: { provider, runId, ordinal, ...cursorInit },
               receivedAt: delivery.normalized.event.receivedAt,
             },
             event: delivery.normalized.event,
@@ -1849,7 +1932,8 @@ export class SessionOrchestrator {
               turnId,
               modelId: session.resolvedModel!,
               report: delivery.usage,
-              ...(this.#priceCatalog?.models.some(
+              ...(provider !== 'cursor' &&
+              this.#priceCatalog?.models.some(
                 (price) =>
                   price.provider === provider &&
                   price.modelId === session.resolvedModel,
@@ -1868,7 +1952,8 @@ export class SessionOrchestrator {
               turnId,
               modelId: session.resolvedModel!,
               report: terminal.usage,
-              ...(this.#priceCatalog?.models.some(
+              ...(provider !== 'cursor' &&
+              this.#priceCatalog?.models.some(
                 (price) =>
                   price.provider === provider &&
                   price.modelId === session.resolvedModel,
@@ -1876,6 +1961,61 @@ export class SessionOrchestrator {
                 ? { priceCatalog: this.#priceCatalog }
                 : {}),
             })
+          if (terminal.error) {
+            const raw = {
+              type: 'provider_terminal_error',
+              code: terminal.error.code,
+              message: terminal.error.message,
+              upstreamCode: terminal.error.upstreamCode,
+            }
+            const checksum = createHash('sha256')
+              .update(JSON.stringify(raw))
+              .digest('hex')
+            const occurredAt = new Date().toISOString()
+            this.#store.ingest({
+              ...scope,
+              ingestKey: `${provider}:${runId}:terminal-error:${checksum}`,
+              raw: {
+                envelope: raw,
+                checksum,
+                sourceMethod: 'provider_terminal_error',
+                sourceVersion: adapter.identity.upstreamVersion,
+                sourceMetadata: { provider, runId },
+                receivedAt: occurredAt,
+              },
+              event: parseTimelineEvent({
+                eventId: `evt_${randomUUID()}`,
+                schemaVersion: 1,
+                tenantId: scope.tenantId,
+                workspaceId: scope.workspaceId,
+                sessionId: scope.sessionId,
+                codexThreadId:
+                  terminal.providerSessionId ??
+                  session.codexThreadId ??
+                  scope.sessionId,
+                codexTurnId: turnId,
+                sequence: 0,
+                occurredAt,
+                receivedAt: occurredAt,
+                source:
+                  provider === 'claude'
+                    ? 'claude-code'
+                    : provider === 'gemini'
+                      ? 'gemini-cli'
+                      : 'cursor-agent',
+                sourceVersion: adapter.identity.upstreamVersion,
+                sourceMethod: 'provider_terminal_error',
+                visibility: 'user',
+                type: 'error.reported',
+                payload: {
+                  message: terminal.error.message,
+                  additionalDetails: terminal.error.upstreamCode,
+                  codexErrorInfo: null,
+                  willRetry: terminal.error.retryable,
+                },
+              }),
+            })
+          }
           this.#store.finalizeDurableRun({
             ...scope,
             runId,

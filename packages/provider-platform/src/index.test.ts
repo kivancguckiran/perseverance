@@ -50,6 +50,8 @@ const catalog: ProviderModelCatalog = {
         resume: 'supported',
         toolCalls: 'supported',
         imageInput: 'unsupported',
+        usage: 'supported',
+        cost: 'unsupported',
       },
     },
   ],
