@@ -10,6 +10,7 @@ import {
   attachmentMediaType,
   chatFollowStateAfterScroll,
   coalesceTimelineEvents,
+  conversationFolderPickerState,
   conversationFeed,
   conversationMessages,
   describeConversationWork,
@@ -60,6 +61,30 @@ function delta(sequence: number, text: string): TimelineEvent {
   })
 }
 describe('bounded browser timeline state', () => {
+  it('allows choosing a folder before the conversation session exists', () => {
+    expect(
+      conversationFolderPickerState({
+        sessionFolderId: undefined,
+        selectedFolderId: 'fol_selected',
+        online: true,
+      }),
+    ).toEqual({ value: 'fol_selected', disabled: false })
+    expect(
+      conversationFolderPickerState({
+        sessionFolderId: 'fol_session',
+        selectedFolderId: 'fol_selected',
+        online: true,
+      }),
+    ).toEqual({ value: 'fol_session', disabled: false })
+    expect(
+      conversationFolderPickerState({
+        sessionFolderId: null,
+        selectedFolderId: null,
+        online: false,
+      }),
+    ).toEqual({ value: '', disabled: true })
+  })
+
   it('distinguishes estimated, partial, and reconciled cost labels', () => {
     const baseUsage = {
       tenantId: 'ten',
