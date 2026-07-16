@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 16 Temmuz 2026
-- Aktif iş paketi: WP17 — Uygulandı / kabul bekliyor
+- Aktif iş paketi: WP18
 - Ön koşul: Faz 2 ve WP16 tamamlandı
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
@@ -31,15 +31,15 @@ confidential-computing/attestation mimarisi gerektirir ve Faz 3 kapsamı dışı
 
 ## 2. İş paketi özeti
 
-| Paket | Durum                      | Hedef                                                                  |
-| ----- | -------------------------- | ---------------------------------------------------------------------- |
-| WP17  | Uygulandı / kabul bekliyor | Cursor Agent adapter teslim edildi; bağımsız kabul bekliyor            |
-| WP18  | Planlandı                  | OIDC principal, deny-by-default authorization ve tenant data isolation |
-| WP19  | Planlandı                  | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
-| WP20  | Planlandı                  | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
+| Paket | Durum      | Hedef                                                                  |
+| ----- | ---------- | ---------------------------------------------------------------------- |
+| WP17  | Tamamlandı | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
+| WP18  | Aktif      | OIDC principal, deny-by-default authorization ve tenant data isolation |
+| WP19  | Planlandı  | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
+| WP20  | Planlandı  | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
 
-Her zaman yalnız bir paket aktif olabilir. WP17 tamamlanıp bağımsız kabul edilmeden
-WP18'e geçilmez.
+Her zaman yalnız bir paket aktif olabilir. WP18 tamamlanıp bağımsız kabul edilmeden
+WP19'a geçilmez.
 
 ## 3. WP17 — Cursor Agent provider adapter
 
@@ -94,6 +94,20 @@ stream-json` ile çalışır. `--trust` permission genişletmez. Değişiklik ya
 ### Teslimat commit'i
 
 `feat: add Cursor Agent provider adapter`
+
+### Kabul sonucu
+
+WP17 bağımsız olarak kabul edildi. Uygulama commit'i `761552d`, güncel runtime düzeltme
+commit'i `28a3374` üzerinde provider-neutral Cursor adapter, exact doğrulanmış release
+allowlist'i, authenticated readiness, bounded stream parser, project permission
+politikası, durable resume, interrupt escalation, usage ve UI/API entegrasyonu
+doğrulandı. Cursor Agent `2026.07.09-a3815c0` ve model `auto` ile gerçek smoke; start,
+tool event, durable session, resume, explicit interrupt, complete usage, unknown-event
+koruması ve cleanup aşamalarını geçti. Güncel HEAD'de 6 hedefli dosyada 154 test ile
+repository genelinde 17 dosyada 224 test, bütün typecheck'ler, production build ve SSR
+HTTP smoke geçti. Production browser acceptance 1280×720 ve 390×844 görünümü,
+controlled Service Worker, offline/online replay ve sıfır page error ile tamamlandı.
+WP18 tek aktif pakettir.
 
 ## 4. WP18 — Kimlik, authorization ve tenant data isolation
 

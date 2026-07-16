@@ -1,6 +1,6 @@
 # ADR-0015: Cursor Agent provider adapter ve beta sürüm sınırı
 
-- Durum: Kabul adayı
+- Durum: Kabul edildi
 - Tarih: 16 Temmuz 2026
 - Kapsam: WP17 Cursor Agent provider adapter
 
