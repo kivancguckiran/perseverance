@@ -72,8 +72,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP16 — PWA ve Faz 2 kabulü                   | Tamamlandı | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlandı                                      |
 | WP17 — Cursor Agent provider adapter         | Tamamlandı | Cursor adapter güncel runtime ve gerçek smoke ile bağımsız kabul edildi                                     |
 | WP18 — Tenant kimliği ve data isolation      | Tamamlandı | OIDC, deny-by-default authorization, RLS/object/cache tenant sınırı bağımsız kabul edildi                   |
-| WP19 — Runtime ve encryption isolation       | Aktif      | İzole runtime, egress, secret lease, KMS envelope encryption ve restore sınırı kurulacak                    |
-| WP20 — Security beta kabulü                  | Planlandı  | Support grant/break-glass ve birleşik adversarial Faz 3 kabulü tamamlanacak                                 |
+| WP19 — Runtime ve encryption isolation       | Tamamlandı | Kata runtime, egress, secret lease, KMS envelope encryption ve restore sınırı bağımsız kabul edildi         |
+| WP20 — Security beta kabulü                  | Aktif      | Support grant/break-glass ve birleşik adversarial Faz 3 kabulü tamamlanacak                                 |
 
 ## WP1 nihai denetim sonucu
 
@@ -931,3 +931,28 @@ Doğrulananlar:
 Uygulama commit'i: `b2478a2`.
 
 Aktif iş paketi WP19'dur. WP19 tamamlanmadan WP20'ye geçilemez.
+
+## WP19 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Uygulama commit'i `3e5e6f7` ve production isolation kanıt commit'i `18d0dcb`
+  mevcut.
+- Gerçek Kata Containers smoke'u `kata-qemu` micro-VM, hosttan farklı guest kernel,
+  encrypted ve bound workspace PVC, hostPath yasağı, metadata/service-account token
+  reddi ve default-deny cross-runtime network sınırını kanıtladı.
+- Gerçek customer-managed AWS KMS encrypt/decrypt round-trip geçti; yanlış tenant
+  encryption context'i reddedildi. Secret içermeyen key hash'ine karşılık gelen
+  anahtarın AWS üzerinde `PendingDeletion` olduğu bağımsız doğrulandı.
+- PostgreSQL 17.10 migration 18+19 idempotent, forced-RLS ve cross-tenant
+  crypto-state reddiyle geçti.
+- Workspace security testleri, rotation, revoked-key, crypto-erasure ve encrypted
+  backup/restore kontrolleri geçti.
+- `pnpm verify` 20 dosyada 254 test, typecheck, production build ve SSR HTTP smoke
+  ile tamamlandı. Çalışma ağacı ve geçici PostgreSQL kaynağı temizdi.
+
+Uygulama commit'leri: `3e5e6f7`, `18d0dcb`.
+
+Aktif iş paketi WP20'dir. WP20 tamamlanmadan Faz 3 kapatılamaz.
