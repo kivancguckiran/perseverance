@@ -179,7 +179,7 @@ describe('bounded browser timeline state', () => {
       effort: 'medium',
     })
   })
-  it('maps Claude defaults and Gemini none in the provider picker', () => {
+  it('maps Claude defaults and Gemini/Cursor none in the provider picker', () => {
     expect(
       providerPickerSelection('claude', [
         {
@@ -200,12 +200,25 @@ describe('bounded browser timeline state', () => {
         },
       ]),
     ).toEqual({ modelId: 'gemini-flash', effort: 'none' })
+    expect(
+      providerPickerSelection('cursor', [
+        {
+          modelId: 'cursor-model',
+          isDefault: true,
+          hidden: false,
+          defaultReasoningEffort: 'none',
+        },
+      ]),
+    ).toEqual({ modelId: 'cursor-model', effort: 'none' })
   })
   it('renders actionable auth and unknown/capacity guidance', () => {
     expect(providerAuthMessage('claude', 'required', 'Run login')).toContain(
       'login gerekli',
     )
     expect(providerAuthMessage('gemini', 'unknown')).toContain('capacity')
+    expect(
+      providerAuthMessage('cursor', 'required', 'Run cursor-agent login'),
+    ).toContain('cursor-agent login')
   })
   it('restores provider, model, and effort selection after reload', () => {
     expect(
@@ -220,6 +233,19 @@ describe('bounded browser timeline state', () => {
       provider: 'claude',
       modelId: 'claude-sonnet',
       effort: 'high',
+    })
+    expect(
+      parseStoredProviderSelection(
+        JSON.stringify({
+          provider: 'cursor',
+          modelId: 'cursor-model',
+          effort: 'none',
+        }),
+      ),
+    ).toEqual({
+      provider: 'cursor',
+      modelId: 'cursor-model',
+      effort: 'none',
     })
   })
   it('resets the realtime cursor when navigating between sessions', () => {

@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 16 Temmuz 2026
-- Aktif iş paketi: WP17
+- Aktif iş paketi: WP17 — Uygulandı / kabul bekliyor
 - Ön koşul: Faz 2 ve WP16 tamamlandı
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
@@ -31,12 +31,12 @@ confidential-computing/attestation mimarisi gerektirir ve Faz 3 kapsamı dışı
 
 ## 2. İş paketi özeti
 
-| Paket | Durum     | Hedef                                                                   |
-| ----- | --------- | ----------------------------------------------------------------------- |
-| WP17  | Aktif     | Cursor Agent'ı provider-neutral interface arkasına güvenli biçimde ekle |
-| WP18  | Planlandı | OIDC principal, deny-by-default authorization ve tenant data isolation  |
-| WP19  | Planlandı | İzole workspace runtime, ağ, secret ve envelope encryption sınırı       |
-| WP20  | Planlandı | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü   |
+| Paket | Durum                      | Hedef                                                                  |
+| ----- | -------------------------- | ---------------------------------------------------------------------- |
+| WP17  | Uygulandı / kabul bekliyor | Cursor Agent adapter teslim edildi; bağımsız kabul bekliyor            |
+| WP18  | Planlandı                  | OIDC principal, deny-by-default authorization ve tenant data isolation |
+| WP19  | Planlandı                  | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
+| WP20  | Planlandı                  | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
 
 Her zaman yalnız bir paket aktif olabilir. WP17 tamamlanıp bağımsız kabul edilmeden
 WP18'e geçilmez.

@@ -1,6 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { createInterface } from 'node:readline'
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from 'node:fs'
+import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import {
   parseTimelineEvent,
   type TimelineEvent,
@@ -28,14 +35,26 @@ import {
 
 export const CLAUDE_CODE_VERSION = '2.1.109'
 export const GEMINI_CLI_VERSION = '0.25.0'
+export const CURSOR_AGENT_VERSION_PREFIX = '2025.09.18-'
+export const CURSOR_AGENT_VERSION_RANGE = '2025.09.18-*'
+const DEFAULT_MAX_LINE_BYTES = 1024 * 1024
+const DEFAULT_MAX_BUFFER_BYTES = 2 * 1024 * 1024
+const DEFAULT_MAX_INLINE_TOOL_BYTES = 64 * 1024
+
+type CliProvider = 'claude' | 'gemini' | 'cursor'
 
 const secretKey =
   /(?:authorization|api[-_]?key|access[-_]?token|bearer|password|secret)/i
 const secretValue = /\b(?:bearer\s+\S+|(?:sk|sess)-[A-Za-z0-9_-]{8,})\b/gi
+const assignedSecret =
+  /\b(?:CURSOR_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|OPENAI_API_KEY)\s*=\s*[^\s"']+/gi
 const homePath = /(?:\/Users|\/home)\/[^/\s]+/g
 
 function redactText(value: string): string {
-  return value.replace(secretValue, '[REDACTED]').replace(homePath, '[HOME]')
+  return value
+    .replace(assignedSecret, '[REDACTED]')
+    .replace(secretValue, '[REDACTED]')
+    .replace(homePath, '[HOME]')
 }
 
 function safeErrorMessage(value: unknown): string {
@@ -55,7 +74,7 @@ type ClassifiedProviderFailure = Omit<
 >
 
 function classifyProviderFailure(
-  provider: 'claude' | 'gemini',
+  provider: CliProvider,
   value: unknown,
 ): ClassifiedProviderFailure {
   const message = safeErrorMessage(value)
@@ -68,6 +87,16 @@ function classifyProviderFailure(
       message,
       retryable: false,
       upstreamCode: 'REASONING_EFFORT_UNSUPPORTED',
+    }
+  if (
+    value instanceof ProviderConfigurationError &&
+    value.code.startsWith('CURSOR_PERMISSION_')
+  )
+    return {
+      code: 'invalid_request' as const,
+      message,
+      retryable: false,
+      upstreamCode: value.code,
     }
   if (/429|resource[_ ]exhausted|capacity|quota/i.test(message))
     return {
@@ -82,6 +111,15 @@ function classifyProviderFailure(
       message: `${provider} authentication is required.`,
       retryable: false,
       upstreamCode: null,
+    }
+  if (
+    /malformed|json|line.*large|buffer|terminal event|early eof/i.test(message)
+  )
+    return {
+      code: 'protocol_mismatch' as const,
+      message,
+      retryable: false,
+      upstreamCode: 'STREAM_PROTOCOL_MISMATCH',
     }
   return {
     code: 'process_failed' as const,
@@ -123,6 +161,7 @@ export interface CliProcessRunner {
     binary: string
     args: string[]
     cwd: string
+    stdinText?: string
     onLine(line: string): void | Promise<void>
   }): Promise<CliRunResult>
   interrupt(): boolean
@@ -131,6 +170,7 @@ export interface CliProcessRunner {
     exitCode: number | null
     stdout: string
     stderr: string
+    errorCode?: string
   }>
 }
 
@@ -146,6 +186,8 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
     turnTimeoutMs: number
     interruptGraceMs: number
     terminateGraceMs: number
+    maxLineBytes: number
+    maxBufferBytes: number
   }
   #active: ActiveCliProcess | undefined
 
@@ -154,12 +196,16 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
       turnTimeoutMs: number
       interruptGraceMs: number
       terminateGraceMs: number
+      maxLineBytes: number
+      maxBufferBytes: number
     }> = {},
   ) {
     this.#limits = {
       turnTimeoutMs: limits.turnTimeoutMs ?? 120_000,
       interruptGraceMs: limits.interruptGraceMs ?? 1_000,
       terminateGraceMs: limits.terminateGraceMs ?? 1_000,
+      maxLineBytes: limits.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES,
+      maxBufferBytes: limits.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES,
     }
   }
 
@@ -201,6 +247,7 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
     binary: string
     args: string[]
     cwd: string
+    stdinText?: string
     onLine(line: string): void | Promise<void>
   }): Promise<CliRunResult> {
     if (this.#active) throw new Error('Provider process already active')
@@ -209,7 +256,7 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
-    child.stdin.end()
+    child.stdin.end(input.stdinText)
     const active = {
       child,
       interruptRequested: false,
@@ -229,11 +276,41 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
     child.stderr.on('data', (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString('utf8')}`.slice(-8192)
     })
-    const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
-    const pending: Promise<void>[] = []
-    lines.on('line', (line) =>
-      pending.push(Promise.resolve(input.onLine(line))),
-    )
+    let stdoutBuffer = Buffer.alloc(0)
+    let lineFailure: Error | undefined
+    let lineChain = Promise.resolve()
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (lineFailure) return
+      stdoutBuffer = Buffer.concat([stdoutBuffer, chunk])
+      if (stdoutBuffer.byteLength > this.#limits.maxBufferBytes) {
+        lineFailure = new Error('Provider stdout buffer exceeded its limit')
+        child.kill('SIGKILL')
+        return
+      }
+      let newline = stdoutBuffer.indexOf(0x0a)
+      while (newline >= 0) {
+        const lineBytes = stdoutBuffer.subarray(0, newline)
+        stdoutBuffer = stdoutBuffer.subarray(newline + 1)
+        if (lineBytes.byteLength > this.#limits.maxLineBytes) {
+          lineFailure = new Error('Provider stdout line exceeded its limit')
+          child.kill('SIGKILL')
+          return
+        }
+        const line = lineBytes.toString('utf8').replace(/\r$/, '')
+        child.stdout.pause()
+        lineChain = lineChain
+          .then(() => input.onLine(line))
+          .then(() => {
+            child.stdout.resume()
+          })
+          .catch((error) => {
+            lineFailure =
+              error instanceof Error ? error : new Error(String(error))
+            child.kill('SIGKILL')
+          })
+        newline = stdoutBuffer.indexOf(0x0a)
+      }
+    })
     try {
       const result = await new Promise<CliRunResult>((resolve, reject) => {
         child.once('error', reject)
@@ -246,7 +323,13 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
           }),
         )
       })
-      await Promise.all(pending)
+      await lineChain
+      if (stdoutBuffer.byteLength > 0) {
+        if (stdoutBuffer.byteLength > this.#limits.maxLineBytes)
+          throw new Error('Provider stdout line exceeded its limit')
+        await input.onLine(stdoutBuffer.toString('utf8').replace(/\r$/, ''))
+      }
+      if (lineFailure) throw lineFailure
       if (
         result.exitCode &&
         stderr &&
@@ -257,7 +340,6 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
       return result
     } finally {
       for (const timer of active.timers) clearTimeout(timer)
-      lines.close()
       child.stdout.destroy()
       child.stderr.destroy()
       if (this.#active === active) this.#active = undefined
@@ -323,8 +405,13 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
       child.stderr.on('data', (chunk: Buffer) => {
         stderr = `${stderr}${chunk.toString('utf8')}`.slice(-8192)
       })
-      child.once('error', () =>
-        finish({ exitCode: null, stdout: '', stderr: '' }),
+      child.once('error', (error: NodeJS.ErrnoException) =>
+        finish({
+          exitCode: null,
+          stdout: '',
+          stderr: '',
+          ...(error.code ? { errorCode: error.code } : {}),
+        }),
       )
       child.once('exit', (exitCode) =>
         finish({
@@ -341,6 +428,7 @@ export interface ProviderEventContext {
   tenantId: string
   workspaceId: string
   sessionId: string
+  turnId?: string
   nextSequence(): number
   now?(): Date
   nextEventId?(): string
@@ -350,6 +438,167 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined
+}
+
+export interface CursorProjectPolicy {
+  allow: string[]
+  deny: string[]
+  allowsWrites: boolean
+}
+
+const cursorPermission = /^(Shell|Read|Write)\((.*)\)$/
+const sensitiveDenyChecks = [
+  /\.env/i,
+  /\.(?:pem|key)/i,
+  /credential/i,
+  /private.?key/i,
+]
+const cursorPlatformShellAllow = new Set([
+  'cat',
+  'find',
+  'git',
+  'ls',
+  'node',
+  'npm',
+  'pnpm',
+  'rg',
+  'sed',
+  'tsc',
+  'tsx',
+  'vitest',
+])
+
+function assertWorkspacePath(workspace: string, candidate: string) {
+  if (candidate.includes('\0') || candidate.split(/[\\/]/).includes('..'))
+    throw new ProviderConfigurationError(
+      'CURSOR_PERMISSION_POLICY_INVALID',
+      `Cursor permission path ${candidate} contains traversal`,
+    )
+  if (/^\/(?:proc|sys)(?:\/|$)/.test(candidate))
+    throw new ProviderConfigurationError(
+      'CURSOR_PERMISSION_POLICY_INVALID',
+      `Cursor permission path ${candidate} targets a forbidden system path`,
+    )
+  if (isAbsolute(candidate)) {
+    const normalizedWorkspace = realpathSync(workspace)
+    const normalizedCandidate = resolve(candidate)
+    const scoped = relative(normalizedWorkspace, normalizedCandidate)
+    if (scoped.startsWith('..') || isAbsolute(scoped))
+      throw new ProviderConfigurationError(
+        'CURSOR_PERMISSION_POLICY_INVALID',
+        `Cursor permission path ${candidate} escapes the workspace`,
+      )
+  }
+  const staticPrefix = candidate.split(/[*?]/, 1)[0]!.replace(/\/+$/, '')
+  if (staticPrefix) {
+    const prefixPath = resolve(workspace, staticPrefix)
+    if (existsSync(prefixPath)) {
+      const canonical = realpathSync(prefixPath)
+      const scoped = relative(workspace, canonical)
+      if (scoped.startsWith('..') || isAbsolute(scoped))
+        throw new ProviderConfigurationError(
+          'CURSOR_PERMISSION_POLICY_INVALID',
+          `Cursor permission path ${candidate} follows a symlink outside the workspace`,
+        )
+    }
+  }
+}
+
+export function loadCursorProjectPolicy(
+  workspace: string,
+): CursorProjectPolicy {
+  const root = realpathSync(workspace)
+  const configPath = resolve(root, '.cursor/cli.json')
+  const configRelative = relative(root, configPath)
+  if (configRelative.startsWith('..') || isAbsolute(configRelative))
+    throw new ProviderConfigurationError(
+      'CURSOR_PERMISSION_POLICY_INVALID',
+      'Cursor project policy path escapes the workspace',
+    )
+  let config: unknown
+  try {
+    const cursorDirectory = dirname(configPath)
+    if (lstatSync(cursorDirectory).isSymbolicLink())
+      throw new Error('.cursor directory must not be a symlink')
+    if (lstatSync(configPath).isSymbolicLink())
+      throw new Error('cli.json must not be a symlink')
+    const canonical = realpathSync(configPath)
+    const scoped = relative(root, canonical)
+    if (scoped.startsWith('..') || isAbsolute(scoped))
+      throw new Error('cli.json resolves outside the workspace')
+    if (!statSync(canonical).isFile()) throw new Error('cli.json is not a file')
+    config = JSON.parse(readFileSync(canonical, 'utf8')) as unknown
+  } catch (error) {
+    throw new ProviderConfigurationError(
+      'CURSOR_PERMISSION_POLICY_INVALID',
+      `Create a valid <workspace>/.cursor/cli.json before starting Cursor: ${safeErrorMessage(error)}`,
+    )
+  }
+  const permissions = record(record(config)?.permissions)
+  if (
+    !permissions ||
+    !Array.isArray(permissions.allow) ||
+    !Array.isArray(permissions.deny)
+  )
+    throw new ProviderConfigurationError(
+      'CURSOR_PERMISSION_POLICY_INVALID',
+      'Cursor cli.json must contain permissions.allow and permissions.deny arrays',
+    )
+  const parseRules = (value: unknown[], kind: 'allow' | 'deny') =>
+    value.map((rule) => {
+      if (typeof rule !== 'string')
+        throw new ProviderConfigurationError(
+          'CURSOR_PERMISSION_POLICY_INVALID',
+          `Cursor permissions.${kind} entries must be strings`,
+        )
+      const matched = cursorPermission.exec(rule)
+      if (!matched)
+        throw new ProviderConfigurationError(
+          'CURSOR_PERMISSION_POLICY_INVALID',
+          `Cursor permission ${rule} is not a supported Shell/Read/Write token`,
+        )
+      const permissionKind = matched[1]!
+      const target = matched[2]!.trim()
+      if (!target)
+        throw new ProviderConfigurationError(
+          'CURSOR_PERMISSION_POLICY_INVALID',
+          `Cursor permission ${rule} has an empty target`,
+        )
+      if (permissionKind === 'Read' || permissionKind === 'Write') {
+        assertWorkspacePath(root, target)
+        if (
+          kind === 'allow' &&
+          ['*', '**', '**/*', './**', `${root}/**`].includes(target)
+        )
+          throw new ProviderConfigurationError(
+            'CURSOR_PERMISSION_POLICY_TOO_BROAD',
+            `Cursor permission ${rule} is broader than the platform policy`,
+          )
+      }
+      if (
+        permissionKind === 'Shell' &&
+        kind === 'allow' &&
+        !cursorPlatformShellAllow.has(target)
+      )
+        throw new ProviderConfigurationError(
+          'CURSOR_PERMISSION_POLICY_TOO_BROAD',
+          `Cursor permission ${rule} is outside the platform shell allowlist`,
+        )
+      return rule
+    })
+  const allow = parseRules(permissions.allow, 'allow')
+  const deny = parseRules(permissions.deny, 'deny')
+  for (const required of sensitiveDenyChecks)
+    if (!deny.some((rule) => required.test(rule)))
+      throw new ProviderConfigurationError(
+        'CURSOR_PERMISSION_POLICY_INVALID',
+        'Cursor deny policy must cover .env, private-key, key/pem, and credential files',
+      )
+  return {
+    allow,
+    deny,
+    allowsWrites: allow.some((rule) => rule.startsWith('Write(')),
+  }
 }
 
 function textParts(value: unknown): string[] {
@@ -385,7 +634,7 @@ function counters(value: unknown): UsageCounters | undefined {
 }
 
 export function normalizeCliEnvelope(input: {
-  provider: 'claude' | 'gemini'
+  provider: CliProvider
   envelope: unknown
   context: ProviderEventContext
   sourceVersion: string
@@ -393,11 +642,12 @@ export function normalizeCliEnvelope(input: {
   rawEnvelope: Record<string, unknown>
   normalized: ProviderNormalizedEvent
   usage?: UsageReport
+  spill?: NonNullable<ProviderTurnStreamEvent['spill']>
 } {
   const raw = redact(
     record(input.envelope) ?? { malformed: input.envelope },
   ) as Record<string, unknown>
-  const checksum = createHash('sha256').update(canonical(raw)).digest('hex')
+  let checksum = ''
   const type = typeof raw.type === 'string' ? raw.type : 'malformed'
   const now = (input.context.now?.() ?? new Date()).toISOString()
   const base = {
@@ -412,12 +662,20 @@ export function normalizeCliEnvelope(input: {
     source:
       input.provider === 'claude'
         ? ('claude-code' as const)
-        : ('gemini-cli' as const),
+        : input.provider === 'gemini'
+          ? ('gemini-cli' as const)
+          : ('cursor-agent' as const),
     sourceVersion: input.sourceVersion,
     sourceMethod: type,
     visibility: 'user' as const,
+    ...(typeof raw.session_id === 'string'
+      ? { codexThreadId: raw.session_id }
+      : {}),
+    ...(input.context.turnId ? { codexTurnId: input.context.turnId } : {}),
+    ...(typeof raw.call_id === 'string' ? { codexItemId: raw.call_id } : {}),
   }
   let event: TimelineEvent
+  let spill: NonNullable<ProviderTurnStreamEvent['spill']> | undefined
   if (type === 'init' || (type === 'system' && raw.subtype === 'init')) {
     event = parseTimelineEvent({
       ...base,
@@ -461,6 +719,148 @@ export function normalizeCliEnvelope(input: {
         durationMs: null,
       },
     })
+  } else if (type === 'tool_call' && input.provider === 'cursor') {
+    const toolCall = record(raw.tool_call)
+    const [toolName = 'unknown', toolValue] =
+      Object.entries(toolCall ?? {})[0] ?? []
+    const tool = record(toolValue)
+    const args = record(tool?.args)
+    const result = record(tool?.result)
+    const started = raw.subtype === 'started'
+    const write = /write|edit|delete|move/i.test(toolName)
+    const shell = /shell|terminal|command/i.test(toolName)
+    if (shell) {
+      const command = String(
+        args?.command ?? args?.cmd ?? args?.commandLine ?? toolName,
+      )
+      if (started)
+        event = parseTimelineEvent({
+          ...base,
+          type: 'command.proposed',
+          payload: {
+            command,
+            cwd: typeof raw.cwd === 'string' ? raw.cwd : '.',
+            status: 'in_progress',
+          },
+        })
+      else {
+        const outputValue =
+          record(result?.success)?.output ??
+          record(result?.success)?.content ??
+          result?.success ??
+          result?.error ??
+          ''
+        const output = redactText(
+          typeof outputValue === 'string'
+            ? outputValue
+            : JSON.stringify(redact(outputValue)),
+        )
+        const bytes = Buffer.byteLength(output)
+        const preview = Buffer.from(output)
+          .subarray(Math.max(0, bytes - DEFAULT_MAX_INLINE_TOOL_BYTES))
+          .toString('utf8')
+        if (bytes > DEFAULT_MAX_INLINE_TOOL_BYTES)
+          spill = {
+            data: Buffer.from(output),
+            stream: 'combined',
+            chunkIndex: 0,
+          }
+        if (bytes > DEFAULT_MAX_INLINE_TOOL_BYTES) {
+          const success = record(result?.success)
+          if (success && 'output' in success) success.output = preview
+          if (success && 'content' in success) success.content = preview
+        }
+        event = parseTimelineEvent({
+          ...base,
+          type: 'command.completed',
+          payload: {
+            command,
+            cwd: typeof raw.cwd === 'string' ? raw.cwd : '.',
+            status: result?.error ? 'failed' : 'completed',
+            output: {
+              previewTail: preview,
+              previewByteLength: Buffer.byteLength(preview),
+              truncated: bytes > DEFAULT_MAX_INLINE_TOOL_BYTES,
+              totalBytes: bytes,
+              artifact: null,
+              sha256: createHash('sha256').update(output).digest('hex'),
+            },
+            exitCode: result?.error ? 1 : 0,
+            durationMs: null,
+          },
+        })
+      }
+    } else if (write) {
+      const path = String(
+        args?.path ?? record(result?.success)?.path ?? 'unknown',
+      )
+      event = parseTimelineEvent({
+        ...base,
+        type: started ? 'file.change.proposed' : 'file.change.completed',
+        payload: {
+          status: started
+            ? 'in_progress'
+            : result?.error
+              ? 'failed'
+              : 'completed',
+          changes: [
+            {
+              path,
+              kind: { type: /delete/i.test(toolName) ? 'delete' : 'update' },
+              diff: '',
+            },
+          ],
+        },
+      })
+    } else {
+      let completedResult: unknown = result?.success ?? null
+      if (!started && completedResult !== null) {
+        const serialized =
+          typeof completedResult === 'string'
+            ? redactText(completedResult)
+            : JSON.stringify(redact(completedResult))
+        const totalBytes = Buffer.byteLength(serialized)
+        if (totalBytes > DEFAULT_MAX_INLINE_TOOL_BYTES) {
+          const preview = Buffer.from(serialized)
+            .subarray(totalBytes - DEFAULT_MAX_INLINE_TOOL_BYTES)
+            .toString('utf8')
+          spill = {
+            data: Buffer.from(serialized),
+            stream: 'combined',
+            chunkIndex: 0,
+          }
+          completedResult = {
+            preview,
+            totalBytes,
+            truncated: true,
+            artifact: null,
+          }
+          if (result) result.success = completedResult
+        } else completedResult = redact(completedResult)
+      }
+      event = parseTimelineEvent({
+        ...base,
+        type: started ? 'tool.started' : 'tool.completed',
+        payload: started
+          ? {
+              toolKind: 'dynamic',
+              tool: toolName,
+              provider: 'cursor',
+              status: 'in_progress',
+              arguments: args ?? null,
+            }
+          : {
+              toolKind: 'dynamic',
+              tool: toolName,
+              provider: 'cursor',
+              status: result?.error ? 'failed' : 'completed',
+              result: completedResult,
+              error: result?.error ? safeErrorMessage(result.error) : null,
+              success: result?.error ? false : true,
+              durationMs: null,
+            },
+      })
+    }
   } else if (type === 'result') {
     const failed =
       raw.is_error === true ||
@@ -489,13 +889,26 @@ export function normalizeCliEnvelope(input: {
       },
     })
   } else {
-    event = parseTimelineEvent({
-      ...base,
-      type: 'provider.unknown',
-      visibility: 'internal',
-      payload: { provider: input.provider, eventType: type, envelope: raw },
-    })
+    event =
+      input.provider === 'cursor'
+        ? parseTimelineEvent({
+            ...base,
+            type: 'cursor.unknown',
+            visibility: 'internal',
+            payload: { eventType: type, envelope: raw },
+          })
+        : parseTimelineEvent({
+            ...base,
+            type: 'provider.unknown',
+            visibility: 'internal',
+            payload: {
+              provider: input.provider,
+              eventType: type,
+              envelope: raw,
+            },
+          })
   }
+  checksum = createHash('sha256').update(canonical(raw)).digest('hex')
   const usageCounters = counters(
     raw.usage ?? raw.stats ?? record(raw.result)?.stats,
   )
@@ -523,14 +936,16 @@ export function normalizeCliEnvelope(input: {
       event,
     }),
     ...(usage ? { usage } : {}),
+    ...(spill ? { spill } : {}),
   }
 }
 
-interface CliAdapterOptions {
+export interface CliAdapterOptions {
   catalog: ProviderModelCatalog
   context: ProviderEventContext
   runner?: CliProcessRunner
   binary?: string
+  cursorApiKeyPresent?: boolean
 }
 
 abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
@@ -540,7 +955,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
   readonly context: ProviderEventContext
   readonly runner: CliProcessRunner
   readonly binary: string
-  readonly provider: 'claude' | 'gemini'
+  readonly provider: CliProvider
   readonly pinnedVersion: string
   #activeTurn:
     | {
@@ -551,20 +966,38 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     | undefined
 
   constructor(
-    provider: 'claude' | 'gemini',
+    provider: CliProvider,
     options: CliAdapterOptions,
     defaults: { binary: string; version: string; adapter: string },
   ) {
     this.provider = provider
     const configuredCatalog = providerModelCatalogSchema.parse(options.catalog)
     this.catalog =
-      provider === 'gemini'
+      provider === 'gemini' || provider === 'cursor'
         ? providerModelCatalogSchema.parse({
             ...configuredCatalog,
             models: configuredCatalog.models.map((model) => ({
               ...model,
               reasoningEfforts: ['none'],
               defaultReasoningEffort: 'none',
+              ...(provider === 'cursor'
+                ? {
+                    capabilities: {
+                      ...model.capabilities,
+                      streaming: 'supported',
+                      reasoningSummary: 'unsupported',
+                      commandExecution: 'supported',
+                      fileChanges: 'degraded',
+                      approvals: 'unsupported',
+                      interrupt: 'supported',
+                      resume: 'supported',
+                      toolCalls: 'supported',
+                      imageInput: 'unsupported',
+                      usage: 'degraded',
+                      cost: 'unsupported',
+                    },
+                  }
+                : {}),
             })),
           })
         : configuredCatalog
@@ -660,6 +1093,9 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
 
   abstract installInstruction(): string
   abstract args(input: ProviderTurnStartInput): string[]
+  stdinText(_input: ProviderTurnStartInput): string | undefined {
+    return undefined
+  }
 
   async startTurn(
     input: ProviderTurnStartInput,
@@ -685,6 +1121,9 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     let terminal: 'completed' | 'failed' | 'interrupted' | undefined
     let terminalUsage: UsageReport | undefined
     let terminalFailure: ClassifiedProviderFailure | undefined
+    let terminalObserved = false
+    let malformedObserved = false
+    let assistantText = ''
     const turnState = {
       completionObserved: false,
       interruptAccepted: false,
@@ -692,16 +1131,19 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     }
     this.#activeTurn = turnState
     try {
+      const stdinText = this.stdinText(input)
       const result = await this.runner.run({
         binary: this.binary,
         args: this.args(input),
         cwd: input.cwd,
+        ...(stdinText !== undefined ? { stdinText } : {}),
         onLine: async (line) => {
           let envelope: unknown
           try {
             envelope = JSON.parse(line)
           } catch {
             envelope = { type: 'malformed', line }
+            malformedObserved = true
           }
           const parsed = record(envelope)
           if (
@@ -729,10 +1171,40 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
             context: this.context,
             sourceVersion: this.pinnedVersion,
           })
+          if (normalized.normalized.event.type === 'agent.message.delta')
+            assistantText += normalized.normalized.event.payload.text
           if (normalized.normalized.event.type === 'turn.completed') {
             turnState.completionObserved = true
+            terminalObserved = true
             terminal = normalized.normalized.event.payload.status as
               'completed' | 'failed'
+          }
+          if (
+            this.provider === 'cursor' &&
+            parsed?.type === 'result' &&
+            terminal === 'completed' &&
+            typeof parsed.result === 'string'
+          ) {
+            const completed = normalizeCliEnvelope({
+              provider: this.provider,
+              envelope: {
+                type: 'assistant',
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: parsed.result }],
+                },
+                session_id: parsed.session_id,
+                call_id: `assistant-${providerTurnId}`,
+              },
+              context: this.context,
+              sourceVersion: this.pinnedVersion,
+            })
+            completed.normalized.event = parseTimelineEvent({
+              ...completed.normalized.event,
+              type: 'agent.message.completed',
+              payload: { text: parsed.result || assistantText },
+            })
+            await onEvent(completed)
           }
           if (terminal === 'failed')
             terminalFailure ??= classifyProviderFailure(this.provider, envelope)
@@ -762,7 +1234,15 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
         terminal = 'interrupted'
       else if (result.exitCode !== null && result.exitCode !== 0)
         terminal = 'failed'
-      else terminal ??= 'completed'
+      else if (malformedObserved || !terminalObserved) {
+        terminal = 'failed'
+        terminalFailure = classifyProviderFailure(
+          this.provider,
+          malformedObserved
+            ? 'Malformed JSON in provider stream'
+            : 'Provider stream ended without a terminal event (early EOF)',
+        )
+      } else terminal ??= 'completed'
     } catch (error) {
       if (turnState.interruptAccepted && !turnState.completionBeforeInterrupt) {
         if (this.#activeTurn === turnState) this.#activeTurn = undefined
@@ -869,5 +1349,147 @@ export class GeminiCliRuntimeAdapter extends CliProviderAdapter {
       input.modelId,
       ...(input.sessionId ? ['--resume', input.sessionId] : []),
     ]
+  }
+}
+
+export class CursorAgentRuntimeAdapter extends CliProviderAdapter {
+  readonly #apiKeyPresent: boolean
+
+  constructor(options: CliAdapterOptions) {
+    super('cursor', options, {
+      binary: options.binary ?? process.env.CURSOR_AGENT_BIN ?? 'cursor-agent',
+      version: CURSOR_AGENT_VERSION_RANGE,
+      adapter: 'cursor-agent-stream-json',
+    })
+    this.#apiKeyPresent =
+      options.cursorApiKeyPresent ??
+      Boolean(process.env.CURSOR_API_KEY && process.env.CURSOR_API_KEY.trim())
+  }
+
+  installInstruction() {
+    return 'Install Cursor Agent from the official Cursor CLI documentation, then run `cursor-agent login`; automatic install/update is disabled.'
+  }
+
+  override async checkReadiness(): Promise<ProviderReadiness> {
+    const version = await this.runner.probe({
+      binary: this.binary,
+      args: ['--version'],
+    })
+    if (version.errorCode === 'EACCES')
+      return {
+        ready: false,
+        version: null,
+        authReady: false,
+        authStatus: 'required',
+        code: 'binary_not_executable',
+        instruction:
+          'Make cursor-agent executable and ensure it is on the server PATH.',
+      }
+    if (version.errorCode === 'ENOENT' || version.exitCode === null)
+      return {
+        ready: false,
+        version: null,
+        authReady: false,
+        authStatus: 'required',
+        code: 'binary_missing',
+        instruction: this.installInstruction(),
+      }
+    const output = version.stdout.trim()
+    const parsed = /^(\d{4}\.\d{2}\.\d{2})-([A-Za-z0-9]+)$/.exec(output)
+    if (!parsed)
+      return {
+        ready: false,
+        version: output || null,
+        authReady: false,
+        authStatus: 'required',
+        code: 'version_unparseable',
+        instruction: `Expected Cursor Agent version ${CURSOR_AGENT_VERSION_RANGE}; verify the official binary and disable version drift.`,
+      }
+    if (!output.startsWith(CURSOR_AGENT_VERSION_PREFIX))
+      return {
+        ready: false,
+        version: output,
+        authReady: false,
+        authStatus: 'required',
+        code: 'version_mismatch',
+        instruction: `Cursor Agent ${output} is outside the tested ${CURSOR_AGENT_VERSION_RANGE} range; install a supported version manually.`,
+      }
+    if (this.#apiKeyPresent)
+      return {
+        ready: true,
+        version: output,
+        authReady: true,
+        authStatus: 'ready',
+        code: 'ready',
+        instruction: null,
+      }
+    const auth = await this.runner.probe({
+      binary: this.binary,
+      args: ['status'],
+    })
+    const status = `${auth.stdout}\n${auth.stderr}`
+      .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+      .toLowerCase()
+    const loggedIn =
+      !/not logged in|not authenticated|login required/.test(status) &&
+      /logged in|authenticated/.test(status)
+    return {
+      ready: loggedIn,
+      version: output,
+      authReady: loggedIn,
+      authStatus: loggedIn ? 'ready' : 'required',
+      code: loggedIn ? 'ready' : 'auth_required',
+      instruction: loggedIn
+        ? null
+        : 'Run `cursor-agent login` on the server or set CURSOR_API_KEY only in the server environment.',
+    }
+  }
+
+  args(input: ProviderTurnStartInput) {
+    if (input.reasoningEffort !== 'none')
+      throw new ProviderConfigurationError(
+        'REASONING_EFFORT_UNSUPPORTED',
+        `Cursor Agent ${CURSOR_AGENT_VERSION_RANGE} has no verified reasoning-effort override; choose none.`,
+      )
+    const policy = loadCursorProjectPolicy(input.cwd)
+    const force = input.allowFileChanges === true && policy.allowsWrites
+    return [
+      '--print',
+      '--output-format',
+      'stream-json',
+      ...(input.modelId ? ['--model', input.modelId] : []),
+      ...(input.sessionId ? ['--resume', input.sessionId] : []),
+      ...(force ? ['--force'] : []),
+    ]
+  }
+
+  override stdinText(input: ProviderTurnStartInput) {
+    return input.prompt
+  }
+
+  override async startTurn(
+    input: ProviderTurnStartInput,
+    onEvent: (event: ProviderTurnStreamEvent) => void | Promise<void>,
+  ): Promise<ProviderTurnTerminal> {
+    const readiness = await this.checkReadiness()
+    if (!readiness.ready)
+      return {
+        providerSessionId: input.sessionId ?? `session_${randomUUID()}`,
+        providerTurnId: `turn_${randomUUID()}`,
+        outcome: 'failed',
+        error: {
+          schemaVersion: 1,
+          provider: 'cursor',
+          code:
+            readiness.code === 'auth_required'
+              ? 'unauthorized'
+              : 'protocol_mismatch',
+          message:
+            readiness.instruction ?? 'Cursor Agent is not ready to start.',
+          retryable: false,
+          upstreamCode: readiness.code,
+        },
+      }
+    return super.startTurn(input, onEvent)
   }
 }

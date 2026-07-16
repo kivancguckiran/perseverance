@@ -38,6 +38,8 @@ const CODEX_CAPABILITIES = {
   interrupt: 'supported',
   resume: 'supported',
   toolCalls: 'supported',
+  usage: 'supported',
+  cost: 'degraded',
 } as const
 
 export function codexModelCatalog(

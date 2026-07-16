@@ -9,6 +9,9 @@ if (mode === 'ignore-signals') {
     process.exit(130)
   })
 }
+if (mode === 'oversized-line') {
+  process.stdout.write('x'.repeat(4096) + '\n')
+}
 
 console.log(
   JSON.stringify({
@@ -27,6 +30,6 @@ if (mode === 'complete') {
       session_id: 'fixture-session',
     }),
   )
-} else {
+} else if (mode !== 'oversized-line') {
   setInterval(() => {}, 1_000)
 }

@@ -129,6 +129,7 @@ export interface ControlPlaneOptions {
   >
   providerCatalogs?: ProviderModelCatalog[]
   providerAdapterFactory?: SessionOrchestratorOptions['providerAdapterFactory']
+  cursorForceAllowed?: boolean
   titleGenerator?: SessionOrchestratorOptions['titleGenerator']
 }
 
@@ -488,6 +489,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       : {}),
     ...(options.providerAdapterFactory
       ? { providerAdapterFactory: options.providerAdapterFactory }
+      : {}),
+    ...(options.cursorForceAllowed
+      ? { cursorForceAllowed: options.cursorForceAllowed }
       : {}),
     ...(options.titleGenerator
       ? { titleGenerator: options.titleGenerator }
@@ -1478,7 +1482,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             status:
               store.getUsageSummary(scope).reconciliationStatus === 'reconciled'
                 ? 'reconciled'
-                : session.provider === 'gemini'
+                : session.provider === 'gemini' || session.provider === 'cursor'
                   ? 'unsupported'
                   : 'unavailable',
             provider: session.provider,
@@ -1492,12 +1496,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         if (!port)
           return usageReconciliationResponseSchema.parse({
             status:
-              session.provider === 'gemini' ? 'unsupported' : 'unavailable',
+              session.provider === 'gemini' || session.provider === 'cursor'
+                ? 'unsupported'
+                : 'unavailable',
             provider: session.provider,
             reconciledItems: 0,
             message:
-              session.provider === 'gemini'
-                ? 'Gemini does not expose a provider cost source with turn-safe attribution'
+              session.provider === 'gemini' || session.provider === 'cursor'
+                ? `${session.provider} does not expose a provider cost source with turn-safe attribution`
                 : 'A separate server-side admin/usage credential and dedicated attribution scope are required',
           })
         let reconciledItems = 0

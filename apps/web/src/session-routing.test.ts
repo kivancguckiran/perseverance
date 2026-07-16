@@ -25,6 +25,8 @@ const sessionResponse = {
     resume: 'supported',
     toolCalls: 'supported',
     imageInput: 'unsupported',
+    usage: 'supported',
+    cost: 'degraded',
   },
   codexThreadId: null,
   status: 'starting',

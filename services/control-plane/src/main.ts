@@ -113,6 +113,9 @@ const app = await buildControlPlane({
   ...(Object.keys(costReconciliationPorts).length > 0
     ? { costReconciliationPorts }
     : {}),
+  ...(process.env.PERSISTENT_CURSOR_FORCE_ALLOWED === '1'
+    ? { cursorForceAllowed: true }
+    : {}),
   ...(provisioningSource && provisioningReady
     ? {
         codexProvisioningSource: provisioningSource,

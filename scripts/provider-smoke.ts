@@ -1,19 +1,32 @@
 import { randomUUID } from 'node:crypto'
 import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
   ClaudeCodeRuntimeAdapter,
+  CursorAgentRuntimeAdapter,
   GeminiCliRuntimeAdapter,
 } from '../packages/provider-cli-adapters/src/index'
 import type { ProviderModelCatalog } from '../packages/provider-platform/src/index'
 
 const provider = process.argv[2]
-if (provider !== 'claude' && provider !== 'gemini')
-  throw new Error('Usage: provider-smoke.ts claude|gemini')
-const modelId =
+if (provider !== 'claude' && provider !== 'gemini' && provider !== 'cursor')
+  throw new Error('Usage: provider-smoke.ts claude|gemini|cursor')
+const configuredModelId =
   process.env[
-    provider === 'claude' ? 'CLAUDE_SMOKE_MODEL' : 'GEMINI_SMOKE_MODEL'
+    provider === 'claude'
+      ? 'CLAUDE_SMOKE_MODEL'
+      : provider === 'gemini'
+        ? 'GEMINI_SMOKE_MODEL'
+        : 'CURSOR_SMOKE_MODEL'
   ]
-if (!modelId)
-  throw new Error(`${provider.toUpperCase()}_SMOKE_MODEL is required`)
+const modelId = configuredModelId ?? '__SMOKE_MODEL_REQUIRED__'
 let sequence = 0
 const catalog: ProviderModelCatalog = {
   schemaVersion: 1,
@@ -47,12 +60,42 @@ const catalog: ProviderModelCatalog = {
         resume: 'supported',
         toolCalls: 'supported',
         imageInput: 'unsupported',
+        usage: provider === 'cursor' ? 'degraded' : 'supported',
+        cost: 'unsupported',
       },
     },
   ],
 }
 const Adapter =
-  provider === 'claude' ? ClaudeCodeRuntimeAdapter : GeminiCliRuntimeAdapter
+  provider === 'claude'
+    ? ClaudeCodeRuntimeAdapter
+    : provider === 'gemini'
+      ? GeminiCliRuntimeAdapter
+      : CursorAgentRuntimeAdapter
+const smokeRoot =
+  provider === 'cursor'
+    ? mkdtempSync(join(tmpdir(), 'cursor-provider-smoke-'))
+    : '/private/tmp'
+if (provider === 'cursor') {
+  mkdirSync(join(smokeRoot, '.cursor'))
+  writeFileSync(join(smokeRoot, 'README.md'), '# Cursor provider smoke\n')
+  writeFileSync(
+    join(smokeRoot, '.cursor/cli.json'),
+    JSON.stringify({
+      permissions: {
+        allow: ['Read(README.md)'],
+        deny: [
+          'Read(.env*)',
+          'Write(.env*)',
+          'Read(**/*.pem)',
+          'Write(**/*.key)',
+          'Read(**/*private-key*)',
+          'Read(**/*credential*)',
+        ],
+      },
+    }),
+  )
+}
 const adapter = new Adapter({
   catalog,
   context: {
@@ -61,6 +104,15 @@ const adapter = new Adapter({
     sessionId: randomUUID(),
     nextSequence: () => ++sequence,
   },
+  ...(provider === 'cursor'
+    ? {
+        binary:
+          process.env.CURSOR_AGENT_BIN ??
+          (existsSync(join(homedir(), '.local/bin/cursor-agent'))
+            ? join(homedir(), '.local/bin/cursor-agent')
+            : 'cursor-agent'),
+      }
+    : {}),
 })
 const observed = new Set<string>()
 let rawSeen = false
@@ -98,7 +150,7 @@ const run = async (
     {
       sessionId,
       prompt,
-      cwd: '/private/tmp',
+      cwd: smokeRoot,
       modelId,
       reasoningEffort: 'none',
     },
@@ -111,23 +163,40 @@ const run = async (
 
 async function smoke() {
   const readiness = await stage('readiness', adapter.checkReadiness(), 15_000)
-  if (provider === 'claude' && readiness.code === 'auth_required')
+  if (
+    (provider === 'claude' || provider === 'cursor') &&
+    readiness.code === 'auth_required'
+  )
     throw new Error(
-      'AUTH_REQUIRED: run `claude auth login`; interactive login is not automated',
+      `AUTH_REQUIRED: run \`${provider === 'cursor' ? 'cursor-agent login' : 'claude auth login'}\`; interactive login is not automated`,
     )
   if (!readiness.ready)
     throw new Error(
       `${readiness.code}: ${readiness.instruction ?? 'provider not ready'}`,
     )
+  if (!configuredModelId)
+    throw new Error(`${provider.toUpperCase()}_SMOKE_MODEL is required`)
   const first = await stage(
     'start-stream',
-    run(null, 'Reply with exactly SMOKE_ONE. Do not use tools.'),
+    run(
+      null,
+      provider === 'cursor'
+        ? 'Read README.md, then reply with exactly SMOKE_ONE.'
+        : 'Reply with exactly SMOKE_ONE. Do not use tools.',
+    ),
   )
   if (first.error?.code === 'unauthorized')
     throw new Error(
-      'AUTH_REQUIRED: run `claude auth login`; interactive login is not automated',
+      `AUTH_REQUIRED: run \`${provider === 'cursor' ? 'cursor-agent login' : 'claude auth login'}\`; interactive login is not automated`,
     )
-  if (first.outcome !== 'completed' || !first.usage || !rawSeen)
+  if (
+    first.outcome !== 'completed' ||
+    (provider !== 'cursor' && !first.usage) ||
+    !rawSeen ||
+    (provider === 'cursor' &&
+      !observed.has('tool.started') &&
+      !observed.has('tool.completed'))
+  )
     throw new Error(`start/stream failed: ${JSON.stringify(first)}`)
   const resumed = await stage(
     'resume',
@@ -136,7 +205,10 @@ async function smoke() {
       'Reply with exactly SMOKE_TWO. Do not use tools.',
     ),
   )
-  if (resumed.outcome !== 'completed' || !resumed.usage)
+  if (
+    resumed.outcome !== 'completed' ||
+    (provider !== 'cursor' && !resumed.usage)
+  )
     throw new Error(`resume failed: ${JSON.stringify(resumed)}`)
 
   const streamStarted = Promise.withResolvers<void>()
@@ -164,7 +236,9 @@ async function smoke() {
     secret: 'do-not-store',
   })
   if (
-    unknown.event.type !== 'provider.unknown' ||
+    (provider === 'cursor'
+      ? unknown.event.type !== 'cursor.unknown'
+      : unknown.event.type !== 'provider.unknown') ||
     JSON.stringify(unknown).includes('do-not-store')
   )
     throw new Error('unknown/raw safety failed')
@@ -174,7 +248,7 @@ async function smoke() {
     start: first.outcome,
     resume: resumed.outcome,
     interrupt: interrupted.outcome,
-    usage: true,
+    usage: Boolean(first.usage),
     raw: rawSeen,
     unknown: true,
     cleanup: true,
@@ -204,5 +278,6 @@ try {
       reason: 'system',
     })
     .catch(() => undefined)
+  if (provider === 'cursor') rmSync(smokeRoot, { recursive: true, force: true })
   progress('process', 'cleanup')
 }

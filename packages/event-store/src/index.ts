@@ -1930,6 +1930,46 @@ export class SqliteEventStore {
     return this.getDurableRun(scope, runId)
   }
 
+  markDetachedCliRunsRecoveryRequired(): number {
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const runs = this.#database
+        .prepare(
+          `UPDATE durable_runs
+           SET status='recovery_required',
+               recovery_code='RECOVERY_OUTCOME_UNKNOWN',
+               recovery_detail='Detached CLI process state was lost during control-plane restart; prompt was not resubmitted',
+               last_reconciled_at=?, updated_at=?
+           WHERE provider IN ('claude','gemini','cursor')
+             AND status IN ('queued','running','interrupting')`,
+        )
+        .run(timestamp, timestamp)
+      this.#database
+        .prepare(
+          `UPDATE sessions
+           SET status='recovery_required',
+               recovery_error_code='RECOVERY_OUTCOME_UNKNOWN',
+               updated_at=?
+           WHERE provider IN ('claude','gemini','cursor')
+             AND EXISTS (
+               SELECT 1 FROM durable_runs
+               WHERE durable_runs.tenant_id=sessions.tenant_id
+                 AND durable_runs.workspace_id=sessions.workspace_id
+                 AND durable_runs.session_id=sessions.session_id
+                 AND durable_runs.status='recovery_required'
+                 AND durable_runs.terminal_outcome IS NULL
+             )`,
+        )
+        .run(timestamp)
+      this.#database.exec('COMMIT')
+      return Number(runs.changes)
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+  }
+
   finalizeDurableRun(
     input: StoreScope & {
       runId: string

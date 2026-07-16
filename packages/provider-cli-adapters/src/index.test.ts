@@ -1,9 +1,20 @@
-import { readFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   ClaudeCodeRuntimeAdapter,
+  CursorAgentRuntimeAdapter,
   GeminiCliRuntimeAdapter,
+  loadCursorProjectPolicy,
   normalizeCliEnvelope,
   SpawnCliProcessRunner,
   type CliRunResult,
@@ -11,10 +22,20 @@ import {
 } from './index'
 import type { ProviderModelCatalog } from '@persistent-codex/provider-platform'
 
-const fixture = (provider: 'claude' | 'gemini') =>
+const fixture = (provider: 'claude' | 'gemini' | 'cursor') =>
   readFileSync(
     fileURLToPath(
       new URL(`../test/fixtures/${provider}-stream.jsonl`, import.meta.url),
+    ),
+    'utf8',
+  )
+    .trim()
+    .split('\n')
+
+const cursorFailureFixture = () =>
+  readFileSync(
+    fileURLToPath(
+      new URL('../test/fixtures/cursor-failure.jsonl', import.meta.url),
     ),
     'utf8',
   )
@@ -33,7 +54,9 @@ function context() {
   }
 }
 
-function catalog(provider: 'claude' | 'gemini'): ProviderModelCatalog {
+function catalog(
+  provider: 'claude' | 'gemini' | 'cursor',
+): ProviderModelCatalog {
   return {
     schemaVersion: 1,
     identity: {
@@ -63,10 +86,34 @@ function catalog(provider: 'claude' | 'gemini'): ProviderModelCatalog {
           resume: 'supported',
           toolCalls: 'supported',
           imageInput: 'unsupported',
+          usage: 'supported',
+          cost: 'unsupported',
         },
       },
     ],
   }
+}
+
+function cursorWorkspace() {
+  const workspace = mkdtempSync(join(tmpdir(), 'cursor-policy-'))
+  mkdirSync(join(workspace, '.cursor'))
+  writeFileSync(
+    join(workspace, '.cursor/cli.json'),
+    JSON.stringify({
+      permissions: {
+        allow: ['Read(src/**)', 'Write(src/**)', 'Shell(rg)', 'Shell(pnpm)'],
+        deny: [
+          'Read(.env*)',
+          'Write(.env*)',
+          'Read(**/*.pem)',
+          'Write(**/*.key)',
+          'Read(**/*private-key*)',
+          'Read(**/*credential*)',
+        ],
+      },
+    }),
+  )
+  return workspace
 }
 
 class FixtureRunner implements CliProcessRunner {
@@ -93,7 +140,12 @@ class FixtureRunner implements CliProcessRunner {
   async version() {
     return 'fixture-version'
   }
-  async probe() {
+  async probe(_input?: { binary: string; args: string[] }): Promise<{
+    exitCode: number | null
+    stdout: string
+    stderr: string
+    errorCode?: string
+  }> {
     return { exitCode: 0, stdout: '{"loggedIn":true}', stderr: '' }
   }
 }
@@ -430,6 +482,357 @@ describe('provider-specific effort and readiness', () => {
   })
 })
 
+describe('Cursor Agent adapter', () => {
+  class CursorRunner extends FixtureRunner {
+    lastRun:
+      | { binary: string; args: string[]; cwd: string; stdinText?: string }
+      | undefined
+
+    override async run(input: {
+      binary: string
+      args: string[]
+      cwd: string
+      stdinText?: string
+      onLine(line: string): void | Promise<void>
+    }) {
+      this.lastRun = {
+        binary: input.binary,
+        args: input.args,
+        cwd: input.cwd,
+        ...(input.stdinText !== undefined
+          ? { stdinText: input.stdinText }
+          : {}),
+      }
+      return super.run(input)
+    }
+
+    override async probe(input?: { binary: string; args: string[] }): Promise<{
+      exitCode: number | null
+      stdout: string
+      stderr: string
+      errorCode?: string
+    }> {
+      if (input?.args[0] === '--version')
+        return {
+          exitCode: 0,
+          stdout: '2025.09.18-7ae6800',
+          stderr: '',
+        }
+      return { exitCode: 0, stdout: 'Authenticated', stderr: '' }
+    }
+  }
+
+  it('streams system, assistant, correlated tool, file, and terminal events', async () => {
+    const workspace = cursorWorkspace()
+    try {
+      const runner = new CursorRunner(fixture('cursor'))
+      const adapter = new CursorAgentRuntimeAdapter({
+        catalog: catalog('cursor'),
+        context: context(),
+        runner,
+        cursorApiKeyPresent: false,
+      })
+      const observed: string[] = []
+      const terminal = await adapter.startTurn!(
+        {
+          sessionId: null,
+          prompt: 'secret prompt',
+          cwd: workspace,
+          modelId: 'cursor-fixture-model',
+          reasoningEffort: 'none',
+          allowFileChanges: false,
+        },
+        (event) => {
+          observed.push(event.normalized.event.type)
+        },
+      )
+      expect(observed).toEqual(
+        expect.arrayContaining([
+          'turn.started',
+          'agent.message.delta',
+          'agent.message.completed',
+          'tool.started',
+          'tool.completed',
+          'file.change.proposed',
+          'file.change.completed',
+          'turn.completed',
+        ]),
+      )
+      expect(terminal).toMatchObject({
+        providerSessionId: 'cursor-session-fixture',
+        outcome: 'completed',
+      })
+      expect(runner.lastRun?.args).not.toContain('secret prompt')
+      expect(runner.lastRun?.stdinText).toBe('secret prompt')
+      expect(runner.lastRun?.args).not.toContain('--force')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('enables --force only with explicit platform and project write permission', () => {
+    const workspace = cursorWorkspace()
+    try {
+      const adapter = new CursorAgentRuntimeAdapter({
+        catalog: catalog('cursor'),
+        context: context(),
+        runner: new CursorRunner([]),
+      })
+      const args = adapter.args({
+        sessionId: 'chat-id',
+        prompt: 'next',
+        cwd: workspace,
+        modelId: 'cursor-fixture-model',
+        reasoningEffort: 'none',
+        allowFileChanges: true,
+      })
+      expect(args).toEqual([
+        '--print',
+        '--output-format',
+        'stream-json',
+        '--model',
+        'cursor-fixture-model',
+        '--resume',
+        'chat-id',
+        '--force',
+      ])
+      expect(args).not.toContain('next')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('reports binary, version, and auth readiness without exposing an API key', async () => {
+    class ReadinessRunner extends CursorRunner {
+      readonly mode: 'missing' | 'nonexec' | 'unparseable' | 'mismatch' | 'auth'
+      constructor(
+        mode: 'missing' | 'nonexec' | 'unparseable' | 'mismatch' | 'auth',
+      ) {
+        super([])
+        this.mode = mode
+      }
+      override async probe(input?: {
+        binary: string
+        args: string[]
+      }): Promise<{
+        exitCode: number | null
+        stdout: string
+        stderr: string
+        errorCode?: string
+      }> {
+        if (input?.args[0] === '--version') {
+          if (this.mode === 'missing')
+            return {
+              exitCode: null,
+              stdout: '',
+              stderr: '',
+              errorCode: 'ENOENT',
+            }
+          if (this.mode === 'nonexec')
+            return {
+              exitCode: null,
+              stdout: '',
+              stderr: '',
+              errorCode: 'EACCES',
+            }
+          return {
+            exitCode: 0,
+            stdout:
+              this.mode === 'unparseable'
+                ? 'Cursor beta'
+                : this.mode === 'mismatch'
+                  ? '2026.01.01-abcd'
+                  : '2025.09.18-7ae6800',
+            stderr: '',
+          }
+        }
+        return { exitCode: 0, stdout: 'Not logged in', stderr: '' }
+      }
+    }
+    for (const [mode, code] of [
+      ['missing', 'binary_missing'],
+      ['nonexec', 'binary_not_executable'],
+      ['unparseable', 'version_unparseable'],
+      ['mismatch', 'version_mismatch'],
+      ['auth', 'auth_required'],
+    ] as const) {
+      const adapter = new CursorAgentRuntimeAdapter({
+        catalog: catalog('cursor'),
+        context: context(),
+        runner: new ReadinessRunner(mode),
+        cursorApiKeyPresent: false,
+      })
+      expect(await adapter.checkReadiness()).toMatchObject({
+        ready: false,
+        code,
+      })
+    }
+    const envAuth = new CursorAgentRuntimeAdapter({
+      catalog: catalog('cursor'),
+      context: context(),
+      runner: new ReadinessRunner('auth'),
+      cursorApiKeyPresent: true,
+    })
+    expect(await envAuth.checkReadiness()).toMatchObject({
+      ready: true,
+      authStatus: 'ready',
+    })
+    expect(JSON.stringify(await envAuth.checkReadiness())).not.toContain(
+      'CURSOR_API_KEY',
+    )
+  })
+
+  it('fails malformed JSON, early EOF, and terminal result errors', async () => {
+    const workspace = cursorWorkspace()
+    try {
+      for (const [lines, expected] of [
+        [['not-json'], 'protocol_mismatch'],
+        [
+          [
+            JSON.stringify({
+              type: 'system',
+              subtype: 'init',
+              session_id: 'early',
+            }),
+          ],
+          'protocol_mismatch',
+        ],
+        [cursorFailureFixture(), 'process_failed'],
+      ] as const) {
+        const adapter = new CursorAgentRuntimeAdapter({
+          catalog: catalog('cursor'),
+          context: context(),
+          runner: new CursorRunner([...lines]),
+        })
+        const terminal = await adapter.startTurn!(
+          {
+            sessionId: null,
+            prompt: 'x',
+            cwd: workspace,
+            modelId: 'cursor-fixture-model',
+            reasoningEffort: 'none',
+          },
+          () => undefined,
+        )
+        expect(terminal).toMatchObject({
+          outcome: 'failed',
+          error: { code: expected },
+        })
+      }
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('bounds large Cursor tool output and exposes artifact spill data', () => {
+    const content = `CURSOR_TOOL_OUTPUT:${'x'.repeat(70 * 1024)}`
+    const normalized = normalizeCliEnvelope({
+      provider: 'cursor',
+      envelope: {
+        type: 'tool_call',
+        subtype: 'completed',
+        call_id: 'large-read',
+        tool_call: {
+          readToolCall: {
+            args: { path: 'large.txt' },
+            result: { success: { content } },
+          },
+        },
+      },
+      context: context(),
+      sourceVersion: '2025.09.18-fixture',
+    })
+    expect(normalized.spill?.data.byteLength).toBeGreaterThan(64 * 1024)
+    expect(normalized.normalized.event).toMatchObject({
+      type: 'tool.completed',
+      payload: { result: { truncated: true, artifact: null } },
+    })
+    expect(JSON.stringify(normalized.rawEnvelope)).not.toContain(content)
+  })
+
+  it('validates deny precedence, sensitive paths, traversal, broad rules, and symlinks', () => {
+    const workspace = cursorWorkspace()
+    try {
+      expect(loadCursorProjectPolicy(workspace)).toMatchObject({
+        allowsWrites: true,
+      })
+      const config = join(workspace, '.cursor/cli.json')
+      writeFileSync(
+        config,
+        JSON.stringify({
+          permissions: {
+            allow: ['Read(**/*)'],
+            deny: [
+              'Read(.env*)',
+              'Read(**/*.pem)',
+              'Write(**/*.key)',
+              'Read(**/*private-key*)',
+              'Read(**/*credential*)',
+            ],
+          },
+        }),
+      )
+      expect(() => loadCursorProjectPolicy(workspace)).toThrow('broader')
+      writeFileSync(
+        config,
+        JSON.stringify({
+          permissions: {
+            allow: ['Shell(rm)'],
+            deny: [
+              'Read(.env*)',
+              'Read(**/*.pem)',
+              'Write(**/*.key)',
+              'Read(**/*private-key*)',
+              'Read(**/*credential*)',
+            ],
+          },
+        }),
+      )
+      expect(() => loadCursorProjectPolicy(workspace)).toThrow(
+        'platform shell allowlist',
+      )
+      writeFileSync(
+        config,
+        JSON.stringify({
+          permissions: {
+            allow: ['Read(../outside)'],
+            deny: [
+              'Read(.env*)',
+              'Read(**/*.pem)',
+              'Write(**/*.key)',
+              'Read(**/*private-key*)',
+              'Read(**/*credential*)',
+            ],
+          },
+        }),
+      )
+      expect(() => loadCursorProjectPolicy(workspace)).toThrow('traversal')
+      symlinkSync('/tmp', join(workspace, 'escape'))
+      writeFileSync(
+        config,
+        JSON.stringify({
+          permissions: {
+            allow: ['Read(escape/**)'],
+            deny: [
+              'Read(.env*)',
+              'Read(**/*.pem)',
+              'Write(**/*.key)',
+              'Read(**/*private-key*)',
+              'Read(**/*credential*)',
+            ],
+          },
+        }),
+      )
+      expect(() => loadCursorProjectPolicy(workspace)).toThrow('symlink')
+      rmSync(config)
+      symlinkSync('/tmp', config)
+      expect(() => loadCursorProjectPolicy(workspace)).toThrow('symlink')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('provider interrupt and timeout races', () => {
   const isReady = (line: string, mode: string) => {
     const event = JSON.parse(line) as Record<string, unknown>
@@ -581,7 +984,7 @@ describe('provider interrupt and timeout races', () => {
 
   it('times out, closes readers, and leaves no active child', async () => {
     const runner = new SpawnCliProcessRunner({
-      turnTimeoutMs: 250,
+      turnTimeoutMs: 2_000,
       interruptGraceMs: 10,
       terminateGraceMs: 20,
     })
@@ -601,5 +1004,25 @@ describe('provider interrupt and timeout races', () => {
     const result = await running
     expect(result).toMatchObject({ timedOut: true, signal: 'SIGKILL' })
     expect(runner.active).toBe(false)
-  })
+  }, 10_000)
+
+  it('rejects oversized NDJSON lines with bounded stdout buffering', async () => {
+    const runner = new SpawnCliProcessRunner({
+      turnTimeoutMs: 20_000,
+      maxLineBytes: 1_024,
+      maxBufferBytes: 2_048,
+    })
+    const lifecycle = fileURLToPath(
+      new URL('../test/fixtures/process-lifecycle.mjs', import.meta.url),
+    )
+    await expect(
+      runner.run({
+        binary: process.execPath,
+        args: [lifecycle, 'oversized-line'],
+        cwd: '.',
+        onLine: () => undefined,
+      }),
+    ).rejects.toThrow(/limit/)
+    expect(runner.active).toBe(false)
+  }, 30_000)
 })

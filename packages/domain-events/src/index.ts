@@ -12,7 +12,12 @@ const eventIdentitySchema = z.object({
   sequence: z.number().int().nonnegative(),
   occurredAt: z.iso.datetime(),
   receivedAt: z.iso.datetime(),
-  source: z.enum(['codex-app-server', 'claude-code', 'gemini-cli']),
+  source: z.enum([
+    'codex-app-server',
+    'claude-code',
+    'gemini-cli',
+    'cursor-agent',
+  ]),
   sourceVersion: z.string().min(1),
   sourceMethod: z.string().min(1),
   visibility: z.enum(['user', 'operator', 'internal']),
@@ -194,7 +199,14 @@ export const timelineEventSchema = z.discriminatedUnion('type', [
   eventSchema(
     'provider.unknown',
     z.object({
-      provider: z.enum(['claude', 'gemini']),
+      provider: z.enum(['claude', 'gemini', 'cursor']),
+      eventType: z.string(),
+      envelope: z.unknown(),
+    }),
+  ),
+  eventSchema(
+    'cursor.unknown',
+    z.object({
       eventType: z.string(),
       envelope: z.unknown(),
     }),

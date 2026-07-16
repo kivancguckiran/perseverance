@@ -6,5 +6,6 @@ export default defineConfig({
       reporter: ['text', 'json-summary'],
     },
     include: ['{agents,apps,packages,services}/**/*.test.ts'],
+    exclude: ['**/node_modules/**', '**/.runtime/**'],
   },
 })

@@ -178,7 +178,8 @@ export function parseOfflineHistory(
         typeof item.status === 'string' &&
         (item.provider === 'codex' ||
           item.provider === 'claude' ||
-          item.provider === 'gemini') &&
+          item.provider === 'gemini' ||
+          item.provider === 'cursor') &&
         typeof item.resolvedModel === 'string' &&
         typeof item.reasoningEffort === 'string' &&
         typeof item.updatedAt === 'string'
@@ -893,6 +894,7 @@ function titleOf(event: TimelineEvent): string {
   if (event.type === 'codex.unknown') {
     return unknownEventTitle(event.payload.method)
   }
+  if (event.type === 'cursor.unknown') return 'Cursor olayı'
   const titles: Partial<Record<TimelineEvent['type'], string>> = {
     'turn.started': 'Turn başladı',
     'turn.completed': 'Turn tamamlandı',
@@ -1031,6 +1033,16 @@ function technicalDetailOf(event: TimelineEvent): string {
     codexTurnId: event.codexTurnId,
     codexItemId: event.codexItemId,
   }
+  if (event.type === 'cursor.unknown')
+    return JSON.stringify(
+      {
+        ...metadata,
+        eventType: event.payload.eventType,
+        envelope: event.payload.envelope,
+      },
+      null,
+      2,
+    )
   if (event.type !== 'codex.unknown') return JSON.stringify(metadata, null, 2)
   return JSON.stringify(
     {
@@ -1082,6 +1094,8 @@ function detailOf(card: TimelineCard): string {
       return event.payload.message
     case 'codex.unknown':
       return event.payload.method
+    case 'cursor.unknown':
+      return event.payload.eventType
     case 'context.compacted':
       return 'Conversation context compact edildi.'
     default:
@@ -1616,7 +1630,7 @@ function ConversationHistory({
 }
 
 export function readStoredProviderSelection(): {
-  provider: 'codex' | 'claude' | 'gemini'
+  provider: 'codex' | 'claude' | 'gemini' | 'cursor'
   modelId: string
   effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 } {
@@ -1628,7 +1642,7 @@ export function readStoredProviderSelection(): {
 }
 
 export function parseStoredProviderSelection(raw: string | null): {
-  provider: 'codex' | 'claude' | 'gemini'
+  provider: 'codex' | 'claude' | 'gemini' | 'cursor'
   modelId: string
   effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 } {
@@ -1640,7 +1654,7 @@ export function parseStoredProviderSelection(raw: string | null): {
   if (!raw) return fallback
   try {
     const saved = JSON.parse(raw) as Record<string, unknown> | null
-    const providers = ['codex', 'claude', 'gemini'] as const
+    const providers = ['codex', 'claude', 'gemini', 'cursor'] as const
     const efforts = [
       'none',
       'minimal',
@@ -1665,7 +1679,7 @@ export function parseStoredProviderSelection(raw: string | null): {
 }
 
 export function providerPickerSelection(
-  provider: 'codex' | 'claude' | 'gemini',
+  provider: 'codex' | 'claude' | 'gemini' | 'cursor',
   models: Array<{
     modelId: string
     isDefault: boolean
@@ -1684,14 +1698,16 @@ export function providerPickerSelection(
 }
 
 export function providerAuthMessage(
-  provider: 'claude' | 'gemini',
+  provider: 'claude' | 'gemini' | 'cursor',
   authStatus: 'ready' | 'required' | 'unknown',
   instruction?: string | null,
 ) {
   if (authStatus === 'required')
     return `${provider} login gerekli. ${instruction ?? ''}`
   if (authStatus === 'unknown')
-    return 'Gemini auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın; capacity hatasında daha sonra yeniden deneyin.'
+    return provider === 'gemini'
+      ? 'Gemini auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın; capacity hatasında daha sonra yeniden deneyin.'
+      : `${provider} auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın.`
   return `${provider} auth hazır.`
 }
 
@@ -1772,7 +1788,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
   const [attachmentPending, setAttachmentPending] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<
-    'codex' | 'claude' | 'gemini'
+    'codex' | 'claude' | 'gemini' | 'cursor'
   >('codex')
   const [selectedModelId, setSelectedModelId] = useState('')
   const [selectedEffort, setSelectedEffort] = useState<
@@ -2607,7 +2623,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 value={selectedProvider}
                 onChange={(event) => {
                   const provider = event.target.value as
-                    'codex' | 'claude' | 'gemini'
+                    'codex' | 'claude' | 'gemini' | 'cursor'
                   const catalog = providerCatalogs.data?.catalogs.find(
                     (entry) => entry.identity.provider === provider,
                   )

@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/workspace","session_id":"cursor-session-failure","model":"fixture-cursor-model","permissionMode":"default"}
+{"type":"result","subtype":"error_during_execution","is_error":true,"result":"failed","session_id":"cursor-session-failure"}

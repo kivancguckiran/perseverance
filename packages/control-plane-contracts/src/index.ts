@@ -292,6 +292,8 @@ export const providerCatalogListResponseSchema = z.object({
       code: z.enum([
         'ready',
         'binary_missing',
+        'binary_not_executable',
+        'version_unparseable',
         'version_mismatch',
         'auth_required',
         'auth_unknown',

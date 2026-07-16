@@ -1095,6 +1095,8 @@ describe('WP13 provider persistence and append-only usage ledger', () => {
     resume: 'supported' as const,
     toolCalls: 'supported' as const,
     imageInput: 'supported' as const,
+    usage: 'supported' as const,
+    cost: 'degraded' as const,
   }
   const prices = {
     version: 'fixture-prices-v1',
@@ -1339,6 +1341,34 @@ describe('WP14 durable detached run lifecycle', () => {
       }),
     ).toThrowError(/already has an active durable run/)
     expect(store.getActiveDurableRun(scope)?.runId).toBe('run_first')
+    store.close()
+  })
+
+  it('marks detached Cursor runs recovery-required without resubmitting prompts', () => {
+    const store = new SqliteEventStore(':memory:')
+    store.createSession({ ...scope, provider: 'cursor' })
+    store.createDurableRun({
+      ...scope,
+      runId: 'run_cursor_detached',
+      provider: 'cursor',
+    })
+    store.bindDurableRunTurn({
+      ...scope,
+      runId: 'run_cursor_detached',
+      turnId: 'turn_cursor_detached',
+      providerTurnId: 'provider_turn_cursor_detached',
+      runtimeGeneration: null,
+    })
+    expect(store.markDetachedCliRunsRecoveryRequired()).toBe(1)
+    expect(store.getDurableRun(scope, 'run_cursor_detached')).toMatchObject({
+      status: 'recovery_required',
+      recoveryCode: 'RECOVERY_OUTCOME_UNKNOWN',
+    })
+    expect(store.getSession(scope)).toMatchObject({
+      status: 'recovery_required',
+      recoveryErrorCode: 'RECOVERY_OUTCOME_UNKNOWN',
+    })
+    expect(store.markDetachedCliRunsRecoveryRequired()).toBe(0)
     store.close()
   })
 
