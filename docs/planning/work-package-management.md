@@ -50,25 +50,25 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 
 ## Güncel iş paketi durumu
 
-| İş paketi                                    | Durum                      | Not                                                                                                         |
-| -------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| WP0 — Repository ve protokol temeli          | Tamamlandı                 | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                              |
-| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı                 | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
-| WP2 — Normalize event adapter                | Tamamlandı                 | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
-| WP3 — Session, event store ve replay         | Tamamlandı                 | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
-| WP4 — Gerçek thread ve turn akışı            | Tamamlandı                 | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
-| WP5 — Approval state machine                 | Tamamlandı                 | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
-| WP6 — Resume, reconnect ve recovery          | Tamamlandı                 | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
-| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı                 | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
-| WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı                 | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı               |
-| WP9 — Alfa başlatma ve auth bootstrap        | Tamamlandı                 | Güvenli provisioning, readiness ve actionable auth recovery bağımsız olarak doğrulandı                      |
-| WP10 — Workspace ve Git görünürlüğü          | Tamamlandı                 | Scoped session navigasyonu, durable Git snapshot ve responsive salt-okunur yüzey doğrulandı                 |
-| WP11 — Audit ve temel metrics                | Tamamlandı                 | Atomik durable audit, dinamik readiness, bounded metrics ve contention davranışı doğrulandı                 |
-| WP12 — Alfa hardening ve kabul               | Tamamlandı                 | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                        |
-| WP13 — Platform ve usage ledger temeli       | Tamamlandı                 | Provider-neutral sözleşme, schema v9, model politikası ve append-only usage ledger doğrulandı               |
-| WP14 — Durable detached execution            | Tamamlandı                 | Schema v10 durable run, disconnect/replay, explicit interrupt, recovery ve accounting doğrulandı            |
-| WP15 — Çok sağlayıcılı conversation          | Tamamlandı                 | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
-| WP16 — PWA ve Faz 2 kabulü                   | Uygulandı / kabul bekliyor | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü uygulandı; bağımsız kabul bekleniyor            |
+| İş paketi                                    | Durum      | Not                                                                                                         |
+| -------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| WP0 — Repository ve protokol temeli          | Tamamlandı | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                              |
+| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
+| WP2 — Normalize event adapter                | Tamamlandı | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
+| WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
+| WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
+| WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
+| WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
+| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
+| WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı               |
+| WP9 — Alfa başlatma ve auth bootstrap        | Tamamlandı | Güvenli provisioning, readiness ve actionable auth recovery bağımsız olarak doğrulandı                      |
+| WP10 — Workspace ve Git görünürlüğü          | Tamamlandı | Scoped session navigasyonu, durable Git snapshot ve responsive salt-okunur yüzey doğrulandı                 |
+| WP11 — Audit ve temel metrics                | Tamamlandı | Atomik durable audit, dinamik readiness, bounded metrics ve contention davranışı doğrulandı                 |
+| WP12 — Alfa hardening ve kabul               | Tamamlandı | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                        |
+| WP13 — Platform ve usage ledger temeli       | Tamamlandı | Provider-neutral sözleşme, schema v9, model politikası ve append-only usage ledger doğrulandı               |
+| WP14 — Durable detached execution            | Tamamlandı | Schema v10 durable run, disconnect/replay, explicit interrupt, recovery ve accounting doğrulandı            |
+| WP15 — Çok sağlayıcılı conversation          | Tamamlandı | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
+| WP16 — PWA ve Faz 2 kabulü                   | Tamamlandı | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlandı                                      |
 
 ## WP1 nihai denetim sonucu
 
@@ -775,3 +775,43 @@ Uygulama commit'leri: `aabd6bd`, `ddd3079`, `37455d2`, `5835809`.
 
 WP16 uygulandı ve bağımsız kabul bekliyor. WP16 kabul edilmeden Faz 2 kapatılamaz; yeni
 bir work package başlatılmaz.
+
+## WP16 nihai kabul ve Faz 2 kapanış sonucu
+
+Karar: **Tamamlandı — Faz 2 kapatıldı**
+
+Doğrulananlar:
+
+- Uygulama commit'i `bbd6cbd` (`feat: complete Phase 2 PWA and cost acceptance`)
+  mevcut ve WP16 kapsamını taşıyor.
+- Installable manifest/ikonlar, versioned Service Worker, güvenli cache sınırı,
+  read-only offline history, offline gönderim/upload engeli ve online snapshot +
+  high-water replay uygulandı.
+- Conversation, turn ve title usage/cost kırılımı; completed, failed, interrupted,
+  partial, estimated, unreconciled ve reconciled durumları test edildi. Eksik usage
+  sıfır maliyet gibi gösterilmiyor.
+- OpenAI ve Anthropic resmi cost kaynakları server-only admin credential ve stable
+  dedupe üzerinden provider-neutral reconciliation portuna bağlı. Admin credential
+  olmayan ortam estimated/unreconciled kalıyor; Gemini için turn-level resmi cost
+  kaynağı olmadığı belgeli.
+- `pnpm phase2:accept`; 7 dosyada 156 test, unknown-event durable replay, production PWA
+  build ve gerçek Chrome üzerinde 1280×720/390×844, controlled Service Worker,
+  offline/online acceptance aşamalarını geçti.
+- `pnpm verify`; Prettier, 11 workspace typecheck'i, 17 test dosyasında 213 test,
+  production build ve `/` ile `/sessions/:sessionId` SSR HTTP smoke'unu geçti.
+- Canlı `phase2:smoke:live`; dört aşamalı Codex canary, Claude `sonnet`, Gemini
+  `gemini-2.5-pro` ve Codex title `gpt-5.6-luna + none` akışlarını usage,
+  unknown-event ve cleanup kanıtlarıyla geçti.
+- In-app browser kontrolünde scoped provider catalog API 200 döndü; desktop ve mobil
+  görünüm taşma veya console warning/error üretmedi. Normal dev instance'ında Codex auth
+  yokken readiness doğru biçimde `AUTH_REQUIRED`, `readOnlyAvailable=true` bildirdi.
+- Resmi OpenAI/Anthropic admin cost credential'ları bu kabul ortamında bulunmadığından
+  canlı fatura reconciliation'ı çalıştırılmadı; fixture/contract/integration kanıtları
+  geçti ve bu sınırlama kabul raporunda görünür tutuldu.
+- Geçici browser tab'ı, viewport override ve dev process kapatıldı; çalışma ağacı ve
+  3000/3100 portları temiz bırakıldı.
+
+Uygulama commit'i: `bbd6cbd` (`feat: complete Phase 2 PWA and cost acceptance`).
+
+Aktif iş paketi yoktur. Faz 2 tamamlanmıştır; yeni çalışma ayrı bir plan ve açıkça
+aktive edilmiş yeni bir work package olmadan başlatılmaz.

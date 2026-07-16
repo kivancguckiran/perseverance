@@ -1,12 +1,11 @@
 # Faz 2 acceptance raporu — WP16 uygulama kanıtı
 
-- Tarih: 15 Temmuz 2026
-- Durum: **Uygulandı / kabul bekliyor**
+- Tarih: 16 Temmuz 2026
+- Durum: **Kabul edildi — Faz 2 tamamlandı**
 - Gate: `pnpm phase2:accept`
 - Kapsam: WP13–WP16 provider, durable execution/recovery, accounting/cost ve PWA
 
-Bu rapor uygulama teslimatının tekrarlanabilir kanıtıdır; WP16'yı kabul edilmiş veya
-Faz 2'yi kapanmış saymaz.
+Bu rapor uygulama teslimatının ve bağımsız WP16 kabulünün tekrarlanabilir kanıtıdır.
 
 ## Deterministic gate
 
@@ -77,3 +76,19 @@ scope değerleri yoktu; dolayısıyla canlı resmi reconciliation çalıştırı
 USD-micros mapping'i, Anthropic fractional-cent pagination'ı, secret'ın sonuçtan
 çıkarılması ve control-plane stable-dedupe/idempotent reconciliation akışı fixture ve
 integration testleriyle geçti.
+
+## Bağımsız kabul tekrarı — 16 Temmuz 2026
+
+- `pnpm phase2:accept`: geçti — 156 hedefli test, unknown-event durable replay,
+  production PWA build ve gerçek Chrome offline/online acceptance.
+- `pnpm verify`: geçti — format, 11 workspace typecheck'i, 17 dosyada 213 test,
+  production build ve SSR HTTP smoke.
+- `CLAUDE_SMOKE_MODEL=sonnet GEMINI_SMOKE_MODEL=gemini-2.5-pro
+CODEX_TITLE_SMOKE_MODEL=gpt-5.6-luna pnpm phase2:smoke:live`: geçti — Codex canary,
+  Claude, Gemini ve title generation cleanup ile tamamlandı.
+- In-app browser: 1280×720 ve 390×844 görünümü taşmasız; manifest bağlantısı mevcut,
+  provider catalog UI/API akışı başarılı ve console warning/error yok.
+- Canlı resmi cost reconciliation admin credential olmadığı için çalıştırılmadı; bu
+  durum UI'da `estimated/unreconciled` olarak korunuyor.
+
+Sonuç: WP16 kabul edildi, WP13–WP16 tamamlandı ve Faz 2 kapatıldı.

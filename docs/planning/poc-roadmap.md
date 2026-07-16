@@ -51,7 +51,8 @@ açıldı. Faz 0 tamamlandı ve yeni işler Faz 1 planına taşındı.
 Faz 1 tek kiracılı alfa kapsamı WP9–WP12 olarak
 `docs/planning/phase-1-alpha-plan.md` içinde tamamlanmıştır. Faz 2 maliyet, browser'dan
 bağımsız kalıcı çalışma, PWA ve Codex/Claude/Gemini provider platformu kapsamı WP13–WP16
-olarak `docs/planning/phase-2-provider-platform-plan.md` içinde aktiftir.
+olarak `docs/planning/phase-2-provider-platform-plan.md` içinde tamamlanmıştır. Yeni faz
+ayrı bir plan kabul edilmeden ve tek aktif work package açılmadan başlatılmaz.
 
 ## Uygulama sırası
 
