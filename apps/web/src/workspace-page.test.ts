@@ -28,6 +28,43 @@ import {
   shouldSubmitComposer,
 } from './workspace-page'
 import MessageMarkdown from './message-markdown'
+import {
+  offlineConversationKey,
+  offlineHistoryKey,
+  tenantCacheNamespace,
+} from './tenant-cache'
+
+describe('tenant-aware client cache namespace', () => {
+  it('changes for principal, organization and workspace switches', () => {
+    const a = tenantCacheNamespace('user-a', 'org-a', 'wsp-a')
+    expect(tenantCacheNamespace('user-b', 'org-a', 'wsp-a')).not.toBe(a)
+    expect(tenantCacheNamespace('user-a', 'org-b', 'wsp-a')).not.toBe(a)
+    expect(tenantCacheNamespace('user-a', 'org-a', 'wsp-b')).not.toBe(a)
+    expect(offlineHistoryKey(a)).toContain(a)
+    expect(offlineConversationKey(a, 'ses-a')).toContain(a)
+  })
+
+  it('does not address tenant A snapshots after logout, revoke, or organization switch', () => {
+    const tenantA = tenantCacheNamespace('user-a', 'org-a', 'wsp-a')
+    const snapshots = new Map([
+      [
+        offlineConversationKey(tenantA, 'ses-a'),
+        JSON.stringify({ version: 1 }),
+      ],
+    ])
+
+    for (const nextNamespace of [
+      tenantCacheNamespace('anonymous', 'org-a', 'wsp-a'),
+      tenantCacheNamespace('user-a', 'org-a', 'revoked-workspace'),
+      tenantCacheNamespace('user-a', 'org-b', 'wsp-b'),
+      tenantCacheNamespace('user-b', 'org-a', 'wsp-a'),
+    ])
+      expect(
+        snapshots.get(offlineConversationKey(nextNamespace, 'ses-a')),
+      ).toBeUndefined()
+  })
+})
+
 const base = {
   schemaVersion: 1 as const,
   tenantId: 'ten',

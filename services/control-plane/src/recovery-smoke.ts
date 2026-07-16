@@ -56,6 +56,7 @@ async function pollEvents(
 
 const build = () =>
   buildControlPlane({
+    allowExplicitDevAuthentication: true,
     databasePath,
     artifactRoot,
     workspaceCwd,
@@ -220,7 +221,7 @@ try {
   )
     throw new Error('Restart audit actions were duplicated or missing')
   const metrics = (
-    await secondApp.inject({ method: 'GET', url: '/metrics' })
+    await secondApp.inject({ method: 'GET', url: '/metrics', headers })
   ).json() as {
     series: Array<{
       name: string

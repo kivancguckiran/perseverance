@@ -13,6 +13,10 @@ import {
   type ProviderCostReconciliationPort,
   type ProviderId,
 } from '@persistent-codex/provider-platform'
+import {
+  ExplicitDevAuthenticationAdapter,
+  OidcAuthenticationAdapter,
+} from '@persistent-codex/authz'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -23,6 +27,17 @@ if (
   throw new Error('APPROVAL_POLICY must be untrusted, on-request, or never')
 }
 const localAlpha = process.env.PERSISTENT_CODEX_LOCAL_ALPHA === '1'
+const authenticationAdapter = localAlpha
+  ? new ExplicitDevAuthenticationAdapter()
+  : (() => {
+      const issuer = process.env.OIDC_ISSUER
+      const audience = process.env.OIDC_AUDIENCE
+      if (!issuer || !audience)
+        throw new Error(
+          'OIDC_ISSUER and OIDC_AUDIENCE are required unless PERSISTENT_CODEX_LOCAL_ALPHA=1 explicitly enables dev authentication',
+        )
+      return new OidcAuthenticationAdapter({ issuer, audience })
+    })()
 const provisioningSource =
   process.env.CODEX_PROVISIONING_SOURCE ??
   (localAlpha
@@ -122,6 +137,8 @@ const app = await buildControlPlane({
       }
     : {}),
   logger: true,
+  authenticationAdapter,
+  ...(localAlpha ? { allowExplicitDevAuthentication: true } : {}),
   ...(approvalPolicy
     ? {
         approvalPolicy: approvalPolicy as 'untrusted' | 'on-request' | 'never',

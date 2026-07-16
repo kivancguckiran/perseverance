@@ -105,6 +105,35 @@ export const METRIC_DEFINITIONS = {
     labels: { state: ['ready', 'restarting', 'failed', 'stopped'] },
   },
   disk_health: { kind: 'gauge', labels: { state: ['ready', 'failed'] } },
+  authorization_decisions_total: {
+    kind: 'counter',
+    labels: {
+      action: [
+        'session',
+        'turn',
+        'event',
+        'approval',
+        'attachment',
+        'artifact',
+        'workspace',
+        'usage',
+        'audit',
+        'metrics',
+        'folder',
+        'provider',
+      ],
+      outcome: ['allow', 'deny'],
+      reason: [
+        'ROLE_ALLOWED',
+        'ROLE_DENIED',
+        'UNKNOWN_ACTION',
+        'RESOURCE_SCOPE_MISSING',
+        'PRINCIPAL_KIND_MISMATCH',
+        'MEMBERSHIP_INACTIVE',
+        'WORKSPACE_MEMBERSHIP_MISSING',
+      ],
+    },
+  },
 } as const satisfies Record<string, MetricDefinition>
 
 type MetricName = keyof typeof METRIC_DEFINITIONS

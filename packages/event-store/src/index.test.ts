@@ -609,6 +609,45 @@ describe('SqliteEventStore atomic ingest', () => {
 })
 
 describe('SqliteEventStore replay and durability', () => {
+  it('persists versioned organization membership and immutable change audit', () => {
+    const store = new SqliteEventStore()
+    try {
+      store.upsertOrganizationMembership({
+        organizationId: 'org_auth',
+        issuer: 'https://issuer.test',
+        subject: 'user-1',
+        role: 'developer',
+        workspaceIds: ['wsp-a'],
+      })
+      store.upsertOrganizationMembership({
+        organizationId: 'org_auth',
+        issuer: 'https://issuer.test',
+        subject: 'user-1',
+        role: 'viewer',
+        status: 'revoked',
+        workspaceIds: ['wsp-a'],
+      })
+      expect(
+        store.listOrganizationMemberships('user-1', 'https://issuer.test'),
+      ).toMatchObject([
+        {
+          organizationId: 'org_auth',
+          role: 'viewer',
+          status: 'revoked',
+          workspaceIds: ['wsp-a'],
+        },
+      ])
+      expect(
+        store.countMembershipAuditRecords({
+          organizationId: 'org_auth',
+          issuer: 'https://issuer.test',
+          subject: 'user-1',
+        }),
+      ).toBe(2)
+    } finally {
+      store.close()
+    }
+  })
   it('persists scoped artifact metadata across reopen', () => {
     const directory = mkdtempSync(join(tmpdir(), 'artifact-db-'))
     const path = join(directory, 'events.sqlite')
@@ -768,7 +807,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 11,
+        user_version: 12,
       })
       database.close()
     } finally {
@@ -1012,7 +1051,7 @@ describe('WP11 durable audit', () => {
       expect(reopened.listAudit(scope).records).toHaveLength(1)
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
-        user_version: 11,
+        user_version: 12,
       })
       database.close()
     } finally {
@@ -1392,7 +1431,7 @@ describe('WP14 durable detached run lifecycle', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 11,
+        user_version: 12,
       })
       database.close()
     } finally {

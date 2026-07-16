@@ -1,3 +1,5 @@
-{"type":"init","session_id":"gemini-session-fixture","model":"gemini-fixture-model"}
-{"type":"message","role":"assistant","content":"Gemini fixture response"}
-{"type":"result","status":"success","session_id":"gemini-session-fixture","stats":{"input_tokens":10,"output_tokens":4,"cached":7,"thoughtsTokenCount":1}}
+{"type":"init","timestamp":"2026-07-16T00:00:00.000Z","session_id":"gemini-session-fixture","model":"gemini-fixture-model"}
+{"type":"message","timestamp":"2026-07-16T00:00:00.500Z","role":"user","content":"fixture prompt must be redacted"}
+{"type":"message","timestamp":"2026-07-16T00:00:01.000Z","role":"assistant","content":"Gemini fixture response"}
+{"type":"future_event","timestamp":"2026-07-16T00:00:01.500Z","session_id":"gemini-session-fixture","future_field":{"token":"not-a-secret"}}
+{"type":"result","timestamp":"2026-07-16T00:00:02.000Z","status":"success","stats":{"input_tokens":10,"output_tokens":4,"cached":7,"thoughtsTokenCount":1}}

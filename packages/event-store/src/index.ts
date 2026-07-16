@@ -28,6 +28,19 @@ export interface StoreScope {
   sessionId: string
 }
 
+export type OrganizationRole =
+  'owner' | 'admin' | 'developer' | 'viewer' | 'billing'
+export interface StoredOrganizationMembership {
+  version: 1
+  subject: string
+  issuer: string
+  organizationId: string
+  role: OrganizationRole
+  status: 'active' | 'disabled' | 'revoked'
+  workspaceIds: string[]
+  updatedAt: string
+}
+
 export const AUDIT_ACTIONS = [
   'session.created',
   'session.lifecycle_changed',
@@ -46,6 +59,7 @@ export const AUDIT_ACTIONS = [
   'turn.interrupted',
   'git.snapshot_refreshed',
   'artifact.accessed',
+  'authorization.decided',
 ] as const
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]
 export type AuditActor = 'user' | 'system' | 'runtime'
@@ -56,6 +70,7 @@ export interface AuditRecord {
   workspaceId: string
   sessionId: string | null
   actor: AuditActor
+  actorPrincipalId: string | null
   action: AuditAction
   outcome: AuditOutcome
   correlationId: string | null
@@ -69,6 +84,7 @@ export interface AppendAuditInput {
   workspaceId: string
   sessionId?: string | null
   actor: AuditActor
+  actorPrincipalId?: string | null
   action: AuditAction
   outcome: AuditOutcome
   idempotencyKey: string
@@ -571,6 +587,7 @@ interface AuditRow {
   workspace_id: string
   session_id: string | null
   actor: AuditActor
+  actor_principal_id: string | null
   action: AuditAction
   outcome: AuditOutcome
   correlation_id: string | null
@@ -772,6 +789,7 @@ function auditFromRow(row: AuditRow): AuditRecord {
     workspaceId: row.workspace_id,
     sessionId: row.session_id,
     actor: row.actor,
+    actorPrincipalId: row.actor_principal_id,
     action: row.action,
     outcome: row.outcome,
     correlationId: row.correlation_id,
@@ -841,6 +859,216 @@ export class SqliteEventStore {
       .run(this.#timestamp(), this.#timestamp())
   }
 
+  upsertOrganization(input: {
+    organizationId: string
+    name: string
+    status?: 'active' | 'disabled'
+  }): void {
+    const timestamp = this.#timestamp()
+    this.#database
+      .prepare(
+        `INSERT INTO organizations (
+           organization_id, name, status, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(organization_id) DO UPDATE SET
+           name=excluded.name, status=excluded.status, updated_at=excluded.updated_at`,
+      )
+      .run(
+        input.organizationId,
+        input.name,
+        input.status ?? 'active',
+        timestamp,
+        timestamp,
+      )
+  }
+
+  upsertPrincipalIdentity(input: {
+    issuer: string
+    subject: string
+    status?: 'active' | 'disabled'
+  }): void {
+    const timestamp = this.#timestamp()
+    this.#database
+      .prepare(
+        `INSERT INTO principal_identities (
+           issuer, subject, status, created_at, last_seen_at
+         ) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(issuer, subject) DO UPDATE SET
+           status=excluded.status, last_seen_at=excluded.last_seen_at`,
+      )
+      .run(
+        input.issuer,
+        input.subject,
+        input.status ?? 'active',
+        timestamp,
+        timestamp,
+      )
+  }
+
+  upsertOrganizationMembership(input: {
+    organizationId: string
+    issuer: string
+    subject: string
+    role: OrganizationRole
+    status?: 'active' | 'disabled' | 'revoked'
+    workspaceIds?: string[]
+  }): StoredOrganizationMembership {
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      this.upsertOrganization({
+        organizationId: input.organizationId,
+        name: input.organizationId,
+      })
+      this.upsertPrincipalIdentity({
+        issuer: input.issuer,
+        subject: input.subject,
+      })
+      this.#database
+        .prepare(
+          `INSERT INTO organization_memberships (
+             organization_id, issuer, subject, role, status, version,
+             created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+           ON CONFLICT(organization_id, issuer, subject) DO UPDATE SET
+             role=excluded.role, status=excluded.status,
+             version=organization_memberships.version + 1,
+             updated_at=excluded.updated_at`,
+        )
+        .run(
+          input.organizationId,
+          input.issuer,
+          input.subject,
+          input.role,
+          input.status ?? 'active',
+          timestamp,
+          timestamp,
+        )
+      this.#database
+        .prepare(
+          `DELETE FROM workspace_membership_overrides
+           WHERE organization_id=? AND issuer=? AND subject=?`,
+        )
+        .run(input.organizationId, input.issuer, input.subject)
+      for (const workspaceId of input.workspaceIds ?? [])
+        this.#database
+          .prepare(
+            `INSERT INTO workspace_membership_overrides (
+               organization_id, workspace_id, issuer, subject, access, updated_at
+             ) VALUES (?, ?, ?, ?, 'allow', ?)`,
+          )
+          .run(
+            input.organizationId,
+            workspaceId,
+            input.issuer,
+            input.subject,
+            timestamp,
+          )
+      const membershipRow = this.#database
+        .prepare(
+          `SELECT version FROM organization_memberships
+           WHERE organization_id=? AND issuer=? AND subject=?`,
+        )
+        .get(input.organizationId, input.issuer, input.subject) as {
+        version: number
+      }
+      this.#database
+        .prepare(
+          `INSERT INTO membership_audit_records (
+             organization_id, issuer, subject, role, status,
+             membership_version, occurred_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.organizationId,
+          input.issuer,
+          input.subject,
+          input.role,
+          input.status ?? 'active',
+          membershipRow.version,
+          timestamp,
+        )
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      throw error
+    }
+    return this.listOrganizationMemberships(input.subject, input.issuer).find(
+      (value) => value.organizationId === input.organizationId,
+    )!
+  }
+
+  listOrganizationMemberships(
+    subject: string,
+    issuer: string,
+  ): StoredOrganizationMembership[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT
+           membership.organization_id,
+           membership.issuer,
+           membership.subject,
+           membership.role,
+           CASE
+             WHEN organization.status <> 'active' OR principal.status <> 'active'
+               THEN 'disabled'
+             ELSE membership.status
+           END AS status,
+           membership.updated_at
+         FROM organization_memberships membership
+         JOIN organizations organization
+           ON organization.organization_id=membership.organization_id
+         JOIN principal_identities principal
+           ON principal.issuer=membership.issuer
+          AND principal.subject=membership.subject
+         WHERE membership.subject=? AND membership.issuer=?
+         ORDER BY membership.organization_id`,
+      )
+      .all(subject, issuer) as Array<{
+      organization_id: string
+      issuer: string
+      subject: string
+      role: OrganizationRole
+      status: StoredOrganizationMembership['status']
+      updated_at: string
+    }>
+    const overrides = this.#database.prepare(
+      `SELECT workspace_id FROM workspace_membership_overrides
+       WHERE organization_id=? AND issuer=? AND subject=? AND access='allow'
+       ORDER BY workspace_id`,
+    )
+    return rows.map((row) => ({
+      version: 1,
+      subject: row.subject,
+      issuer: row.issuer,
+      organizationId: row.organization_id,
+      role: row.role,
+      status: row.status,
+      workspaceIds: (
+        overrides.all(row.organization_id, issuer, subject) as Array<{
+          workspace_id: string
+        }>
+      ).map((item) => item.workspace_id),
+      updatedAt: row.updated_at,
+    }))
+  }
+
+  countMembershipAuditRecords(input: {
+    organizationId: string
+    issuer: string
+    subject: string
+  }): number {
+    const row = this.#database
+      .prepare(
+        `SELECT count(*) AS count FROM membership_audit_records
+         WHERE organization_id=? AND issuer=? AND subject=?`,
+      )
+      .get(input.organizationId, input.issuer, input.subject) as {
+      count: number
+    }
+    return row.count
+  }
+
   #timestamp(): string {
     return this.#now().toISOString()
   }
@@ -884,6 +1112,7 @@ export class SqliteEventStore {
       ['correlationId', input.correlationId],
       ['requestId', input.requestId],
       ['traceId', input.traceId],
+      ['actorPrincipalId', input.actorPrincipalId],
     ] as const)
       if (
         value !== undefined &&
@@ -924,16 +1153,17 @@ export class SqliteEventStore {
     this.#database
       .prepare(
         `INSERT OR IGNORE INTO audit_records (
-          tenant_id, workspace_id, session_id, actor, action, outcome,
+          tenant_id, workspace_id, session_id, actor, actor_principal_id, action, outcome,
           correlation_id, request_id, trace_id, idempotency_key,
           metadata_json, metadata_bytes, occurred_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.tenantId,
         input.workspaceId,
         input.sessionId ?? null,
         input.actor,
+        input.actorPrincipalId ?? null,
         input.action,
         input.outcome,
         input.correlationId ?? null,

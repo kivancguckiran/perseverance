@@ -46,7 +46,10 @@ store.ingest({
   },
   event: adapted.event,
 })
-const app = await buildControlPlane({ eventStore: store })
+const app = await buildControlPlane({
+  eventStore: store,
+  allowExplicitDevAuthentication: true,
+})
 let preserved = false
 try {
   await app.ready()

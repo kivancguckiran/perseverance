@@ -16,6 +16,10 @@ import type { TimelineEvent } from '../packages/domain-events/src/index'
 import { SqliteEventStore } from '../packages/event-store/src/index'
 import type { ProviderModelCatalog } from '../packages/provider-platform/src/index'
 import { buildControlPlane } from '../services/control-plane/src/server'
+import {
+  offlineConversationKey,
+  tenantCacheNamespace,
+} from '../apps/web/src/tenant-cache'
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const webRoot = join(repositoryRoot, 'apps/web')
@@ -31,6 +35,17 @@ const scope = {
   workspaceId: 'wsp_local',
   sessionId: 'ses_phase2_accept',
 }
+const principalId = 'dev-user'
+const cacheNamespace = tenantCacheNamespace(
+  principalId,
+  scope.tenantId,
+  scope.workspaceId,
+)
+const conversationSnapshotKey = offlineConversationKey(
+  cacheNamespace,
+  scope.sessionId,
+)
+const initialUrl = `${baseUrl}/sessions/${scope.sessionId}?organization=${scope.tenantId}&workspace=${scope.workspaceId}`
 const execFileAsync = promisify(execFile)
 
 assert(existsSync(join(clientRoot, 'sw.js')), 'Production PWA build is missing')
@@ -201,6 +216,7 @@ store.appendUsageOutcome({
 })
 
 const api = await buildControlPlane({
+  allowExplicitDevAuthentication: true,
   eventStore: store,
   artifactRoot: join(temporaryRoot, 'artifacts'),
   attachmentRoot: join(temporaryRoot, 'attachments'),
@@ -278,7 +294,7 @@ try {
     web.once('error', reject)
     web.listen(webPort, '127.0.0.1', () => resolveListen())
   })
-  const productionPage = await fetch(`${baseUrl}/sessions/${scope.sessionId}`, {
+  const productionPage = await fetch(initialUrl, {
     signal: AbortSignal.timeout(5_000),
   })
   assert.equal(productionPage.status, 200, 'Production SSR route did not load')
@@ -286,7 +302,7 @@ try {
 
   console.log('[phase2-browser] desktop + service worker')
   await browser('set', 'viewport', '1280', '720')
-  await browser('open', `${baseUrl}/sessions/${scope.sessionId}`)
+  await browser('open', initialUrl)
   await browser('wait', '1500')
   await browserEval(
     `(async () => { await navigator.serviceWorker.ready; return true })()`,
@@ -300,7 +316,8 @@ try {
     if (document.documentElement.scrollWidth > document.documentElement.clientWidth) throw new Error('desktop horizontal overflow')
     if (!document.querySelector('link[rel="manifest"]')) throw new Error('manifest link missing')
     if (!navigator.serviceWorker.controller) throw new Error('service worker is not controlling production page')
-    if (!localStorage.getItem('offline-conversation-v1:${scope.sessionId}')) throw new Error('offline conversation snapshot missing')
+    if (!localStorage.getItem(${JSON.stringify(conversationSnapshotKey)})) throw new Error('tenant-aware offline conversation snapshot missing')
+    if (localStorage.getItem('offline-conversation-v1:${scope.sessionId}')) throw new Error('legacy global offline conversation key was written')
     return true
   })()`)
   await browser('set', 'viewport', '390', '844')
@@ -344,6 +361,25 @@ try {
     if (document.querySelector('.vite-error-overlay')) throw new Error('vite error overlay present')
     return true
   })()`)
+  console.log('[phase2-browser] tenant switch isolation')
+  const tenantBUrl = `${baseUrl}/sessions/${scope.sessionId}?organization=ten_other&workspace=wsp_other`
+  const tenantBSnapshotKey = offlineConversationKey(
+    tenantCacheNamespace(principalId, 'ten_other', 'wsp_other'),
+    scope.sessionId,
+  )
+  await browser('set', 'offline', 'on')
+  await browser('open', tenantBUrl)
+  await browser('wait', '1800')
+  await browserEval(`(() => {
+    const text = document.body.innerText
+    if (text.includes('Son senkronize cevap çevrimdışıyken okunabilir.')) throw new Error('tenant A snapshot leaked after organization switch')
+    if (localStorage.getItem(${JSON.stringify(tenantBSnapshotKey)})) throw new Error('tenant B snapshot was synthesized from tenant A')
+    if (!localStorage.getItem(${JSON.stringify(conversationSnapshotKey)})) throw new Error('tenant A snapshot unexpectedly removed')
+    return true
+  })()`)
+  await browser('set', 'offline', 'off')
+  await browser('open', initialUrl)
+  await browser('wait', '1200')
   const errors = await browser('errors', '--json')
   assert(
     errors === '[]' || /"errors"\s*:\s*\[\s*\]/.test(errors),
@@ -357,6 +393,8 @@ try {
       installability: 'manifest+icons+controlled-service-worker',
       offline: 'shell+read-only-history+send-blocked',
       online: 'snapshot+high-water-replay',
+      tenantSwitch:
+        'principal+organization+workspace scoped snapshot isolation',
       evidence: 'DOM/runtime assertions with zero page errors',
     }),
   )

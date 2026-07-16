@@ -34,7 +34,10 @@ import {
 } from '@persistent-codex/provider-platform'
 
 export const CLAUDE_CODE_VERSION = '2.1.109'
-export const GEMINI_CLI_VERSION = '0.25.0'
+export const GEMINI_CLI_VERSION = '0.50.0'
+export const GEMINI_CLI_SUPPORTED_VERSIONS = ['0.25.0', '0.50.0'] as const
+export const GEMINI_CLI_VERSION_POLICY =
+  GEMINI_CLI_SUPPORTED_VERSIONS.join(', ')
 export const CURSOR_AGENT_SUPPORTED_VERSIONS = ['2026.07.09-a3815c0'] as const
 export const CURSOR_AGENT_VERSION_POLICY =
   CURSOR_AGENT_SUPPORTED_VERSIONS.join(', ')
@@ -673,6 +676,13 @@ export function normalizeCliEnvelope(input: {
       role: 'user',
       content: [{ type: 'text', text: '[REDACTED_USER_INPUT]' }],
     }
+  if (
+    input.provider === 'gemini' &&
+    raw.type === 'message' &&
+    raw.role === 'user' &&
+    'content' in raw
+  )
+    raw.content = '[REDACTED_USER_INPUT]'
   let checksum = ''
   const type = typeof raw.type === 'string' ? raw.type : 'malformed'
   const now = (input.context.now?.() ?? new Date()).toISOString()
@@ -708,7 +718,10 @@ export function normalizeCliEnvelope(input: {
       type: 'turn.started',
       payload: { status: 'in_progress' },
     })
-  } else if (type === 'message' || type === 'assistant') {
+  } else if (
+    (type === 'message' && raw.role !== 'user') ||
+    type === 'assistant'
+  ) {
     const message = record(raw.message)
     const text = textParts(raw.content ?? message?.content ?? raw.delta).join(
       '',
@@ -982,6 +995,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
   readonly binary: string
   readonly provider: CliProvider
   readonly pinnedVersion: string
+  readonly supportedVersions: readonly string[]
   protected runtimeVersion: string | undefined
   #activeTurn:
     | {
@@ -994,7 +1008,11 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
   constructor(
     provider: CliProvider,
     options: CliAdapterOptions,
-    defaults: { binary: string; version: string; adapter: string },
+    defaults: {
+      binary: string
+      versions: readonly string[]
+      adapter: string
+    },
   ) {
     this.provider = provider
     const configuredCatalog = providerModelCatalogSchema.parse(options.catalog)
@@ -1032,12 +1050,13 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     this.context = options.context
     this.runner = options.runner ?? new SpawnCliProcessRunner()
     this.binary = options.binary ?? defaults.binary
-    this.pinnedVersion = defaults.version
+    this.supportedVersions = defaults.versions
+    this.pinnedVersion = defaults.versions.join(', ')
     this.identity = {
       provider,
       adapter: defaults.adapter,
       adapterVersion: '1',
-      upstreamVersion: defaults.version,
+      upstreamVersion: this.pinnedVersion,
     }
   }
 
@@ -1077,8 +1096,11 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
         code: 'binary_missing',
         instruction: this.installInstruction(),
       }
-    const matches = output.includes(this.pinnedVersion)
-    if (!matches)
+    const reportedVersions = output.split(/\s+/)
+    const matchedVersion = this.supportedVersions.find((version) =>
+      reportedVersions.includes(version),
+    )
+    if (!matchedVersion)
       return {
         ready: false,
         version: output,
@@ -1087,6 +1109,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
         code: 'version_mismatch',
         instruction: this.installInstruction(),
       }
+    this.runtimeVersion = matchedVersion
     if (this.provider === 'gemini')
       return {
         ready: true,
@@ -1197,6 +1220,8 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
             context: this.context,
             sourceVersion: this.runtimeVersion ?? this.pinnedVersion,
           })
+          if (normalized.usage?.requestId === 'unknown' && providerSessionId)
+            normalized.usage.requestId = providerSessionId
           if (normalized.normalized.event.type === 'agent.message.delta')
             assistantText += normalized.normalized.event.payload.text
           if (normalized.normalized.event.type === 'turn.completed') {
@@ -1320,7 +1345,7 @@ export class ClaudeCodeRuntimeAdapter extends CliProviderAdapter {
   constructor(options: CliAdapterOptions) {
     super('claude', options, {
       binary: 'claude',
-      version: CLAUDE_CODE_VERSION,
+      versions: [CLAUDE_CODE_VERSION],
       adapter: 'claude-code-stream-json',
     })
   }
@@ -1353,7 +1378,7 @@ export class GeminiCliRuntimeAdapter extends CliProviderAdapter {
   constructor(options: CliAdapterOptions) {
     super('gemini', options, {
       binary: 'gemini',
-      version: GEMINI_CLI_VERSION,
+      versions: GEMINI_CLI_SUPPORTED_VERSIONS,
       adapter: 'gemini-cli-stream-json',
     })
   }
@@ -1373,6 +1398,7 @@ export class GeminiCliRuntimeAdapter extends CliProviderAdapter {
       'stream-json',
       '--model',
       input.modelId,
+      ...(this.runtimeVersion === '0.50.0' ? ['--skip-trust'] : []),
       ...(input.sessionId ? ['--resume', input.sessionId] : []),
     ]
   }
@@ -1382,7 +1408,7 @@ export class CursorAgentRuntimeAdapter extends CliProviderAdapter {
   constructor(options: CliAdapterOptions) {
     super('cursor', options, {
       binary: options.binary ?? process.env.CURSOR_AGENT_BIN ?? 'cursor-agent',
-      version: CURSOR_AGENT_VERSION_POLICY,
+      versions: CURSOR_AGENT_SUPPORTED_VERSIONS,
       adapter: 'cursor-agent-stream-json',
     })
   }

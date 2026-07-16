@@ -120,6 +120,12 @@ let unsafeRawSeen = false
 let unsuppressedReasoningSeen = false
 const progress = (stage: string, status: 'started' | 'passed' | 'cleanup') =>
   console.error(JSON.stringify({ smoke: provider, stage, status }))
+const loginInstruction =
+  provider === 'cursor'
+    ? 'cursor-agent login'
+    : provider === 'gemini'
+      ? 'configure a supported Gemini CLI login or server-side GEMINI_API_KEY'
+      : 'claude auth login'
 const stage = async <T>(
   name: string,
   operation: Promise<T>,
@@ -181,7 +187,7 @@ async function smoke() {
     readiness.code === 'auth_required'
   )
     throw new Error(
-      `AUTH_REQUIRED: run \`${provider === 'cursor' ? 'cursor-agent login' : 'claude auth login'}\`; interactive login is not automated`,
+      `AUTH_REQUIRED: ${loginInstruction}; interactive login is not automated`,
     )
   if (!readiness.ready)
     throw new Error(
@@ -200,7 +206,7 @@ async function smoke() {
   )
   if (first.error?.code === 'unauthorized')
     throw new Error(
-      `AUTH_REQUIRED: run \`${provider === 'cursor' ? 'cursor-agent login' : 'claude auth login'}\`; interactive login is not automated`,
+      `AUTH_REQUIRED: ${loginInstruction}; interactive login is not automated`,
     )
   if (
     first.outcome !== 'completed' ||

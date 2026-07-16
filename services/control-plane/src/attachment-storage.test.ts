@@ -45,6 +45,12 @@ describe('LocalAttachmentStorage', () => {
     })
     expect(resolved.path).toMatch(/image\.png$/)
     expect(readFileSync(resolved.path)).toEqual(Buffer.from(data))
+    expect(() =>
+      fixture.storage.resolve(
+        { ...scope, tenantId: 'ten_other' },
+        attachment.attachmentId,
+      ),
+    ).toThrow()
     fixture.storage.remove(scope, attachment.attachmentId)
     expect(() =>
       fixture.storage.resolve(scope, attachment.attachmentId),

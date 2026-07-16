@@ -1,11 +1,67 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 11
+export const CURRENT_SCHEMA_VERSION = 12
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS organizations (
+    organization_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 120),
+    status TEXT NOT NULL CHECK(status IN ('active', 'disabled')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS principal_identities (
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('active', 'disabled')),
+    created_at TEXT NOT NULL,
+    last_seen_at TEXT,
+    PRIMARY KEY (issuer, subject)
+  );
+
+  CREATE TABLE IF NOT EXISTS organization_memberships (
+    organization_id TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('owner','admin','developer','viewer','billing')),
+    status TEXT NOT NULL CHECK(status IN ('active','disabled','revoked')),
+    version INTEGER NOT NULL DEFAULT 1 CHECK(version > 0),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (organization_id, issuer, subject),
+    FOREIGN KEY (organization_id) REFERENCES organizations(organization_id),
+    FOREIGN KEY (issuer, subject) REFERENCES principal_identities(issuer, subject)
+  );
+
+  CREATE TABLE IF NOT EXISTS workspace_membership_overrides (
+    organization_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    access TEXT NOT NULL CHECK(access IN ('allow','deny')),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (organization_id, workspace_id, issuer, subject),
+    FOREIGN KEY (organization_id, issuer, subject)
+      REFERENCES organization_memberships(organization_id, issuer, subject)
+  );
+
+  CREATE TABLE IF NOT EXISTS membership_audit_records (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    organization_id TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    role TEXT NOT NULL,
+    status TEXT NOT NULL,
+    membership_version INTEGER NOT NULL,
+    occurred_at TEXT NOT NULL,
+    FOREIGN KEY (organization_id, issuer, subject)
+      REFERENCES organization_memberships(organization_id, issuer, subject)
   );
 
   CREATE TABLE IF NOT EXISTS conversation_folders (
@@ -304,6 +360,7 @@ export const CREATE_SCHEMA_SQL = `
     workspace_id TEXT NOT NULL,
     session_id TEXT,
     actor TEXT NOT NULL,
+    actor_principal_id TEXT,
     action TEXT NOT NULL,
     outcome TEXT NOT NULL,
     correlation_id TEXT,
@@ -418,6 +475,13 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
     )
       database.exec(
         `ALTER TABLE artifacts ADD COLUMN status TEXT NOT NULL DEFAULT 'writing'`,
+      )
+    if (
+      tableExists(database, 'audit_records') &&
+      !hasColumn(database, 'audit_records', 'actor_principal_id')
+    )
+      database.exec(
+        `ALTER TABLE audit_records ADD COLUMN actor_principal_id TEXT`,
       )
 
     if (hasLegacyEvents) {

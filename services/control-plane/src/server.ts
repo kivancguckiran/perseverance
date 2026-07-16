@@ -1,6 +1,13 @@
 import { setImmediate as waitForImmediate } from 'node:timers/promises'
 import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import {
+  AuthenticationError,
+  ExplicitDevAuthenticationAdapter,
+  authorize,
+  type AuthenticationAdapter,
+  type MembershipDirectory,
+} from '@persistent-codex/authz'
+import {
   artifactDownloadTokenSchema,
   artifactMetadataSchema,
   auditListResponseSchema,
@@ -48,6 +55,10 @@ import {
   type ServerMessage,
   type SubscribeMessage,
   type Approval,
+  type AuthPrincipal,
+  type AuthorizationAction,
+  type OrganizationMembership,
+  meResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
 import type {
   ModelAliasConfig,
@@ -86,6 +97,7 @@ import {
 interface RealtimeSocket {
   send(data: string): void
   bufferedAmount?: number
+  close?(code?: number, reason?: string): void
 }
 
 export interface ControlPlaneOptions {
@@ -131,6 +143,223 @@ export interface ControlPlaneOptions {
   providerAdapterFactory?: SessionOrchestratorOptions['providerAdapterFactory']
   cursorForceAllowed?: boolean
   titleGenerator?: SessionOrchestratorOptions['titleGenerator']
+  authenticationAdapter?: AuthenticationAdapter
+  membershipDirectory?: MembershipDirectory
+  allowExplicitDevAuthentication?: boolean
+}
+
+export interface PublicRouteAuthorizationEntry {
+  method: string
+  route: string
+  action: AuthorizationAction
+  resourceType: string
+}
+
+export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[] =
+  [
+    {
+      method: 'GET',
+      route: '/metrics',
+      action: 'metrics.read',
+      resourceType: 'metrics',
+    },
+    {
+      method: 'GET',
+      route: '/v1/me',
+      action: 'session.read',
+      resourceType: 'principal',
+    },
+    {
+      method: 'GET',
+      route: '/readyz',
+      action: 'provider.readiness.read',
+      resourceType: 'workspace',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId/audit',
+      action: 'audit.read',
+      resourceType: 'audit',
+    },
+    {
+      method: 'GET',
+      route: '/v1/artifacts/:artifactId',
+      action: 'artifact.read',
+      resourceType: 'artifact',
+    },
+    {
+      method: 'POST',
+      route: '/v1/artifacts/:artifactId/download-token',
+      action: 'artifact.download',
+      resourceType: 'artifact',
+    },
+    {
+      method: 'GET',
+      route: '/v1/approvals',
+      action: 'approval.read',
+      resourceType: 'approval',
+    },
+    {
+      method: 'GET',
+      route: '/v1/approvals/:approvalId',
+      action: 'approval.read',
+      resourceType: 'approval',
+    },
+    {
+      method: 'POST',
+      route: '/v1/approvals/:approvalId/decision',
+      action: 'approval.decide',
+      resourceType: 'approval',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions',
+      action: 'session.create',
+      resourceType: 'session',
+    },
+    {
+      method: 'GET',
+      route: '/v1/provider-catalogs',
+      action: 'provider.catalog.read',
+      resourceType: 'provider_catalog',
+    },
+    {
+      method: 'GET',
+      route: '/v1/conversation-folders',
+      action: 'folder.read',
+      resourceType: 'folder',
+    },
+    {
+      method: 'POST',
+      route: '/v1/conversation-folders',
+      action: 'folder.manage',
+      resourceType: 'folder',
+    },
+    {
+      method: 'PATCH',
+      route: '/v1/conversation-folders/:folderId',
+      action: 'folder.manage',
+      resourceType: 'folder',
+    },
+    {
+      method: 'DELETE',
+      route: '/v1/conversation-folders/:folderId',
+      action: 'folder.manage',
+      resourceType: 'folder',
+    },
+    {
+      method: 'PATCH',
+      route: '/v1/sessions/:sessionId/conversation',
+      action: 'session.update',
+      resourceType: 'session',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions',
+      action: 'session.read',
+      resourceType: 'session',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId',
+      action: 'session.read',
+      resourceType: 'session',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId/usage',
+      action: 'usage.read',
+      resourceType: 'usage',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId/turns/:turnId/usage',
+      action: 'usage.read',
+      resourceType: 'usage',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/usage/reconcile',
+      action: 'usage.reconcile',
+      resourceType: 'usage',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId/git-snapshots',
+      action: 'workspace.snapshot.read',
+      resourceType: 'git_snapshot',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/git-snapshots/refresh',
+      action: 'workspace.snapshot.read',
+      resourceType: 'git_snapshot',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/resume',
+      action: 'session.update',
+      resourceType: 'session',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/turns/:turnId/steer',
+      action: 'turn.steer',
+      resourceType: 'turn',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/turns/:turnId/interrupt',
+      action: 'turn.interrupt',
+      resourceType: 'turn',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/attachments',
+      action: 'attachment.upload',
+      resourceType: 'attachment',
+    },
+    {
+      method: 'DELETE',
+      route: '/v1/sessions/:sessionId/attachments/:attachmentId',
+      action: 'attachment.delete',
+      resourceType: 'attachment',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/turns',
+      action: 'turn.start',
+      resourceType: 'turn',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId/events',
+      action: 'event.replay',
+      resourceType: 'event',
+    },
+    {
+      method: 'GET',
+      route: '/v1/realtime',
+      action: 'event.subscribe',
+      resourceType: 'realtime',
+    },
+  ]
+
+const authContexts = new WeakMap<
+  object,
+  { principal: AuthPrincipal; memberships: OrganizationMembership[] }
+>()
+
+function opaquePrincipalId(principal: AuthPrincipal) {
+  return `sha256:${createHash('sha256')
+    .update(`${principal.issuer}\0${principal.subject}`)
+    .digest('hex')}`
+}
+
+function routeAuthorization(method: string, route: string | undefined) {
+  return PUBLIC_ROUTE_AUTHORIZATION_CATALOG.find(
+    (entry) => entry.method === method && entry.route === route,
+  )
 }
 
 interface SubscriptionState extends StoreScope {
@@ -427,6 +656,16 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     options.attachmentRoot ??
       `${options.artifactRoot ?? '.runtime/artifacts'}/attachments`,
   )
+  const authentication =
+    options.authenticationAdapter ??
+    (options.allowExplicitDevAuthentication || process.env.NODE_ENV === 'test'
+      ? new ExplicitDevAuthenticationAdapter()
+      : undefined)
+  const memberships: MembershipDirectory = options.membershipDirectory ?? {
+    membershipsFor(subject, issuer) {
+      return store.listOrganizationMemberships(subject, issuer)
+    },
+  }
   app.addContentTypeParser(
     'application/octet-stream',
     { parseAs: 'buffer', bodyLimit: Number.MAX_SAFE_INTEGER },
@@ -608,6 +847,103 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   app.addHook('onRequest', async (request) => {
     ;(request as typeof request & { wp11StartedAt?: number }).wp11StartedAt =
       performance.now()
+    if (
+      request.method === 'OPTIONS' ||
+      request.url === '/healthz' ||
+      request.url.startsWith('/v1/meta') ||
+      request.url.startsWith('/v1/realtime') ||
+      request.url.startsWith('/v1/artifact-downloads/')
+    )
+      return
+    const coverage = routeAuthorization(
+      request.method,
+      request.routeOptions.url,
+    )
+    if (
+      !coverage &&
+      (request.url.startsWith('/v1/') ||
+        request.url === '/metrics' ||
+        request.url.startsWith('/readyz'))
+    )
+      throw new AuthenticationError('AUTHZ_ROUTE_UNCOVERED')
+    if (!coverage) return
+    if (!authentication)
+      throw new AuthenticationError('AUTH_CONFIGURATION_REQUIRED')
+    const authorization = headerValue(request.headers.authorization)
+    const principal = await authentication.authenticate({
+      ...(authorization ? { authorization } : {}),
+      headers: request.headers,
+      now: now(),
+    })
+    const organizationId = headerValue(request.headers['x-tenant-id'])
+    const workspaceId = headerValue(request.headers['x-workspace-id'])
+    if (!organizationId || !workspaceId)
+      throw new AuthenticationError('RESOURCE_SCOPE_MISSING')
+    const resolvedMemberships =
+      principal.memberships.length > 0
+        ? principal.memberships
+        : memberships.membershipsFor(principal.subject, principal.issuer)
+    const action: AuthorizationAction =
+      coverage.route === '/v1/artifacts/:artifactId' &&
+      new URL(request.url, 'http://control-plane.local').searchParams.get(
+        'metadata',
+      ) === '1'
+        ? 'artifact.metadata.read'
+        : coverage.action
+    const sessionId =
+      typeof (request.params as { sessionId?: unknown } | undefined)
+        ?.sessionId === 'string'
+        ? (request.params as { sessionId: string }).sessionId
+        : undefined
+    const decision = authorize({
+      principal,
+      action,
+      memberships: resolvedMemberships,
+      resource: {
+        organizationId,
+        workspaceId,
+        ...(sessionId ? { sessionId } : {}),
+        resourceType: coverage.resourceType,
+      },
+    })
+    store.appendAudit({
+      tenantId: organizationId,
+      workspaceId,
+      sessionId: null,
+      actor: 'user',
+      actorPrincipalId: opaquePrincipalId(principal),
+      action: 'authorization.decided',
+      outcome: decision.allow ? 'success' : 'failure',
+      idempotencyKey: `authz:${request.id}:${action}`,
+      ...auditContext(request),
+      metadata: {
+        operation: action,
+        reasonCode: decision.reasonCode,
+        status: decision.allow ? 'allow' : 'deny',
+      },
+    })
+    metrics.record('authorization_decisions_total', 1, {
+      action: action.split('.')[0]!,
+      outcome: decision.allow ? 'allow' : 'deny',
+      reason: decision.reasonCode,
+    })
+    if (!decision.allow) throw new AuthenticationError('ACCESS_DENIED')
+    authContexts.set(request, { principal, memberships: resolvedMemberships })
+  })
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof AuthenticationError) {
+      const authenticationFailure =
+        error.code === 'AUTH_REQUIRED' ||
+        error.code.startsWith('TOKEN_') ||
+        error.code.startsWith('OIDC_')
+      return reply.code(authenticationFailure ? 401 : 403).send({
+        code: error.code,
+        message: authenticationFailure
+          ? 'Authentication is required'
+          : 'Access is denied',
+      })
+    }
+    return reply.send(error)
   })
   app.addHook('onResponse', async (request, reply) => {
     const started =
@@ -789,6 +1125,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     codexVersion: '0.144.2',
     transport: 'stdio-jsonl',
   }))
+  app.get('/v1/me', async (request) => {
+    const context = authContexts.get(request)!
+    return meResponseSchema.parse({
+      ...context.principal,
+      memberships: context.memberships,
+      activeOrganizationId: headerValue(request.headers['x-tenant-id']),
+      activeWorkspaceId: headerValue(request.headers['x-workspace-id']),
+    })
+  })
 
   app.get<{
     Params: { sessionId: string }
@@ -859,6 +1204,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       store.appendAudit({
         ...metadata,
         actor: 'user',
+        actorPrincipalId:
+          authContexts.get(request) === undefined
+            ? null
+            : opaquePrincipalId(authContexts.get(request)!.principal),
         action: 'artifact.accessed',
         outcome: 'success',
         idempotencyKey: `artifact:${request.id}`,
@@ -938,7 +1287,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       try {
         store.getArtifact(scope, request.params.artifactId)
         const token = randomBytes(32).toString('base64url')
-        const expiresAt = Date.now() + 60_000
+        const expiresAt = now().getTime() + 60_000
         downloadTokens.set(token, {
           ...scope,
           artifactId: request.params.artifactId,
@@ -960,10 +1309,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     async (request, reply) => {
       const grant = downloadTokens.get(request.params.token)
       downloadTokens.delete(request.params.token)
-      if (!grant || grant.expiresAt < Date.now())
+      if (!grant || grant.expiresAt < now().getTime())
         return reply
           .code(404)
           .send({ code: 'DOWNLOAD_NOT_FOUND', message: 'Download not found' })
+      if (request.headers.range)
+        return reply
+          .code(416)
+          .send({ code: 'RANGE_NOT_GRANTED', message: 'Range was not granted' })
       try {
         const metadata = store.getArtifact(grant, grant.artifactId)
         store.appendAudit({
@@ -1994,9 +2347,17 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     }
   })
 
-  app.get('/v1/realtime', { websocket: true }, (socket) => {
+  app.get('/v1/realtime', { websocket: true }, (socket, request) => {
     metrics.record('realtime_reconnects_total', 1, { reason: 'client' })
     let subscription: SubscriptionState | undefined
+    let connectionAuth:
+      | {
+          principal: AuthPrincipal
+          memberships: OrganizationMembership[]
+          expiresAt: number
+        }
+      | undefined
+    let expiryTimer: ReturnType<typeof setTimeout> | undefined
     const outbound = senderFor(socket)
 
     const unsubscribe = store.onCommitted((event) => {
@@ -2063,6 +2424,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
     })
     socket.once('close', () => {
+      if (expiryTimer) clearTimeout(expiryTimer)
       unsubscribe()
       unsubscribeApprovals()
     })
@@ -2077,6 +2439,91 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         return
       }
 
+      if (!authentication) {
+        sendError(socket, 'AUTH_CONFIGURATION_REQUIRED', 'Access is denied')
+        socket.close?.(4403, 'authentication unavailable')
+        return
+      }
+      let principal: AuthPrincipal
+      try {
+        const authorization =
+          message.accessToken === undefined
+            ? headerValue(request.headers.authorization)
+            : `Bearer ${message.accessToken}`
+        principal = await authentication.authenticate({
+          ...(authorization ? { authorization } : {}),
+          headers: {
+            ...request.headers,
+            'x-tenant-id': message.tenantId,
+            'x-workspace-id': message.workspaceId,
+          },
+          now: now(),
+        })
+      } catch {
+        sendError(socket, 'AUTH_REQUIRED', 'Authentication is required')
+        socket.close?.(4401, 'authentication required')
+        return
+      }
+      const resolvedMemberships =
+        principal.memberships.length > 0
+          ? principal.memberships
+          : memberships.membershipsFor(principal.subject, principal.issuer)
+      const authz = authorize({
+        principal,
+        action: 'event.subscribe',
+        memberships: resolvedMemberships,
+        resource: {
+          organizationId: message.tenantId,
+          workspaceId: message.workspaceId,
+          sessionId: message.sessionId,
+          resourceType: 'realtime',
+          resourceId: message.sessionId,
+        },
+      })
+      store.appendAudit({
+        tenantId: message.tenantId,
+        workspaceId: message.workspaceId,
+        sessionId: null,
+        actor: 'user',
+        actorPrincipalId: opaquePrincipalId(principal),
+        action: 'authorization.decided',
+        outcome: authz.allow ? 'success' : 'failure',
+        idempotencyKey: `authz:ws:${request.id}:${message.sessionId}`,
+        ...auditContext(request),
+        metadata: {
+          operation: 'event.subscribe',
+          reasonCode: authz.reasonCode,
+          status: authz.allow ? 'allow' : 'deny',
+        },
+      })
+      metrics.record('authorization_decisions_total', 1, {
+        action: 'event',
+        outcome: authz.allow ? 'allow' : 'deny',
+        reason: authz.reasonCode,
+      })
+      if (!authz.allow) {
+        sendError(socket, 'ACCESS_DENIED', 'Access is denied')
+        socket.close?.(4403, 'access denied')
+        return
+      }
+      connectionAuth = {
+        principal,
+        memberships: resolvedMemberships,
+        expiresAt: Date.parse(principal.expiresAt),
+      }
+      const remaining = connectionAuth.expiresAt - now().getTime()
+      if (remaining <= 0) {
+        sendError(socket, 'TOKEN_EXPIRED', 'Authentication expired')
+        socket.close?.(4401, 'token expired')
+        return
+      }
+      expiryTimer = setTimeout(
+        () => {
+          sendError(socket, 'TOKEN_EXPIRED', 'Authentication expired')
+          socket.close?.(4401, 'token expired')
+        },
+        Math.min(remaining, 2_147_483_647),
+      )
       const scope: StoreScope = {
         tenantId: message.tenantId,
         workspaceId: message.workspaceId,
@@ -2209,6 +2656,35 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           'NOT_SUBSCRIBED',
           'Subscribe before acknowledging events',
         )
+        return
+      }
+      if (!connectionAuth || connectionAuth.expiresAt <= now().getTime()) {
+        sendError(socket, 'TOKEN_EXPIRED', 'Authentication expired')
+        socket.close?.(4401, 'token expired')
+        return
+      }
+      const currentMemberships =
+        connectionAuth.principal.memberships.length > 0
+          ? connectionAuth.memberships
+          : memberships.membershipsFor(
+              connectionAuth.principal.subject,
+              connectionAuth.principal.issuer,
+            )
+      const ackDecision = authorize({
+        principal: connectionAuth.principal,
+        action: 'event.subscribe',
+        memberships: currentMemberships,
+        resource: {
+          organizationId: current.tenantId,
+          workspaceId: current.workspaceId,
+          sessionId: current.sessionId,
+          resourceType: 'realtime',
+          resourceId: current.sessionId,
+        },
+      })
+      if (!ackDecision.allow) {
+        sendError(socket, 'ACCESS_REVOKED', 'Access is denied')
+        socket.close?.(4403, 'access revoked')
         return
       }
       if (!sameScope(current, ack)) {

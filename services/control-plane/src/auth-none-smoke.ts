@@ -14,6 +14,7 @@ const artifactRoot = join(root, 'artifacts')
 const codexHomeRoot = join(root, 'codex-homes')
 const store = new SqliteEventStore(databasePath)
 const app = await buildControlPlane({
+  allowExplicitDevAuthentication: true,
   eventStore: store,
   artifactRoot,
   codexHomeRoot,
