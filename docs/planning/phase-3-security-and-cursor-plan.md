@@ -52,7 +52,8 @@ provider-neutral lifecycle/capability/usage sözleşmesine eklemek.
 
 - `cursor-agent` binary readiness, version ve `status` tabanlı auth kontrolü; binary
   yoksa actionable hata, otomatik kurulum yok.
-- Headless process `--print --output-format stream-json` ile çalışır. Değişiklik yapan
+- Headless process doğrulanmış workspace’te `--print --trust --output-format
+stream-json` ile çalışır. `--trust` permission genişletmez. Değişiklik yapan
   modda `--force` varsayılan değildir; yalnız platform approval ve proje permission
   policy'si birlikte izin verirse açılır.
 - Auth server-side login veya yalnız environment içindeki `CURSOR_API_KEY` ile sağlanır;
@@ -70,6 +71,8 @@ provider-neutral lifecycle/capability/usage sözleşmesine eklemek.
   reasoning summary, usage veya cost taklit edilmez; ölçüm yoksa ledger
   `partial/unreconciled` kalır ve sıfır göstermez.
 - CLI beta/version drift riski ADR ve capability matrix'te görünürdür.
+- Exact doğrulanmış release allowlist’i `2026.07.09-a3815c0` ile başlar; yeni tarih veya
+  hash fixture ve authenticated gerçek smoke olmadan desteklenmez.
 
 ### Zorunlu kabul
 

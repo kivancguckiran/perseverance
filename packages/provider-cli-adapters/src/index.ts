@@ -35,8 +35,9 @@ import {
 
 export const CLAUDE_CODE_VERSION = '2.1.109'
 export const GEMINI_CLI_VERSION = '0.25.0'
-export const CURSOR_AGENT_VERSION_PREFIX = '2025.09.18-'
-export const CURSOR_AGENT_VERSION_RANGE = '2025.09.18-*'
+export const CURSOR_AGENT_SUPPORTED_VERSIONS = ['2026.07.09-a3815c0'] as const
+export const CURSOR_AGENT_VERSION_POLICY =
+  CURSOR_AGENT_SUPPORTED_VERSIONS.join(', ')
 const DEFAULT_MAX_LINE_BYTES = 1024 * 1024
 const DEFAULT_MAX_BUFFER_BYTES = 2 * 1024 * 1024
 const DEFAULT_MAX_INLINE_TOOL_BYTES = 64 * 1024
@@ -621,14 +622,29 @@ function counters(value: unknown): UsageCounters | undefined {
     return 0
   }
   return {
-    inputTokens: number('input_tokens', 'promptTokenCount', 'input'),
+    inputTokens: number(
+      'input_tokens',
+      'inputTokens',
+      'promptTokenCount',
+      'input',
+    ),
     cachedInputTokens: number(
       'cache_read_input_tokens',
+      'cacheReadTokens',
       'cachedContentTokenCount',
       'cached',
     ),
-    outputTokens: number('output_tokens', 'candidatesTokenCount', 'output'),
-    reasoningTokens: number('reasoning_tokens', 'thoughtsTokenCount'),
+    outputTokens: number(
+      'output_tokens',
+      'outputTokens',
+      'candidatesTokenCount',
+      'output',
+    ),
+    reasoningTokens: number(
+      'reasoning_tokens',
+      'reasoningTokens',
+      'thoughtsTokenCount',
+    ),
     toolUnits: 0,
   }
 }
@@ -647,6 +663,16 @@ export function normalizeCliEnvelope(input: {
   const raw = redact(
     record(input.envelope) ?? { malformed: input.envelope },
   ) as Record<string, unknown>
+  if (input.provider === 'cursor' && raw.type === 'thinking') {
+    if ('text' in raw) raw.text = '[SUPPRESSED_REASONING]'
+    if ('message' in raw) raw.message = '[SUPPRESSED_REASONING]'
+    if ('content' in raw) raw.content = '[SUPPRESSED_REASONING]'
+  }
+  if (input.provider === 'cursor' && raw.type === 'user' && 'message' in raw)
+    raw.message = {
+      role: 'user',
+      content: [{ type: 'text', text: '[REDACTED_USER_INPUT]' }],
+    }
   let checksum = ''
   const type = typeof raw.type === 'string' ? raw.type : 'malformed'
   const now = (input.context.now?.() ?? new Date()).toISOString()
@@ -945,7 +971,6 @@ export interface CliAdapterOptions {
   context: ProviderEventContext
   runner?: CliProcessRunner
   binary?: string
-  cursorApiKeyPresent?: boolean
 }
 
 abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
@@ -957,6 +982,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
   readonly binary: string
   readonly provider: CliProvider
   readonly pinnedVersion: string
+  protected runtimeVersion: string | undefined
   #activeTurn:
     | {
         completionObserved: boolean
@@ -1023,7 +1049,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
       provider: this.provider,
       envelope: input,
       context: this.context,
-      sourceVersion: this.pinnedVersion,
+      sourceVersion: this.runtimeVersion ?? this.pinnedVersion,
     }).normalized
   }
   async interrupt(_input: ProviderInterrupt) {
@@ -1169,7 +1195,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
             provider: this.provider,
             envelope,
             context: this.context,
-            sourceVersion: this.pinnedVersion,
+            sourceVersion: this.runtimeVersion ?? this.pinnedVersion,
           })
           if (normalized.normalized.event.type === 'agent.message.delta')
             assistantText += normalized.normalized.event.payload.text
@@ -1197,7 +1223,7 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
                 call_id: `assistant-${providerTurnId}`,
               },
               context: this.context,
-              sourceVersion: this.pinnedVersion,
+              sourceVersion: this.runtimeVersion ?? this.pinnedVersion,
             })
             completed.normalized.event = parseTimelineEvent({
               ...completed.normalized.event,
@@ -1353,17 +1379,12 @@ export class GeminiCliRuntimeAdapter extends CliProviderAdapter {
 }
 
 export class CursorAgentRuntimeAdapter extends CliProviderAdapter {
-  readonly #apiKeyPresent: boolean
-
   constructor(options: CliAdapterOptions) {
     super('cursor', options, {
       binary: options.binary ?? process.env.CURSOR_AGENT_BIN ?? 'cursor-agent',
-      version: CURSOR_AGENT_VERSION_RANGE,
+      version: CURSOR_AGENT_VERSION_POLICY,
       adapter: 'cursor-agent-stream-json',
     })
-    this.#apiKeyPresent =
-      options.cursorApiKeyPresent ??
-      Boolean(process.env.CURSOR_API_KEY && process.env.CURSOR_API_KEY.trim())
   }
 
   installInstruction() {
@@ -1403,36 +1424,41 @@ export class CursorAgentRuntimeAdapter extends CliProviderAdapter {
         authReady: false,
         authStatus: 'required',
         code: 'version_unparseable',
-        instruction: `Expected Cursor Agent version ${CURSOR_AGENT_VERSION_RANGE}; verify the official binary and disable version drift.`,
+        instruction: `Expected an exact tested Cursor Agent release (${CURSOR_AGENT_VERSION_POLICY}); verify the official binary and disable version drift.`,
       }
-    if (!output.startsWith(CURSOR_AGENT_VERSION_PREFIX))
+    if (
+      !CURSOR_AGENT_SUPPORTED_VERSIONS.includes(
+        output as (typeof CURSOR_AGENT_SUPPORTED_VERSIONS)[number],
+      )
+    )
       return {
         ready: false,
         version: output,
         authReady: false,
         authStatus: 'required',
         code: 'version_mismatch',
-        instruction: `Cursor Agent ${output} is outside the tested ${CURSOR_AGENT_VERSION_RANGE} range; install a supported version manually.`,
+        instruction: `Cursor Agent ${output} is outside the exact tested releases (${CURSOR_AGENT_VERSION_POLICY}); validate fixture and real smoke before adding it.`,
       }
-    if (this.#apiKeyPresent)
-      return {
-        ready: true,
-        version: output,
-        authReady: true,
-        authStatus: 'ready',
-        code: 'ready',
-        instruction: null,
-      }
+    this.runtimeVersion = output
     const auth = await this.runner.probe({
       binary: this.binary,
-      args: ['status'],
+      args: ['status', '--format', 'json'],
     })
-    const status = `${auth.stdout}\n${auth.stderr}`
-      .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
-      .toLowerCase()
-    const loggedIn =
-      !/not logged in|not authenticated|login required/.test(status) &&
-      /logged in|authenticated/.test(status)
+    let loggedIn = false
+    try {
+      const status = record(JSON.parse(auth.stdout))
+      loggedIn =
+        auth.exitCode === 0 &&
+        (status?.isAuthenticated === true || status?.status === 'authenticated')
+    } catch {
+      const status = `${auth.stdout}\n${auth.stderr}`
+        .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+        .toLowerCase()
+      loggedIn =
+        auth.exitCode === 0 &&
+        !/not logged in|not authenticated|login required/.test(status) &&
+        /logged in|authenticated/.test(status)
+    }
     return {
       ready: loggedIn,
       version: output,
@@ -1449,12 +1475,13 @@ export class CursorAgentRuntimeAdapter extends CliProviderAdapter {
     if (input.reasoningEffort !== 'none')
       throw new ProviderConfigurationError(
         'REASONING_EFFORT_UNSUPPORTED',
-        `Cursor Agent ${CURSOR_AGENT_VERSION_RANGE} has no verified reasoning-effort override; choose none.`,
+        `Cursor Agent ${CURSOR_AGENT_VERSION_POLICY} has no verified reasoning-effort override; choose none.`,
       )
     const policy = loadCursorProjectPolicy(input.cwd)
     const force = input.allowFileChanges === true && policy.allowsWrites
     return [
       '--print',
+      '--trust',
       '--output-format',
       'stream-json',
       ...(input.modelId ? ['--model', input.modelId] : []),

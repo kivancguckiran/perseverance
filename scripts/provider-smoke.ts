@@ -116,6 +116,8 @@ const adapter = new Adapter({
 })
 const observed = new Set<string>()
 let rawSeen = false
+let unsafeRawSeen = false
+let unsuppressedReasoningSeen = false
 const progress = (stage: string, status: 'started' | 'passed' | 'cleanup') =>
   console.error(JSON.stringify({ smoke: provider, stage, status }))
 const stage = async <T>(
@@ -156,8 +158,19 @@ const run = async (
     },
     (event) => {
       rawSeen ||= Object.keys(event.rawEnvelope).length > 0
+      const serializedRaw = JSON.stringify(event.rawEnvelope)
+      unsafeRawSeen ||= serializedRaw.includes(prompt)
+      unsuppressedReasoningSeen ||=
+        event.normalized.event.type === 'cursor.unknown' &&
+        event.rawEnvelope.type === 'thinking' &&
+        serializedRaw.includes('"text":') &&
+        !serializedRaw.includes('[SUPPRESSED_REASONING]')
       observed.add(event.normalized.event.type)
-      if (event.normalized.event.type === 'agent.message.delta') onStream?.()
+      if (
+        event.normalized.event.type === 'turn.started' ||
+        event.normalized.event.type === 'agent.message.delta'
+      )
+        onStream?.()
     },
   )
 
@@ -193,11 +206,21 @@ async function smoke() {
     first.outcome !== 'completed' ||
     (provider !== 'cursor' && !first.usage) ||
     !rawSeen ||
+    unsafeRawSeen ||
+    unsuppressedReasoningSeen ||
     (provider === 'cursor' &&
-      !observed.has('tool.started') &&
-      !observed.has('tool.completed'))
+      (!observed.has('tool.started') || !observed.has('tool.completed')))
   )
     throw new Error(`start/stream failed: ${JSON.stringify(first)}`)
+  if (
+    first.usage &&
+    (first.usage.completeness !== 'complete' ||
+      first.usage.requestId === 'unknown' ||
+      first.usage.counters.inputTokens < 0 ||
+      first.usage.counters.cachedInputTokens < 0 ||
+      first.usage.counters.outputTokens < 0)
+  )
+    throw new Error(`usage ledger failed: ${JSON.stringify(first.usage)}`)
   const resumed = await stage(
     'resume',
     run(
@@ -207,6 +230,7 @@ async function smoke() {
   )
   if (
     resumed.outcome !== 'completed' ||
+    resumed.providerSessionId !== first.providerSessionId ||
     (provider !== 'cursor' && !resumed.usage)
   )
     throw new Error(`resume failed: ${JSON.stringify(resumed)}`)
@@ -242,6 +266,8 @@ async function smoke() {
     JSON.stringify(unknown).includes('do-not-store')
   )
     throw new Error('unknown/raw safety failed')
+  if (unsafeRawSeen || unsuppressedReasoningSeen)
+    throw new Error('provider raw stream safety failed')
   return {
     provider,
     modelId,
@@ -249,6 +275,9 @@ async function smoke() {
     resume: resumed.outcome,
     interrupt: interrupted.outcome,
     usage: Boolean(first.usage),
+    usageCompleteness: first.usage?.completeness ?? 'unreported',
+    usageCounters: first.usage?.counters ?? null,
+    durableSession: resumed.providerSessionId === first.providerSessionId,
     raw: rawSeen,
     unknown: true,
     cleanup: true,

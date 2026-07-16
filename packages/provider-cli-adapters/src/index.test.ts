@@ -515,14 +515,18 @@ describe('Cursor Agent adapter', () => {
       if (input?.args[0] === '--version')
         return {
           exitCode: 0,
-          stdout: '2025.09.18-7ae6800',
+          stdout: '2026.07.09-a3815c0',
           stderr: '',
         }
-      return { exitCode: 0, stdout: 'Authenticated', stderr: '' }
+      return {
+        exitCode: 0,
+        stdout: '{"status":"authenticated","isAuthenticated":true}',
+        stderr: '',
+      }
     }
   }
 
-  it('streams system, assistant, correlated tool, file, and terminal events', async () => {
+  it('streams the verified 2026 system, assistant, tool, and terminal contract', async () => {
     const workspace = cursorWorkspace()
     try {
       const runner = new CursorRunner(fixture('cursor'))
@@ -530,9 +534,9 @@ describe('Cursor Agent adapter', () => {
         catalog: catalog('cursor'),
         context: context(),
         runner,
-        cursorApiKeyPresent: false,
       })
       const observed: string[] = []
+      const raw: Record<string, unknown>[] = []
       const terminal = await adapter.startTurn!(
         {
           sessionId: null,
@@ -544,6 +548,7 @@ describe('Cursor Agent adapter', () => {
         },
         (event) => {
           observed.push(event.normalized.event.type)
+          raw.push(event.rawEnvelope)
         },
       )
       expect(observed).toEqual(
@@ -553,21 +558,87 @@ describe('Cursor Agent adapter', () => {
           'agent.message.completed',
           'tool.started',
           'tool.completed',
-          'file.change.proposed',
-          'file.change.completed',
           'turn.completed',
         ]),
       )
       expect(terminal).toMatchObject({
-        providerSessionId: 'cursor-session-fixture',
+        providerSessionId: 'cursor-session-2026-fixture',
         outcome: 'completed',
+        usage: {
+          completeness: 'complete',
+          requestId: 'cursor-request-2026-fixture',
+          counters: {
+            inputTokens: 6999,
+            cachedInputTokens: 23936,
+            outputTokens: 99,
+          },
+        },
       })
       expect(runner.lastRun?.args).not.toContain('secret prompt')
       expect(runner.lastRun?.stdinText).toBe('secret prompt')
       expect(runner.lastRun?.args).not.toContain('--force')
+      expect(
+        observed.filter((type) => type === 'agent.message.completed'),
+      ).toHaveLength(1)
+      expect(JSON.stringify(raw)).not.toContain('SYNTHETIC_FIXTURE_PROMPT')
+      expect(JSON.stringify(raw)).not.toContain(
+        'SYNTHETIC_REASONING_MUST_BE_SUPPRESSED',
+      )
+      expect(JSON.stringify(raw)).toContain('[REDACTED_USER_INPUT]')
+      expect(JSON.stringify(raw)).toContain('[SUPPRESSED_REASONING]')
+      expect(
+        raw.some((envelope) => envelope.model_call_id === 'model-call-fixture'),
+      ).toBe(true)
+      expect(observed.filter((type) => type === 'cursor.unknown')).toHaveLength(
+        3,
+      )
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }
+  })
+
+  it('preserves Cursor write tool lifecycle as file change events', () => {
+    const started = normalizeCliEnvelope({
+      provider: 'cursor',
+      envelope: {
+        type: 'tool_call',
+        subtype: 'started',
+        call_id: 'write-fixture',
+        tool_call: {
+          writeToolCall: {
+            args: { path: 'notes.txt', fileText: 'synthetic' },
+          },
+        },
+        session_id: 'cursor-session-2026-fixture',
+      },
+      context: context(),
+      sourceVersion: '2026.07.09-a3815c0',
+    })
+    const completed = normalizeCliEnvelope({
+      provider: 'cursor',
+      envelope: {
+        type: 'tool_call',
+        subtype: 'completed',
+        call_id: 'write-fixture',
+        tool_call: {
+          writeToolCall: {
+            args: { path: 'notes.txt', fileText: 'synthetic' },
+            result: {
+              success: {
+                path: '/workspace/notes.txt',
+                linesCreated: 1,
+                fileSize: 9,
+              },
+            },
+          },
+        },
+        session_id: 'cursor-session-2026-fixture',
+      },
+      context: context(),
+      sourceVersion: '2026.07.09-a3815c0',
+    })
+    expect(started.normalized.event.type).toBe('file.change.proposed')
+    expect(completed.normalized.event.type).toBe('file.change.completed')
   })
 
   it('enables --force only with explicit platform and project write permission', () => {
@@ -588,6 +659,7 @@ describe('Cursor Agent adapter', () => {
       })
       expect(args).toEqual([
         '--print',
+        '--trust',
         '--output-format',
         'stream-json',
         '--model',
@@ -604,9 +676,11 @@ describe('Cursor Agent adapter', () => {
 
   it('reports binary, version, and auth readiness without exposing an API key', async () => {
     class ReadinessRunner extends CursorRunner {
-      readonly mode: 'missing' | 'nonexec' | 'unparseable' | 'mismatch' | 'auth'
+      readonly mode:
+        'missing' | 'nonexec' | 'unparseable' | 'mismatch' | 'auth' | 'ready'
       constructor(
-        mode: 'missing' | 'nonexec' | 'unparseable' | 'mismatch' | 'auth',
+        mode:
+          'missing' | 'nonexec' | 'unparseable' | 'mismatch' | 'auth' | 'ready',
       ) {
         super([])
         this.mode = mode
@@ -641,12 +715,19 @@ describe('Cursor Agent adapter', () => {
               this.mode === 'unparseable'
                 ? 'Cursor beta'
                 : this.mode === 'mismatch'
-                  ? '2026.01.01-abcd'
-                  : '2025.09.18-7ae6800',
+                  ? '2026.07.09-unverified'
+                  : '2026.07.09-a3815c0',
             stderr: '',
           }
         }
-        return { exitCode: 0, stdout: 'Not logged in', stderr: '' }
+        return {
+          exitCode: 0,
+          stdout:
+            this.mode === 'ready'
+              ? '{"status":"authenticated","isAuthenticated":true}'
+              : '{"status":"unauthenticated","isAuthenticated":false}',
+          stderr: '',
+        }
       }
     }
     for (const [mode, code] of [
@@ -660,24 +741,22 @@ describe('Cursor Agent adapter', () => {
         catalog: catalog('cursor'),
         context: context(),
         runner: new ReadinessRunner(mode),
-        cursorApiKeyPresent: false,
       })
       expect(await adapter.checkReadiness()).toMatchObject({
         ready: false,
         code,
       })
     }
-    const envAuth = new CursorAgentRuntimeAdapter({
+    const authenticated = new CursorAgentRuntimeAdapter({
       catalog: catalog('cursor'),
       context: context(),
-      runner: new ReadinessRunner('auth'),
-      cursorApiKeyPresent: true,
+      runner: new ReadinessRunner('ready'),
     })
-    expect(await envAuth.checkReadiness()).toMatchObject({
+    expect(await authenticated.checkReadiness()).toMatchObject({
       ready: true,
       authStatus: 'ready',
     })
-    expect(JSON.stringify(await envAuth.checkReadiness())).not.toContain(
+    expect(JSON.stringify(await authenticated.checkReadiness())).not.toContain(
       'CURSOR_API_KEY',
     )
   })
@@ -740,7 +819,7 @@ describe('Cursor Agent adapter', () => {
         },
       },
       context: context(),
-      sourceVersion: '2025.09.18-fixture',
+      sourceVersion: '2026.07.09-a3815c0',
     })
     expect(normalized.spill?.data.byteLength).toBeGreaterThan(64 * 1024)
     expect(normalized.normalized.event).toMatchObject({

@@ -1229,7 +1229,7 @@ describe('WP15 provider selection API', () => {
         provider: 'cursor',
         adapter: 'cursor-agent-stream-json',
         adapterVersion: '1',
-        upstreamVersion: '2025.09.18-*',
+        upstreamVersion: '2026.07.09-a3815c0',
       },
       discoveredAt: '2026-07-16T00:00:00.000Z',
       models: [
@@ -1271,7 +1271,7 @@ describe('WP15 provider selection API', () => {
       },
       checkReadiness: async () => ({
         ready: true,
-        version: '2025.09.18-fixture',
+        version: '2026.07.09-a3815c0',
         authReady: true,
         authStatus: 'ready',
         code: 'ready',

@@ -16,12 +16,17 @@ devredemez.
 - Provider ID `cursor`, process binary’si `cursor-agent`, adapter yüzeyi
   `--print --output-format stream-json` olur. Process yalnız workspace cwd’sinde başlar;
   stdout NDJSON ve stderr diagnostics ayrı tutulur.
-- Test edilmiş sürüm aralığı `2025.09.18-*` olur. `--version` çıktısı parse edilemez,
-  binary yok/çalıştırılamaz veya sürüm aralık dışındaysa process başlamaz. Adapter
-  installer, `curl`, `update` veya `upgrade` çalıştırmaz.
-- Authentication yalnız server-side `cursor-agent status` veya server environment’ındaki
-  `CURSOR_API_KEY` varlığıyla belirlenir. API key argv, event, log, fixture, snapshot,
-  audit veya UI’a taşınmaz. Prompt argv yerine stdin’den verilir.
+- Destek politikası exact, gerçek smoke ile doğrulanmış release allowlist’idir. İlk ve
+  mevcut kabul edilen release `2026.07.09-a3815c0` olur. Tarih/hash biçimi parse
+  edilemez, binary yok/çalıştırılamaz veya release allowlist dışında kalırsa process
+  başlamaz. Aynı tarihli farklı hash dahil yeni her release fixture ve zorunlu gerçek
+  smoke kanıtı olmadan reddedilir. Adapter installer, `curl`, `update` veya `upgrade`
+  çalıştırmaz.
+- Authentication yalnız server-side `cursor-agent status --format json` ile gerçek
+  authenticated sonuç alındığında hazırdır. Bu sonuç local `cursor-agent login`
+  credential’ından veya server environment’ındaki `CURSOR_API_KEY`’den gelebilir;
+  environment’ta key varlığı tek başına readiness sayılmaz. API key argv, event, log,
+  fixture, snapshot, audit veya UI’a taşınmaz. Prompt argv yerine stdin’den verilir.
 - Model katalogu yalnız `PERSISTENT_PROVIDER_CATALOGS_JSON` içindeki deployment
   doğrulamasından gelir. Cursor için reasoning effort yalnız `none` kabul edilir.
 - `<workspace>/.cursor/cli.json` process başlamadan parse edilir. Allow/deny array’leri,
@@ -30,12 +35,18 @@ devredemez.
 - `--force` varsayılan kapalıdır. Yalnız
   `PERSISTENT_CURSOR_FORCE_ALLOWED=1` platform kararı ile doğrulanmış project
   `Write(...)` allow kuralı birlikte varsa eklenir.
+- Canonicalize edilmiş ve policy’si doğrulanmış workspace için güncel headless CLI’nin
+  istediği `--trust` verilir. Bu bayrak `--force` değildir ve tool izin politikasını
+  genişletmez.
 - NDJSON parser satır ve buffer limitlidir; stdout işleme zinciri backpressure uygular.
   Malformed JSON, oversized line/buffer, non-zero exit, terminal `result` eksikliği ve
   early EOF typed failure’dır.
 - `system/init`, assistant delta/completed, correlated tool start/completed ve terminal
   result normalize edilir. Bilinmeyen event redakte raw envelope ile `cursor.unknown`
-  olur. Suppressed thinking istenmez veya yeniden üretilmez.
+  olur. `2026.07.09-a3815c0` resmî dokümanın aksine print stream’de `thinking`
+  event’leri yayınlayabildiği için içerikleri saklanmaz; yalnız
+  `[SUPPRESSED_REASONING]` işaretli `cursor.unknown` envelope korunur. Tekrarlanan
+  assistant delta/result biçimleri yalnız bir completed mesaj üretir.
 - Cursor `session_id`, mevcut provider-neutral durable session binding alanında saklanır;
   sonraki turn resmî `--resume <chatId>` kullanır. Browser disconnect run’ı durdurmaz.
   Explicit stop SIGINT → SIGTERM → SIGKILL bounded escalation uygular.
@@ -45,23 +56,23 @@ devredemez.
 
 ## Capability matrix
 
-| Capability          | Cursor Agent `2025.09.18-*` |
-| ------------------- | --------------------------- |
-| Streaming           | supported                   |
-| Reasoning summary   | unsupported                 |
-| Command execution   | supported                   |
-| File changes        | degraded (`--force` kapılı) |
-| Approval resolution | unsupported                 |
-| Interrupt           | supported                   |
-| Resume              | supported                   |
-| Tool calls          | supported                   |
-| Image input         | unsupported                 |
-| Usage               | degraded                    |
-| Cost                | unsupported                 |
+| Capability          | Cursor Agent `2026.07.09-a3815c0` |
+| ------------------- | --------------------------------- |
+| Streaming           | supported                         |
+| Reasoning summary   | unsupported                       |
+| Command execution   | supported                         |
+| File changes        | degraded (`--force` kapılı)       |
+| Approval resolution | unsupported                       |
+| Interrupt           | supported                         |
+| Resume              | supported                         |
+| Tool calls          | supported                         |
+| Image input         | unsupported                       |
+| Usage               | degraded (provider-reported)      |
+| Cost                | unsupported                       |
 
 ## Sonuçlar
 
-CLI auto-update ile desteklenen aralıktan çıkarsa readiness fail-closed olur. Operatör
-yeni sürümü fixture ve gerçek smoke ile doğrulayıp bu ADR’deki aralığı bilinçli olarak
-güncellemelidir. Cursor Cloud Agent, billing tahmini, approval emülasyonu ve global
-`--force` kapsam dışıdır.
+CLI beta ve auto-update davranışıyla exact allowlist’ten çıkarsa readiness fail-closed
+olur. Operatör yeni sürümü güvenli fixture ve authenticated gerçek smoke ile doğrulayıp
+allowlist ve bu ADR’yi bilinçli olarak güncellemelidir. Cursor Cloud Agent, billing
+tahmini, approval emülasyonu ve global `--force` kapsam dışıdır.
