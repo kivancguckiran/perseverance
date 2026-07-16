@@ -1,8 +1,8 @@
 # Faz 2 — Kalıcı çok sağlayıcılı ajan platformu planı
 
-- Plan durumu: Aktif
+- Plan durumu: Tamamlandı
 - Plan tarihi: 15 Temmuz 2026
-- Aktif iş paketi: WP16
+- Aktif iş paketi: Yok
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
@@ -91,12 +91,12 @@ conversation başlığı ikinci kullanıcı mesajından sonra `luna` model polit
 
 ## 4. İş paketi özeti
 
-| Paket | Durum                      | Hedef                                                                         |
-| ----- | -------------------------- | ----------------------------------------------------------------------------- |
-| WP13  | Tamamlandı                 | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
-| WP14  | Tamamlandı                 | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
-| WP15  | Tamamlandı                 | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
-| WP16  | Uygulandı / kabul bekliyor | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
+| Paket | Durum      | Hedef                                                                         |
+| ----- | ---------- | ----------------------------------------------------------------------------- |
+| WP13  | Tamamlandı | Provider-neutral sözleşme, model/capability politikası ve usage ledger temeli |
+| WP14  | Tamamlandı | Browser'dan bağımsız durable execution, recovery ve terminal accounting       |
+| WP15  | Tamamlandı | Claude/Gemini adapter'ları, model seçimi ve otomatik conversation başlığı     |
+| WP16  | Tamamlandı | PWA, maliyet görünümü ve Faz 2 uçtan uca kabulü                               |
 
 ## 5. WP13 — Platform sözleşmesi ve maliyet temeli
 
@@ -218,6 +218,21 @@ user-activated Service Worker güncellemesi, güvenli offline read-only history,
 conversation/turn/title cost kırılımı, server-only OpenAI/Anthropic reconciliation
 portları ve deterministic `pnpm phase2:accept` gate'i eklendi. Bu kayıt WP16'yı kabul
 edilmiş veya Faz 2'yi kapanmış saymaz; bağımsız kabul kararı beklenir.
+
+### Kabul sonucu
+
+WP16 bağımsız olarak kabul edildi ve Faz 2 kapatıldı. Uygulama commit'i `bbd6cbd`
+üzerinde installable PWA, güvenli offline read-only history, online high-water replay,
+conversation/turn/title maliyet kırılımı ve server-only OpenAI/Anthropic reconciliation
+portları doğrulandı. `pnpm phase2:accept`; 156 hedefli test, unknown-event durable replay,
+production PWA build ve gerçek Chrome desktop/mobil/offline/online acceptance aşamalarını
+geçti. `pnpm verify`; format, 11 workspace typecheck'i, 17 dosyada 213 test, production
+build ve SSR HTTP smoke'u tamamladı. Canlı Faz 2 smoke paketi Codex canary, Claude
+`sonnet`, Gemini `gemini-2.5-pro` ve `gpt-5.6-luna + none` title akışlarını cleanup ile
+geçti. In-app browser kontrolünde 1280×720 ve 390×844 görünümleri taşmasız ve console
+hatasızdı. Bu kabul ortamında resmi cost admin credential'ları bulunmadığından canlı
+fatura reconciliation'ı çalıştırılmadı; fixture ve integration kanıtı geçti ve UI bu
+durumda dürüstçe `estimated/unreconciled` kalıyor. Aktif iş paketi yoktur.
 
 ## 9. Paket geçiş ve commit kuralı
 
