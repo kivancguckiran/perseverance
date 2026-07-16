@@ -122,6 +122,9 @@ export const readinessCheckSchema = z.object({
     'auth',
     'appServer',
     'disk',
+    'runtimeIsolation',
+    'kms',
+    'encryption',
   ]),
   status: z.enum(['ready', 'failed']),
   code: z.string().min(1).nullable(),
@@ -130,6 +133,20 @@ export const readinessResponseSchema = z.object({
   status: readinessStatusSchema,
   checkedAt: z.iso.datetime(),
   checks: z.array(readinessCheckSchema),
+  security: z
+    .object({
+      runtimeBackend: z.enum(['local-process', 'kata-kubernetes']),
+      isolationLevel: z.enum(['development_only', 'container', 'microvm']),
+      encryptedVolume: z.boolean(),
+      egressDefaultDeny: z.boolean(),
+      secretProvider: z.string().min(1),
+      secretProviderProduction: z.boolean(),
+      kmsProvider: z.string().min(1),
+      kmsProviderProduction: z.boolean(),
+      encryptionFormatVersion: z.number().int().positive(),
+      chunkedEncryptionFormatVersion: z.number().int().positive(),
+    })
+    .optional(),
   recovery: z.object({
     code: z.literal('AUTH_REQUIRED').nullable(),
     instruction: z.literal('codex login').nullable(),

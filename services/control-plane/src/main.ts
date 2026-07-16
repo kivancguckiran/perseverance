@@ -27,6 +27,25 @@ if (
   throw new Error('APPROVAL_POLICY must be untrusted, on-request, or never')
 }
 const localAlpha = process.env.PERSISTENT_CODEX_LOCAL_ALPHA === '1'
+const runtimeBackend =
+  process.env.PERSISTENT_RUNTIME_BACKEND ??
+  (localAlpha ? 'local-process' : undefined)
+const kmsProvider =
+  process.env.PERSISTENT_KMS_PROVIDER ??
+  (localAlpha ? 'local-memory' : undefined)
+const secretProvider =
+  process.env.PERSISTENT_SECRET_PROVIDER ??
+  (localAlpha ? 'development-local' : undefined)
+if (
+  !localAlpha &&
+  (runtimeBackend !== 'kata-kubernetes' ||
+    kmsProvider !== 'aws-kms' ||
+    !secretProvider ||
+    secretProvider === 'development-local')
+)
+  throw new Error(
+    'Production requires PERSISTENT_RUNTIME_BACKEND=kata-kubernetes, PERSISTENT_KMS_PROVIDER=aws-kms and a production PERSISTENT_SECRET_PROVIDER',
+  )
 const authenticationAdapter = localAlpha
   ? new ExplicitDevAuthenticationAdapter()
   : (() => {
@@ -138,6 +157,23 @@ const app = await buildControlPlane({
     : {}),
   logger: true,
   authenticationAdapter,
+  securityReadiness: {
+    runtimeBackend:
+      runtimeBackend === 'kata-kubernetes'
+        ? 'kata-kubernetes'
+        : 'local-process',
+    isolationLevel:
+      runtimeBackend === 'kata-kubernetes' ? 'microvm' : 'development_only',
+    encryptedVolume: runtimeBackend === 'kata-kubernetes',
+    egressDefaultDeny: true,
+    secretProvider: secretProvider ?? 'unconfigured',
+    secretProviderProduction:
+      Boolean(secretProvider) && secretProvider !== 'development-local',
+    kmsProvider: kmsProvider ?? 'unconfigured',
+    kmsProviderProduction: kmsProvider === 'aws-kms',
+    encryptionFormatVersion: 1,
+    chunkedEncryptionFormatVersion: 1,
+  },
   ...(localAlpha ? { allowExplicitDevAuthentication: true } : {}),
   ...(approvalPolicy
     ? {
