@@ -1,6 +1,6 @@
 # ADR-0017: Kata runtime, egress broker, secret lease ve envelope encryption
 
-- Durum: Kabul önerisi
+- Durum: Kabul edildi
 - Tarih: 16 Temmuz 2026
 - Kapsam: Faz 3 WP19
 

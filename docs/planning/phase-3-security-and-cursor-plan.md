@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 16 Temmuz 2026
-- Aktif iş paketi: WP19 — Uygulandı / kabul bekliyor
+- Aktif iş paketi: WP20
 - Ön koşul: Faz 2 ve WP16 tamamlandı
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
@@ -31,15 +31,15 @@ confidential-computing/attestation mimarisi gerektirir ve Faz 3 kapsamı dışı
 
 ## 2. İş paketi özeti
 
-| Paket | Durum                      | Hedef                                                                  |
-| ----- | -------------------------- | ---------------------------------------------------------------------- |
-| WP17  | Tamamlandı                 | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
-| WP18  | Tamamlandı                 | OIDC principal, deny-by-default authorization ve tenant data isolation |
-| WP19  | Uygulandı / kabul bekliyor | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
-| WP20  | Bekliyor                   | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
+| Paket | Durum      | Hedef                                                                  |
+| ----- | ---------- | ---------------------------------------------------------------------- |
+| WP17  | Tamamlandı | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
+| WP18  | Tamamlandı | OIDC principal, deny-by-default authorization ve tenant data isolation |
+| WP19  | Tamamlandı | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
+| WP20  | Aktif      | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
 
-Her zaman yalnız bir paket aktif olabilir. WP19 tamamlanıp bağımsız kabul edilmeden
-WP20'ye geçilmez.
+Her zaman yalnız bir paket aktif olabilir. WP19 bağımsız kabul edildi; WP20 Faz 3'ün
+tek aktif iş paketidir.
 
 ## 3. WP17 — Cursor Agent provider adapter
 
@@ -243,9 +243,33 @@ temizledi; `pnpm wp19:test` 11/11, `pnpm wp19:key-rotation`,
 Tam doğrulama 20 dosyada 254/254 test, typecheck, production build ve SSR HTTP
 smoke'u kapsadı. Kata smoke namespace/pod/PVC kaynakları, PV/StorageClass, SSM
 tüneli, EC2 node, encrypted EBS volume, security group, instance profile ve IAM role
-silindi; geçici kubeconfig ve yerel kimlik dosyaları kaldırıldı. WP19 uygulandı ancak
-bağımsız kabul/ADR-0017 teyidi beklediği için kabul edilmiş sayılmaz; WP20 beklemeye
-devam eder.
+silindi; geçici kubeconfig ve yerel kimlik dosyaları kaldırıldı. Bu teslimat kaydı
+oluşturulduğunda WP19 bağımsız kabul ve ADR-0017 teyidi bekliyordu.
+
+### Bağımsız kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'i `3e5e6f7`, production isolation kanıt commit'i `18d0dcb`
+  mevcut ve WP19 kapsamını taşıyor.
+- Kata smoke gerçek K3s cluster üzerinde `kata-qemu` RuntimeClass, hosttan farklı
+  guest kernel ve bound encrypted workspace PVC ile geçti. Host path, metadata,
+  service-account token, genel egress ve cross-runtime erişim denemeleri reddedildi.
+- Gerçek customer-managed AWS KMS anahtarıyla encrypt/decrypt round-trip geçti ve
+  değiştirilmiş tenant encryption context'i `InvalidCiphertextException` ile
+  reddedildi. Raporlanan key hash'ine karşılık gelen anahtarın customer-managed,
+  AWS KMS origin'li ve 23 Temmuz 2026 için `PendingDeletion` durumunda olduğu
+  bağımsız salt-okunur kontrolle doğrulandı.
+- PostgreSQL 17.10 migration 18+19 idempotent reapply, forced RLS, application
+  envelope/chunk manifest alanları ve cross-tenant crypto-state reddiyle geçti.
+- Workspace security testleri 11/11; rotation, revoked key, crypto-erasure ve
+  encrypted backup/restore cross-tenant reddi araçları başarılıydı.
+- `pnpm verify` 20 dosyada 254 test, bütün typecheck'ler, production build ve SSR
+  HTTP smoke ile geçti. Çalışma ağacı ve PostgreSQL test container'ı temizdi.
+
+Uygulama commit'leri: `3e5e6f7`, `18d0dcb`.
+
+WP20 Faz 3'ün tek aktif iş paketidir.
 
 ## 6. WP20 — Admin access governance ve Faz 3 adversarial kabul
 
