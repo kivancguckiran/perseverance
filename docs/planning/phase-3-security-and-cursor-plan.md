@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 16 Temmuz 2026
-- Aktif iş paketi: WP18
+- Aktif iş paketi: WP19
 - Ön koşul: Faz 2 ve WP16 tamamlandı
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
@@ -31,15 +31,15 @@ confidential-computing/attestation mimarisi gerektirir ve Faz 3 kapsamı dışı
 
 ## 2. İş paketi özeti
 
-| Paket | Durum                      | Hedef                                                                  |
-| ----- | -------------------------- | ---------------------------------------------------------------------- |
-| WP17  | Tamamlandı                 | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
-| WP18  | Uygulandı / kabul bekliyor | OIDC principal, deny-by-default authorization ve tenant data isolation |
-| WP19  | Planlandı                  | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
-| WP20  | Planlandı                  | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
+| Paket | Durum      | Hedef                                                                  |
+| ----- | ---------- | ---------------------------------------------------------------------- |
+| WP17  | Tamamlandı | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
+| WP18  | Tamamlandı | OIDC principal, deny-by-default authorization ve tenant data isolation |
+| WP19  | Aktif      | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
+| WP20  | Planlandı  | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
 
-Her zaman yalnız bir paket aktif olabilir. WP18 tamamlanıp bağımsız kabul edilmeden
-WP19'a geçilmez.
+Her zaman yalnız bir paket aktif olabilir. WP19 tamamlanıp bağımsız kabul edilmeden
+WP20'ye geçilmez.
 
 ## 3. WP17 — Cursor Agent provider adapter
 
@@ -147,6 +147,22 @@ authorization uygulayan ilk multi-tenant güvenlik sınırını kurmak.
 ### Teslimat commit'i
 
 `feat: enforce tenant identity and data isolation`
+
+### Kabul sonucu
+
+WP18 bağımsız olarak kabul edildi. Uygulama commit'i `b2478a2` üzerinde versioned OIDC
+principal, server-side organization membership, merkezi deny-by-default authorization,
+public route/WebSocket coverage, PostgreSQL migration 18 forced RLS, tenant-scoped
+object/grant ve principal/org/workspace cache namespace'i doğrulandı. Gerçek
+`postgres:17-alpine` / PostgreSQL `17.10` smoke'u non-superuser ve non-`BYPASSRLS`
+application rolüyle cross-tenant SELECT/INSERT/UPDATE/DELETE, composite FK,
+transaction-context temizliği, pool reuse ve fail-closed readiness kontrollerini geçti.
+Gemini CLI `0.50.0` ve `gemini-2.5-pro` gerçek smoke'u start, resume, interrupt, complete
+usage ve cleanup ile geçti. Production browser acceptance desktop/mobil, offline/online
+ve principal+organization+workspace tenant-switch snapshot isolation'ını sıfır page
+error ile tamamladı. Güncel HEAD'de 7 hedefli dosyada 166 test ve repository genelinde
+19 dosyada 243 test, 12 workspace typecheck'i, build ve SSR HTTP smoke geçti. WP19 tek
+aktif pakettir.
 
 ## 5. WP19 — Runtime, ağ, secret ve envelope encryption
 
