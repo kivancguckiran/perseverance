@@ -4,7 +4,8 @@
 - Başlangıç tarihi: 14 Temmuz 2026
 - Yönetim kaynakları: `docs/planning/poc-implementation-plan.md` ve
   `docs/planning/phase-1-alpha-plan.md` ve
-  `docs/planning/phase-2-provider-platform-plan.md`
+  `docs/planning/phase-2-provider-platform-plan.md` ve
+  `docs/planning/phase-3-security-and-cursor-plan.md`
 
 ## Bu task'ın rolü
 
@@ -69,6 +70,10 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP14 — Durable detached execution            | Tamamlandı | Schema v10 durable run, disconnect/replay, explicit interrupt, recovery ve accounting doğrulandı            |
 | WP15 — Çok sağlayıcılı conversation          | Tamamlandı | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
 | WP16 — PWA ve Faz 2 kabulü                   | Tamamlandı | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlandı                                      |
+| WP17 — Cursor Agent provider adapter         | Aktif      | Cursor CLI provider-neutral interface arkasına güvenli adapter olarak eklenecek                             |
+| WP18 — Tenant kimliği ve data isolation      | Planlandı  | OIDC, deny-by-default authorization, RLS/object/cache tenant sınırı kurulacak                               |
+| WP19 — Runtime ve encryption isolation       | Planlandı  | İzole runtime, egress, secret lease, KMS envelope encryption ve restore sınırı kurulacak                    |
+| WP20 — Security beta kabulü                  | Planlandı  | Support grant/break-glass ve birleşik adversarial Faz 3 kabulü tamamlanacak                                 |
 
 ## WP1 nihai denetim sonucu
 
@@ -815,3 +820,17 @@ Uygulama commit'i: `bbd6cbd` (`feat: complete Phase 2 PWA and cost acceptance`).
 
 Aktif iş paketi yoktur. Faz 2 tamamlanmıştır; yeni çalışma ayrı bir plan ve açıkça
 aktive edilmiş yeni bir work package olmadan başlatılmaz.
+
+## Cursor köprüsü ve Faz 3 plan taslağı
+
+WP17–WP20, `docs/planning/phase-3-security-and-cursor-plan.md` içinde planlandı. WP17
+Cursor Agent provider adapter'ını ekler. WP18–WP20 sırasıyla tenant kimliği/veri
+izolasyonu, runtime/şifreleme izolasyonu ve admin access/adversarial security beta
+kapanışını taşır.
+
+Ana spesifikasyonun eski Faz 2 multi-tenant private beta numarası, tamamlanmış provider
+platformu Faz 2 kaydıyla çakıştığı için yeni uygulama sırası Faz 3 Multi-tenant Security
+Beta, Faz 4 Corpus ve mobil ürün, Faz 5 Production hardening olarak belirlenmiştir.
+
+Plan kabul edilmiş ve WP17 tek aktif iş paketi olarak açılmıştır. WP17 bağımsız kabul
+edilmeden WP18'e geçilmez.
