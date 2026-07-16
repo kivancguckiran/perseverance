@@ -1,6 +1,6 @@
 # ADR-0016: OIDC kimliği, merkezi authorization ve tenant data isolation
 
-- Durum: Kabul önerisi
+- Durum: Kabul edildi
 - Tarih: 2026-07-16
 - Kapsam: Faz 3 WP18
 
