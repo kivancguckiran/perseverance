@@ -1711,6 +1711,21 @@ export function providerAuthMessage(
   return `${provider} auth hazır.`
 }
 
+export function conversationFolderPickerState({
+  sessionFolderId,
+  selectedFolderId,
+  online,
+}: {
+  sessionFolderId: string | null | undefined
+  selectedFolderId: string | null
+  online: boolean
+}) {
+  return {
+    value: sessionFolderId ?? selectedFolderId ?? '',
+    disabled: !online,
+  }
+}
+
 export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const navigate = useNavigate()
   const online = useOnlineStatus()
@@ -2212,6 +2227,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     : []
   const selectedProviderReadiness =
     providerCatalogs.data?.readiness[selectedProvider]
+  const folderPicker = conversationFolderPickerState({
+    sessionFolderId: session?.folderId,
+    selectedFolderId,
+    online,
+  })
 
   async function createSession(folderId = selectedFolderId) {
     setSessionPending(true)
@@ -2875,11 +2895,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <label>
               <span>Folder</span>
               <select
-                value={session?.folderId ?? ''}
-                disabled={!session || !online}
-                onChange={(event) =>
-                  void moveConversation(event.target.value || null)
-                }
+                value={folderPicker.value}
+                disabled={folderPicker.disabled}
+                onChange={(event) => {
+                  const folderId = event.target.value || null
+                  if (session) void moveConversation(folderId)
+                  else setSelectedFolderId(folderId)
+                }}
               >
                 <option value="">Folder yok</option>
                 {(conversationFolders.data?.folders ?? []).map((folder) => (
