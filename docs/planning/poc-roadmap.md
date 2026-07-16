@@ -52,7 +52,10 @@ Faz 1 tek kiracılı alfa kapsamı WP9–WP12 olarak
 `docs/planning/phase-1-alpha-plan.md` içinde tamamlanmıştır. Faz 2 maliyet, browser'dan
 bağımsız kalıcı çalışma, PWA ve Codex/Claude/Gemini provider platformu kapsamı WP13–WP16
 olarak `docs/planning/phase-2-provider-platform-plan.md` içinde tamamlanmıştır. Yeni faz
-ayrı bir plan kabul edilmeden ve tek aktif work package açılmadan başlatılmaz.
+ayrı bir plan kabul edilmeden ve tek aktif work package açılmadan başlatılmaz. Cursor
+provider köprüsü ile yeniden numaralanan Faz 3 Multi-tenant Security Beta taslağı
+`docs/planning/phase-3-security-and-cursor-plan.md` içindedir; sonrasında Faz 4 Corpus ve
+mobil ürün, Faz 5 Production hardening gelir.
 
 ## Uygulama sırası
 
