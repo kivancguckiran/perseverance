@@ -90,6 +90,12 @@ importers:
 
   packages/artifact-storage: {}
 
+  packages/authz:
+    dependencies:
+      '@persistent-codex/control-plane-contracts':
+        specifier: workspace:*
+        version: link:../control-plane-contracts
+
   packages/codex-event-adapter:
     dependencies:
       '@persistent-codex/artifact-storage':
@@ -177,6 +183,9 @@ importers:
       '@persistent-codex/artifact-storage':
         specifier: workspace:*
         version: link:../../packages/artifact-storage
+      '@persistent-codex/authz':
+        specifier: workspace:*
+        version: link:../../packages/authz
       '@persistent-codex/codex-event-adapter':
         specifier: workspace:*
         version: link:../../packages/codex-event-adapter

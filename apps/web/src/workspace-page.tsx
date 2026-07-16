@@ -18,6 +18,7 @@ import {
   auditListResponseSchema,
   providerCatalogListResponseSchema,
   conversationUsageCostSchema,
+  meResponseSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
@@ -31,12 +32,18 @@ import {
   type ProviderCatalogListResponse,
   type ConversationUsageCost,
   type UsageCostSummary,
+  type MeResponse,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useOnlineStatus } from './pwa-runtime'
+import {
+  offlineConversationKey,
+  offlineHistoryKey,
+  tenantCacheNamespace,
+} from './tenant-cache'
 
 interface PlatformMeta {
   service: string
@@ -50,14 +57,32 @@ const MessageMarkdown = lazy(() => import('./message-markdown'))
 const apiBaseUrl =
   (import.meta.env.VITE_CONTROL_PLANE_URL as string | undefined) ??
   'http://127.0.0.1:3100'
-const tenantId = 'ten_local'
-const workspaceId = 'wsp_local'
+const locationScope =
+  typeof window === 'undefined'
+    ? undefined
+    : new URLSearchParams(window.location.search)
+const tenantId = locationScope?.get('organization') ?? 'ten_local'
+const workspaceId = locationScope?.get('workspace') ?? 'wsp_local'
+const runtimeAuth =
+  typeof window === 'undefined'
+    ? undefined
+    : (
+        window as typeof window & {
+          __PERSISTENT_AUTH__?: { accessToken?: string; subject?: string }
+        }
+      ).__PERSISTENT_AUTH__
+const principalId = runtimeAuth?.subject ?? 'dev-user'
 const historyDesktopMediaQuery = '(min-width: 1100px)'
 const scopeHeaders = {
   'content-type': 'application/json',
   'x-tenant-id': tenantId,
   'x-workspace-id': workspaceId,
+  ...(runtimeAuth?.accessToken
+    ? { authorization: `Bearer ${runtimeAuth.accessToken}` }
+    : {}),
 }
+
+const cacheNamespace = tenantCacheNamespace(principalId, tenantId, workspaceId)
 
 const supportedAttachmentTypes = new Set([
   'image/png',
@@ -98,6 +123,14 @@ async function readPlatformMeta(): Promise<PlatformMeta> {
   const response = await fetch(`${apiBaseUrl}/v1/meta`)
   if (!response.ok) throw new Error('Control plane yanıt vermedi')
   return response.json() as Promise<PlatformMeta>
+}
+
+async function readMe(): Promise<MeResponse> {
+  const response = await fetch(`${apiBaseUrl}/v1/me`, {
+    headers: scopeHeaders,
+  })
+  if (!response.ok) throw await apiError(response)
+  return meResponseSchema.parse(await response.json())
 }
 
 async function readReadiness(retry = false): Promise<ReadinessResponse> {
@@ -208,10 +241,6 @@ interface OfflineConversationSnapshot {
   sessionId: string
   savedAt: string
   messages: ConversationMessage[]
-}
-
-function offlineConversationKey(sessionId: string) {
-  return `offline-conversation-v1:${sessionId}`
 }
 
 export function parseOfflineConversation(
@@ -1734,26 +1763,32 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryFn: readPlatformMeta,
     enabled: online,
   })
-  const readiness = useQuery({
-    queryKey: ['readiness'],
-    queryFn: () => readReadiness(),
+  const identity = useQuery({
+    queryKey: ['identity', cacheNamespace],
+    queryFn: readMe,
     enabled: online,
+    retry: false,
+  })
+  const readiness = useQuery({
+    queryKey: ['readiness', cacheNamespace],
+    queryFn: () => readReadiness(),
+    enabled: online && identity.isSuccess,
     refetchInterval: (query) =>
       query.state.data?.status === 'ready' ? false : 5_000,
   })
   const authReady = readiness.data?.status === 'ready'
   const providerCatalogs = useQuery({
-    queryKey: ['provider-catalogs'],
+    queryKey: ['provider-catalogs', cacheNamespace],
     queryFn: readProviderCatalogs,
-    enabled: online,
+    enabled: online && identity.isSuccess,
     staleTime: 60_000,
   })
   const recentSessions = useInfiniteQuery({
-    queryKey: ['recent-sessions'],
+    queryKey: ['recent-sessions', cacheNamespace],
     queryFn: ({ pageParam }) => readRecentSessions(pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
-    enabled: online,
+    enabled: online && identity.isSuccess,
   })
   const [offlineHistory, setOfflineHistory] = useState<OfflineHistorySession[]>(
     [],
@@ -1762,21 +1797,21 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     [],
   )
   const conversationFolders = useQuery({
-    queryKey: ['conversation-folders'],
+    queryKey: ['conversation-folders', cacheNamespace],
     queryFn: readConversationFolders,
-    enabled: online,
+    enabled: online && identity.isSuccess,
   })
   const gitSnapshots = useQuery({
-    queryKey: ['git-snapshots', sessionId],
+    queryKey: ['git-snapshots', cacheNamespace, sessionId],
     queryFn: () => readGitSnapshots(sessionId!),
-    enabled: Boolean(sessionId) && online,
+    enabled: Boolean(sessionId) && online && identity.isSuccess,
   })
   const audit = useInfiniteQuery({
-    queryKey: ['session-audit', sessionId],
+    queryKey: ['session-audit', cacheNamespace, sessionId],
     queryFn: ({ pageParam }) => readAudit(sessionId!, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
-    enabled: Boolean(sessionId) && online,
+    enabled: Boolean(sessionId) && online && identity.isSuccess,
     staleTime: 30_000,
   })
   const [session, setSession] = useState<SessionResponse>()
@@ -1825,7 +1860,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     setOfflineHistory(
       parseOfflineHistory(
-        window.localStorage.getItem('offline-workspace-history-v1'),
+        window.localStorage.getItem(offlineHistoryKey(cacheNamespace)),
       ),
     )
   }, [online])
@@ -1854,7 +1889,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       }))
     setOfflineHistory(minimized)
     window.localStorage.setItem(
-      'offline-workspace-history-v1',
+      offlineHistoryKey(cacheNamespace),
       JSON.stringify({
         version: 1,
         savedAt: new Date().toISOString(),
@@ -1870,7 +1905,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
     setOfflineMessages(
       parseOfflineConversation(
-        window.localStorage.getItem(offlineConversationKey(sessionId)),
+        window.localStorage.getItem(
+          offlineConversationKey(cacheNamespace, sessionId),
+        ),
         sessionId,
       )?.messages ?? [],
     )
@@ -2009,6 +2046,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             workspaceId,
             sessionId: session.sessionId,
             afterSequence: lastSequence.current,
+            ...(runtimeAuth?.accessToken
+              ? { accessToken: runtimeAuth.accessToken }
+              : {}),
           }),
         )
       })
@@ -2142,7 +2182,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     if (!messages.length) return
     setOfflineMessages(messages)
     window.localStorage.setItem(
-      offlineConversationKey(sessionId),
+      offlineConversationKey(cacheNamespace, sessionId),
       JSON.stringify({
         version: 1,
         sessionId,
@@ -2173,9 +2213,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     )
   }, [events, session?.activeRun?.status])
   const usage = useQuery({
-    queryKey: ['session-usage', sessionId],
+    queryKey: ['session-usage', cacheNamespace, sessionId],
     queryFn: () => readUsage(sessionId!),
-    enabled: Boolean(sessionId) && online,
+    enabled: Boolean(sessionId) && online && identity.isSuccess,
     staleTime: turnActive ? 0 : 5_000,
     refetchInterval: turnActive ? 2_000 : false,
   })
@@ -2563,6 +2603,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
 
   return (
     <main className="workspace-shell" data-session-id={sessionId}>
+      {identity.isPending && online ? (
+        <p className="offline-banner" role="status">
+          Kimlik ve organization üyelikleri doğrulanıyor…
+        </p>
+      ) : null}
+      {identity.isError && online ? (
+        <p className="offline-banner" role="alert">
+          Oturum süresi dolmuş veya bu organization için erişim yasaklanmış.
+          Yeniden giriş yapın.
+        </p>
+      ) : null}
       {!online ? (
         <p className="offline-banner" role="status">
           Çevrimdışı · Son senkronize conversation history read-only
@@ -2573,6 +2624,44 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         <div>
           <p className="eyebrow">FAZ 0 · CANLI CODEX AKIŞI</p>
           <h1>Persistent Codex Workspace</h1>
+          {identity.data ? (
+            <label>
+              Organization
+              <select
+                aria-label="Organization"
+                value={identity.data.activeOrganizationId}
+                onChange={(event) => {
+                  const membership = identity.data.memberships.find(
+                    (item) =>
+                      item.organizationId === event.target.value &&
+                      item.status === 'active',
+                  )
+                  if (!membership) return
+                  const url = new URL(window.location.href)
+                  url.searchParams.set(
+                    'organization',
+                    membership.organizationId,
+                  )
+                  url.searchParams.set(
+                    'workspace',
+                    membership.workspaceIds[0] ?? workspaceId,
+                  )
+                  window.location.assign(url)
+                }}
+              >
+                {identity.data.memberships
+                  .filter((membership) => membership.status === 'active')
+                  .map((membership) => (
+                    <option
+                      key={membership.organizationId}
+                      value={membership.organizationId}
+                    >
+                      {membership.organizationId} · {membership.role}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          ) : null}
         </div>
         <div className={`status-pill status-${meta.status}`}>
           <span className="status-dot" aria-hidden="true" />

@@ -2,12 +2,12 @@
 
 Control plane runtime’ları pinli/test edilmiş sürüm ve machine-readable yüzeyle çalıştırır:
 
-| Provider     | Pin                  | Kurulum                                               | Auth                                                                  |
-| ------------ | -------------------- | ----------------------------------------------------- | --------------------------------------------------------------------- |
-| Codex        | `0.144.2`            | Repository’deki mevcut pinli binary/provisioning      | `codex login` veya provision edilmiş `CODEX_HOME`                     |
-| Claude Code  | `2.1.109`            | `npm install -g @anthropic-ai/claude-code@2.1.109`    | Mevcut CLI login veya yalnız server-side `ANTHROPIC_API_KEY`          |
-| Gemini CLI   | `0.25.0`             | `npm install -g @google/gemini-cli@0.25.0`            | Mevcut CLI login veya yalnız server-side `GEMINI_API_KEY`/Google auth |
-| Cursor Agent | `2026.07.09-a3815c0` | Resmî Cursor CLI dokümantasyonuna göre manuel kurulum | `cursor-agent login` veya yalnız server-side `CURSOR_API_KEY`         |
+| Provider     | Pin                  | Kurulum                                               | Auth                                                                   |
+| ------------ | -------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------- |
+| Codex        | `0.144.2`            | Repository’deki mevcut pinli binary/provisioning      | `codex login` veya provision edilmiş `CODEX_HOME`                      |
+| Claude Code  | `2.1.109`            | `npm install -g @anthropic-ai/claude-code@2.1.109`    | Mevcut CLI login veya yalnız server-side `ANTHROPIC_API_KEY`           |
+| Gemini CLI   | `0.25.0`, `0.50.0`   | `npm install -g @google/gemini-cli@0.50.0`            | Desteklenen CLI login/project veya yalnız server-side `GEMINI_API_KEY` |
+| Cursor Agent | `2026.07.09-a3815c0` | Resmî Cursor CLI dokümantasyonuna göre manuel kurulum | `cursor-agent login` veya yalnız server-side `CURSOR_API_KEY`          |
 
 Secret değerlerini `PERSISTENT_PROVIDER_CATALOGS_JSON`, browser config’i, log, event,
 fixture veya ledger’a koymayın. Control plane provider process’lerine yalnız server
@@ -23,11 +23,12 @@ cursor-agent --version
 cursor-agent status --format json
 ```
 
-Çıktılar sırasıyla `0.144.2`, `2.1.109`, `0.25.0` ve Cursor için exact doğrulanmış
-`2026.07.09-a3815c0` release’iyle eşleşmelidir. Cursor auto-update sonrası farklı tarih
+Çıktılar sırasıyla `0.144.2`, `2.1.109`, Gemini için exact doğrulanmış `0.25.0` veya
+`0.50.0` ve Cursor için exact doğrulanmış `2026.07.09-a3815c0` release'iyle
+eşleşmelidir. Cursor auto-update sonrası farklı tarih
 veya hash üretirse fixture ve authenticated gerçek smoke olmadan allowlist’e eklemeyin.
 Claude veya
-Gemini adapter readiness’i binary yoksa ya da pin farklıysa actionable install komutu
+Gemini adapter readiness'i binary yoksa ya da allowlist farklıysa actionable install komutu
 döndürür. Auth failure terminal/fixture başarısı sayılmaz; gerçek provider smoke ayrıca
 çalıştırılmalıdır.
 
@@ -76,9 +77,23 @@ hesabınızın desteklediği gerçek ID’lerle değiştirin:
 ```
 
 JSON array’ini `PERSISTENT_PROVIDER_CATALOGS_JSON` environment değerine verin. Gemini
-için aynı shape’i `provider=gemini`, pin `0.25.0` ve hesabınızın gerçek model ID’siyle
+için aynı shape'i `provider=gemini`, doğrulanmış sürüm `0.50.0` ve hesabınızın gerçek model ID'siyle
 ekleyin. Capability veya effort desteğinden emin değilseniz supported yazmayın;
 `degraded`/`unsupported` kullanın.
+
+Gemini `0.50.0` local OAuth çağrısı `UNSUPPORTED_CLIENT` veya ineligible-tier döndürürse
+readiness geçmiş olsa bile smoke başarısızdır. Resmî olarak desteklenen account/project
+auth’a geçin veya secret’ı yalnız provider process environment’ında tutarak
+`GEMINI_API_KEY` sağlayın; ardından şu exact komutu yeniden çalıştırın:
+
+```sh
+GEMINI_SMOKE_MODEL=gemini-2.5-pro pnpm provider:smoke:gemini
+```
+
+Auth hatasını fixture, mock usage veya yalnız `--help` çıktısıyla geçmiş saymayın.
+Adapter exact `0.50.0` runtime’da headless trust prompt’unu önlemek için
+`--skip-trust` ekler. Bu seçenek approval mode’u değiştirmez ve tool/file yetkisi
+sağlamaz; workspace authorization ile karıştırılmamalıdır.
 
 Cursor için `provider=cursor`, `upstreamVersion=2026.07.09-a3815c0`, gerçek smoke ile
 doğrulanmış model ID’si, `reasoningEfforts=["none"]` kullanın. Capability değerleri

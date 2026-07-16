@@ -12,6 +12,99 @@ import { z } from 'zod'
 
 const identifierSchema = z.string().min(1)
 const sequenceSchema = z.number().int().nonnegative()
+export const organizationRoleSchema = z.enum([
+  'owner',
+  'admin',
+  'developer',
+  'viewer',
+  'billing',
+])
+export const organizationMembershipSchema = z.object({
+  version: z.literal(1),
+  subject: identifierSchema,
+  issuer: identifierSchema,
+  organizationId: identifierSchema,
+  role: organizationRoleSchema,
+  status: z.enum(['active', 'disabled', 'revoked']),
+  workspaceIds: z.array(identifierSchema).max(1_000),
+  updatedAt: z.iso.datetime(),
+})
+export const organizationSchema = z.object({
+  version: z.literal(1),
+  organizationId: identifierSchema,
+  name: z.string().trim().min(1).max(120),
+  status: z.enum(['active', 'disabled']),
+  createdAt: z.iso.datetime(),
+})
+export const principalIdentitySchema = z.object({
+  version: z.literal(1),
+  subject: identifierSchema,
+  issuer: identifierSchema,
+  status: z.enum(['active', 'disabled']),
+  createdAt: z.iso.datetime(),
+  lastSeenAt: z.iso.datetime().nullable(),
+})
+export const authPrincipalSchema = z.object({
+  version: z.literal(1),
+  kind: z.enum(['end_user', 'internal_service']),
+  subject: identifierSchema,
+  issuer: identifierSchema,
+  audience: z.array(identifierSchema).min(1).max(16),
+  authenticatedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+  assurance: z.object({
+    level: z.string().min(1).max(128),
+    mfa: z.boolean(),
+  }),
+  memberships: z.array(organizationMembershipSchema).max(1_000),
+})
+export const meResponseSchema = authPrincipalSchema
+  .omit({ memberships: true })
+  .extend({
+    memberships: z.array(organizationMembershipSchema),
+    activeOrganizationId: identifierSchema,
+    activeWorkspaceId: identifierSchema,
+  })
+export const authorizationActionSchema = z.enum([
+  'session.read',
+  'session.create',
+  'session.update',
+  'turn.start',
+  'turn.interrupt',
+  'turn.steer',
+  'event.replay',
+  'event.subscribe',
+  'approval.read',
+  'approval.decide',
+  'attachment.upload',
+  'attachment.read',
+  'attachment.delete',
+  'artifact.metadata.read',
+  'artifact.read',
+  'artifact.download',
+  'workspace.snapshot.read',
+  'usage.read',
+  'usage.reconcile',
+  'audit.read',
+  'metrics.read',
+  'folder.read',
+  'folder.manage',
+  'provider.catalog.read',
+  'provider.readiness.read',
+])
+export const authorizationDecisionSchema = z.object({
+  version: z.literal(1),
+  allow: z.boolean(),
+  reasonCode: z.enum([
+    'ROLE_ALLOWED',
+    'ROLE_DENIED',
+    'UNKNOWN_ACTION',
+    'RESOURCE_SCOPE_MISSING',
+    'PRINCIPAL_KIND_MISMATCH',
+    'MEMBERSHIP_INACTIVE',
+    'WORKSPACE_MEMBERSHIP_MISSING',
+  ]),
+})
 export const readinessStatusSchema = z.enum([
   'checking',
   'ready',
@@ -137,6 +230,7 @@ export const resyncMessageSchema = scopeSchema.extend({
 export const subscribeMessageSchema = scopeSchema.extend({
   type: z.literal('subscribe'),
   afterSequence: sequenceSchema.default(0),
+  accessToken: z.string().min(1).max(16_384).optional(),
 })
 
 export const replayMessageSchema = scopeSchema.extend({
@@ -354,11 +448,13 @@ export const auditActionSchema = z.enum([
   'turn.interrupted',
   'git.snapshot_refreshed',
   'artifact.accessed',
+  'authorization.decided',
 ])
 export const auditOutcomeSchema = z.enum(['requested', 'success', 'failure'])
 export const auditRecordSchema = scopeSchema.extend({
   auditId: z.number().int().positive(),
   actor: auditActorSchema,
+  actorPrincipalId: z.string().min(1).nullable(),
   action: auditActionSchema,
   outcome: auditOutcomeSchema,
   correlationId: z.string().min(1).nullable(),
@@ -582,6 +678,16 @@ export type TurnAcceptedResponse = z.infer<typeof turnAcceptedResponseSchema>
 export type SteerTurnRequest = z.infer<typeof steerTurnRequestSchema>
 export type TurnActionResponse = z.infer<typeof turnActionResponseSchema>
 export type ApiErrorResponse = z.infer<typeof apiErrorResponseSchema>
+export type OrganizationRole = z.infer<typeof organizationRoleSchema>
+export type OrganizationMembership = z.infer<
+  typeof organizationMembershipSchema
+>
+export type Organization = z.infer<typeof organizationSchema>
+export type PrincipalIdentity = z.infer<typeof principalIdentitySchema>
+export type AuthPrincipal = z.infer<typeof authPrincipalSchema>
+export type MeResponse = z.infer<typeof meResponseSchema>
+export type AuthorizationAction = z.infer<typeof authorizationActionSchema>
+export type AuthorizationDecision = z.infer<typeof authorizationDecisionSchema>
 export type Approval = z.infer<typeof approvalSchema>
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 export type ApprovalDecisionRequest = z.infer<

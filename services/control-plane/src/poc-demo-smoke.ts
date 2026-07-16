@@ -125,6 +125,7 @@ class CountingRuntimeClient implements WorkspaceRuntimeClient {
 const runtime = new CountingRuntimeClient()
 const build = () =>
   buildControlPlane({
+    allowExplicitDevAuthentication: true,
     eventStore: store,
     workspaceCwd,
     runtimeClientFactory: () => runtime,

@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ClaudeCodeRuntimeAdapter,
   CursorAgentRuntimeAdapter,
+  GEMINI_CLI_SUPPORTED_VERSIONS,
   GeminiCliRuntimeAdapter,
   loadCursorProjectPolicy,
   normalizeCliEnvelope,
@@ -213,10 +214,15 @@ describe.each([
     expect(events).toContain('turn.completed')
     expect(terminal).toMatchObject({
       outcome: 'completed',
-      usage: { completeness: 'complete' },
+      usage: {
+        completeness: 'complete',
+        requestId:
+          provider === 'gemini' ? 'gemini-session-fixture' : expect.any(String),
+      },
     })
     if (provider === 'gemini')
       expect(terminal.usage?.counters.cachedInputTokens).toBe(7)
+    if (provider === 'gemini') expect(events).toContain('provider.unknown')
   })
 
   it('builds exact machine-readable model, effort, and resume arguments', () => {
@@ -417,7 +423,7 @@ describe('provider-specific effort and readiness', () => {
   it('uses Claude auth status and models Gemini auth as unknown', async () => {
     class ReadyRunner extends FixtureRunner {
       override async version() {
-        return '2.1.109 0.25.0'
+        return '2.1.109 0.50.0'
       }
       override async probe() {
         return { exitCode: 1, stdout: '{"loggedIn":false}', stderr: '' }
@@ -444,6 +450,34 @@ describe('provider-specific effort and readiness', () => {
       authReady: null,
       authStatus: 'unknown',
       code: 'auth_unknown',
+    })
+    expect(GEMINI_CLI_SUPPORTED_VERSIONS).toEqual(['0.25.0', '0.50.0'])
+    expect(
+      gemini.args({
+        sessionId: null,
+        prompt: 'x',
+        cwd: '.',
+        modelId: 'm',
+        reasoningEffort: 'none',
+      }),
+    ).toContain('--skip-trust')
+  })
+
+  it('fails closed for unverified Gemini CLI versions', async () => {
+    class UnsupportedRunner extends FixtureRunner {
+      override async version() {
+        return '0.49.0'
+      }
+    }
+    const gemini = new GeminiCliRuntimeAdapter({
+      catalog: catalog('gemini'),
+      context: context(),
+      runner: new UnsupportedRunner([]),
+    })
+    expect(await gemini.checkReadiness()).toMatchObject({
+      ready: false,
+      version: '0.49.0',
+      code: 'version_mismatch',
     })
   })
 

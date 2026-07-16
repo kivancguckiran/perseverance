@@ -23,6 +23,7 @@
     "phase2:accept": "node scripts/phase2-accept.mjs",
     "phase2:accept:browser": "VITE_CONTROL_PLANE_URL=http://127.0.0.1:3216 pnpm --filter @persistent-codex/web build && tsx scripts/phase2-browser-accept.ts",
     "phase2:smoke:live": "pnpm alpha:canary && pnpm provider:smoke:claude && pnpm provider:smoke:gemini && pnpm provider:smoke:title",
+    "wp18:postgres": "node scripts/wp18-postgres-rls-smoke.mjs",
     "demo:golden:read-only": "WP8_GOLDEN_SCENARIO=read-only pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
     "demo:golden:change": "WP8_GOLDEN_SCENARIO=change pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
     "demo:golden:approval": "WP8_GOLDEN_SCENARIO=approval pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",

@@ -446,7 +446,7 @@ describe('WP11 health, readiness, metrics, and audit API', () => {
         expect(recovered.json()).toMatchObject({ status: 'ready' })
       }
       const metrics = (
-        await instance.inject({ method: 'GET', url: '/metrics' })
+        await instance.inject({ method: 'GET', url: '/metrics', headers })
       ).json()
       expect(metrics.generatedAt).toBe('2026-07-15T09:00:00.000Z')
       expect(
@@ -946,9 +946,11 @@ describe('artifact API', () => {
     })
     const final = storage.finalize(created.artifactId, artifactScope)
     store.upsertArtifact({ ...final })
+    let clock = new Date('2026-07-16T12:00:00.000Z')
     const app = await buildControlPlane({
       eventStore: store,
       artifactRoot: join(directory, 'artifacts'),
+      now: () => clock,
     })
     try {
       const metadata = await app.inject({
@@ -980,6 +982,16 @@ describe('artifact API', () => {
         headers,
       })
       expect(grant.statusCode).toBe(200)
+      const crossTenantGrant = await app.inject({
+        method: 'POST',
+        url: `/v1/artifacts/${created.artifactId}/download-token`,
+        headers: {
+          ...headers,
+          'x-tenant-id': 'ten_b',
+          'x-workspace-id': 'wsp_b',
+        },
+      })
+      expect(crossTenantGrant.statusCode).toBe(404)
       const download = await app.inject({
         method: 'GET',
         url: grant.json().downloadUrl,
@@ -987,6 +999,45 @@ describe('artifact API', () => {
       expect(download.statusCode).toBe(200)
       expect(download.body).not.toContain('ABCDEFGHIJK')
       expect(download.headers['content-disposition']).toContain('attachment')
+      const replay = await app.inject({
+        method: 'GET',
+        url: grant.json().downloadUrl,
+      })
+      expect(replay.statusCode).toBe(404)
+      const tampered = await app.inject({
+        method: 'GET',
+        url: `${grant.json().downloadUrl}x`,
+      })
+      expect(tampered.statusCode).toBe(404)
+
+      const rangedGrant = await app.inject({
+        method: 'POST',
+        url: `/v1/artifacts/${created.artifactId}/download-token`,
+        headers,
+      })
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: rangedGrant.json().downloadUrl,
+            headers: { range: 'bytes=0-4' },
+          })
+        ).statusCode,
+      ).toBe(416)
+      const expiringGrant = await app.inject({
+        method: 'POST',
+        url: `/v1/artifacts/${created.artifactId}/download-token`,
+        headers,
+      })
+      clock = new Date(clock.getTime() + 61_000)
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: expiringGrant.json().downloadUrl,
+          })
+        ).statusCode,
+      ).toBe(404)
     } finally {
       await app.close()
       rmSync(directory, { recursive: true, force: true })
@@ -1899,8 +1950,8 @@ describe('control plane REST replay', () => {
       method: 'GET',
       url: '/v1/sessions/ses_test/events',
     })
-    expect(missingScope.statusCode).toBe(400)
-    expect(missingScope.json()).toMatchObject({ code: 'MISSING_SCOPE' })
+    expect(missingScope.statusCode).toBe(401)
+    expect(missingScope.json()).toMatchObject({ code: 'AUTH_REQUIRED' })
 
     const unknownTenant = await app!.inject({
       method: 'GET',

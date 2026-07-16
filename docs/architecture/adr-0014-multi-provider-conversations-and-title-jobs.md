@@ -15,9 +15,12 @@ ve otomatik başlık ana conversation timeline’ından bağımsız, retry-safe 
 ## Karar
 
 - Claude Code `2.1.109` `--output-format stream-json --verbose --resume`, Gemini CLI
-  `0.25.0` `--output-format stream-json --resume` yüzeyleriyle çalışır. İnsan-okur terminal
-  çıktısı parse edilmez. Her JSONL satırı secret redaction sonrasında raw envelope olarak
-  saklanır; ardından provider-neutral event’e normalize edilir.
+  doğrulanmış exact allowlist `0.25.0` ve `0.50.0` için
+  `--output-format stream-json --resume` yüzeyleriyle çalışır. Yeni kurulum komutu
+  `0.50.0` kullanır; allowlist dışındaki sürüm fail-closed `version_mismatch` üretir.
+  İnsan-okur terminal çıktısı parse edilmez. Her JSONL satırı secret redaction
+  sonrasında raw envelope olarak saklanır; ardından provider-neutral event'e normalize
+  edilir.
 - Bilinmeyen veya malformed Claude/Gemini satırı decode crash üretmez;
   `provider.unknown` event’i ve redacted raw envelope ile korunur. Process exit, auth ve
   provider sonucu typed terminal outcome/error’a çevrilir.
@@ -63,7 +66,23 @@ ve otomatik başlık ana conversation timeline’ından bağımsız, retry-safe 
 
 Claude/Gemini provider session identity legacy `codex_thread_id` storage slotunda tutulur;
 alanın provider-neutral yeniden adlandırılması sonraki geriye uyumlu migration’a bırakılır.
-Headless CLI process’i multi-node lease çözmez. CLI auth state’inin machine-readable,
-yan etkisiz ortak standardı olmadığından readiness exact binary version’ı doğrular; auth
+Headless CLI process'i multi-node lease çözmez. CLI auth state'inin machine-readable,
+yan etkisiz ortak standardı olmadığından readiness exact binary version'ı doğrular; auth
 failure ilk resmi provider çağrısında typed `unauthorized` olur. Multi-tenant credential
 yönetimi ve unsupported approval emülasyonu kapsam dışıdır.
+
+## 0.50.0 regresyon kararı
+
+Gemini CLI `0.50.0` release’i, tag’e bağlı resmî headless/CLI belgeleri ve kurulu
+binary `--help` çıktısında `init`, `message`, `tool_use`, `tool_result`, `error`,
+`result`, `stream-json`, model ve resume yüzeylerini korur. Bu sözleşme timestamp içeren
+0.50 fixture’ı, unknown fallback, start/stream/resume/interrupt ve usage contract
+testleriyle doğrulanmıştır. `0.50.0` headless çalıştırması workspace trust istediğinden
+adapter yalnız exact `0.50.0` runtime’da resmî `--skip-trust` bayrağını ekler. Bu bayrak
+tool approval veya filesystem yazma yetkisi vermez; yalnız non-interactive trust
+prompt’unu kaldırır. `0.50.0` stream’i user prompt’u `message role=user` olarak tekrar
+yayınladığından raw envelope içeriği redakte edilir ve decode crash üretmeden internal
+`provider.unknown` fallback’inde korunur. Terminal `result` session ID’yi tekrarlamazsa
+usage request ID init event’inde öğrenilen provider session ID’den alınır. Gerçek
+`gemini-2.5-pro` smoke start, stream, resume, interrupt, complete usage, unknown
+fallback ve process cleanup aşamalarını geçmiştir.
