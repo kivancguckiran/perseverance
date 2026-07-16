@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 16 Temmuz 2026
-- Aktif iş paketi: WP19
+- Aktif iş paketi: WP19 — Uygulandı / kabul bekliyor
 - Ön koşul: Faz 2 ve WP16 tamamlandı
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
@@ -31,12 +31,12 @@ confidential-computing/attestation mimarisi gerektirir ve Faz 3 kapsamı dışı
 
 ## 2. İş paketi özeti
 
-| Paket | Durum      | Hedef                                                                  |
-| ----- | ---------- | ---------------------------------------------------------------------- |
-| WP17  | Tamamlandı | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
-| WP18  | Tamamlandı | OIDC principal, deny-by-default authorization ve tenant data isolation |
-| WP19  | Aktif      | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
-| WP20  | Planlandı  | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
+| Paket | Durum                      | Hedef                                                                  |
+| ----- | -------------------------- | ---------------------------------------------------------------------- |
+| WP17  | Tamamlandı                 | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
+| WP18  | Tamamlandı                 | OIDC principal, deny-by-default authorization ve tenant data isolation |
+| WP19  | Uygulandı / kabul bekliyor | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
+| WP20  | Bekliyor                   | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
 
 Her zaman yalnız bir paket aktif olabilir. WP19 tamamlanıp bağımsız kabul edilmeden
 WP20'ye geçilmez.
@@ -201,6 +201,26 @@ başka tenant, metadata endpoint, dış ağ ve secret erişimini default-deny ya
 ### Teslimat commit'i
 
 `feat: isolate and encrypt tenant workspaces`
+
+### Uygulama sonucu
+
+Version 1 runtime/network/secret/encryption portları, Kata Kubernetes production
+driver'ı, local `development_only` driver, default-deny DNS/IP rebinding policy,
+workload identity secret lease yaşam döngüsü, AWS KMS ve local test provider ayrımı,
+AES-256-GCM envelope ile bounded chunk encryption, rotation, crypto-erasure,
+encrypted backup/restore ve idempotent backfill koordinatörü uygulandı. PostgreSQL
+migration 19 application-encrypted event alanlarını, artifact/attachment chunk
+manifestlerini, workspace crypto state/audit/backfill tablolarını ve forced RLS
+policy'lerini ekledi.
+
+Gerçek PostgreSQL 17.10 migration 18+19, idempotent reapply, WP18 forced-RLS regresyonu
+ve cross-tenant crypto-state reddi geçti. Local adversarial crypto/network/path/secret
+testleri ve rotation/erasure/backup araçları geçti. Bu geliştirme ortamında Kubernetes
+current context ve encrypted StorageClass olmadığı için gerçek Kata smoke'u
+çalıştırılamadı. AWS identity doğrulandı; hesapta yalnız service-managed key bulunduğu
+ve geçici billable customer-managed key oluşturma yetkisi verilmediği için gerçek KMS
+encrypt/decrypt smoke'u çalıştırılamadı. Bu iki eksik kanıt nedeniyle WP19 kabul
+edilmiş sayılmaz ve WP20 beklemeye devam eder.
 
 ## 6. WP20 — Admin access governance ve Faz 3 adversarial kabul
 

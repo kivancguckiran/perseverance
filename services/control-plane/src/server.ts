@@ -134,6 +134,18 @@ export interface ControlPlaneOptions {
   metricRecorder?: BoundedMetricRecorder
   now?: () => Date
   readinessProbeTimeoutMs?: number
+  securityReadiness?: {
+    runtimeBackend: 'local-process' | 'kata-kubernetes'
+    isolationLevel: 'development_only' | 'container' | 'microvm'
+    encryptedVolume: boolean
+    egressDefaultDeny: boolean
+    secretProvider: string
+    secretProviderProduction: boolean
+    kmsProvider: string
+    kmsProviderProduction: boolean
+    encryptionFormatVersion: number
+    chunkedEncryptionFormatVersion: number
+  }
   modelAliases?: ModelAliasConfig
   priceCatalog?: PriceCatalog
   costReconciliationPorts?: Partial<
@@ -656,6 +668,18 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     options.attachmentRoot ??
       `${options.artifactRoot ?? '.runtime/artifacts'}/attachments`,
   )
+  const securityReadiness = options.securityReadiness ?? {
+    runtimeBackend: 'local-process' as const,
+    isolationLevel: 'development_only' as const,
+    encryptedVolume: false,
+    egressDefaultDeny: true,
+    secretProvider: 'development-local',
+    secretProviderProduction: false,
+    kmsProvider: 'local-memory',
+    kmsProviderProduction: false,
+    encryptionFormatVersion: 1,
+    chunkedEncryptionFormatVersion: 1,
+  }
   const authentication =
     options.authenticationAdapter ??
     (options.allowExplicitDevAuthentication || process.env.NODE_ENV === 'test'
@@ -1100,6 +1124,27 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           : ('ready' as const),
       code: readiness.status === 'degraded' ? 'APP_SERVER_NOT_READY' : null,
     }
+    const runtimeIsolation = {
+      name: 'runtimeIsolation' as const,
+      status: 'ready' as const,
+      code:
+        securityReadiness.isolationLevel === 'microvm' &&
+        securityReadiness.encryptedVolume
+          ? null
+          : 'DEVELOPMENT_RUNTIME_ONLY',
+    }
+    const kms = {
+      name: 'kms' as const,
+      status: 'ready' as const,
+      code: securityReadiness.kmsProviderProduction
+        ? null
+        : 'DEVELOPMENT_KMS_ONLY',
+    }
+    const encryption = {
+      name: 'encryption' as const,
+      status: 'ready' as const,
+      code: null,
+    }
     const status = dependencyFailed ? 'degraded' : readiness.status
     metrics.record('runtime_health', appServer.status === 'ready' ? 1 : 0, {
       state: appServer.status === 'ready' ? 'ready' : 'failed',
@@ -1115,7 +1160,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         ...readiness,
         status,
         checkedAt: now().toISOString(),
-        checks: [...dependencyChecks, appServer, ...readiness.checks],
+        security: securityReadiness,
+        checks: [
+          ...dependencyChecks,
+          runtimeIsolation,
+          kms,
+          encryption,
+          appServer,
+          ...readiness.checks,
+        ],
       }),
     )
   })

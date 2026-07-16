@@ -417,6 +417,36 @@ describe('WP11 health, readiness, metrics, and audit API', () => {
         headers,
       })
       expect(ready.statusCode).toBe(200)
+      expect(ready.json()).toMatchObject({
+        security: {
+          runtimeBackend: 'local-process',
+          isolationLevel: 'development_only',
+          encryptedVolume: false,
+          egressDefaultDeny: true,
+          secretProvider: 'development-local',
+          secretProviderProduction: false,
+          kmsProvider: 'local-memory',
+          kmsProviderProduction: false,
+          encryptionFormatVersion: 1,
+          chunkedEncryptionFormatVersion: 1,
+        },
+        checks: expect.arrayContaining([
+          {
+            name: 'runtimeIsolation',
+            status: 'ready',
+            code: 'DEVELOPMENT_RUNTIME_ONLY',
+          },
+          {
+            name: 'kms',
+            status: 'ready',
+            code: 'DEVELOPMENT_KMS_ONLY',
+          },
+          { name: 'encryption', status: 'ready', code: null },
+        ]),
+      })
+      expect(JSON.stringify(ready.json())).not.toMatch(
+        /api[_-]?key|bearer|secret-value|credential-value/i,
+      )
       for (const [name, path] of [
         ['database', databaseRoot],
         ['artifacts', artifactRoot],
