@@ -746,6 +746,124 @@ export const supportGrantRevokeRequestSchema = z
   .object({ expectedVersion: z.number().int().positive() })
   .strict()
 
+export const jitLeaseIssueRequestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    grantId: identifierSchema.optional(),
+    breakGlassId: identifierSchema.optional(),
+    sessionId: identifierSchema.nullable(),
+    objectId: identifierSchema.nullable(),
+    action: supportAccessActionSchema,
+  })
+  .refine(
+    (value) =>
+      Number(Boolean(value.grantId)) + Number(Boolean(value.breakGlassId)) ===
+      1,
+    {
+      message: 'Exactly one grantId or breakGlassId is required',
+    },
+  )
+export const jitLeaseSchema = z.object({
+  schemaVersion: z.literal(1),
+  leaseId: identifierSchema,
+  grantId: identifierSchema.nullable(),
+  breakGlassId: identifierSchema.nullable(),
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  sessionId: identifierSchema.nullable(),
+  objectId: identifierSchema.nullable(),
+  action: supportAccessActionSchema,
+  principalId: identifierSchema,
+  generation: z.number().int().nonnegative(),
+  issuedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+  consumedAt: z.iso.datetime().nullable(),
+  revokedAt: z.iso.datetime().nullable(),
+})
+export const jitLeaseIssueResponseSchema = z.object({
+  lease: jitLeaseSchema,
+  token: z.string().min(32),
+})
+export const jitLeaseConsumeRequestSchema = z.object({
+  schemaVersion: z.literal(1),
+  token: z.string().min(32),
+  sessionId: identifierSchema.nullable(),
+  objectId: identifierSchema.nullable(),
+  action: supportAccessActionSchema,
+})
+export const breakGlassRequestSchema = z.object({
+  schemaVersion: z.literal(1),
+  breakGlassId: identifierSchema,
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  sessionId: identifierSchema.nullable(),
+  objectId: identifierSchema,
+  actions: z.array(supportAccessActionSchema).min(1).max(4),
+  incidentId: z.string().regex(/^INC-[A-Z0-9-]{4,64}$/),
+  reason: z.string().min(8).max(500),
+  requesterPrincipalId: identifierSchema,
+  mfaEvidenceId: identifierSchema.nullable(),
+  approvalPrincipalIds: z.array(identifierSchema).max(2),
+  status: supportGrantStatusSchema,
+  issuedAt: z.iso.datetime().nullable(),
+  expiresAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+  version: z.number().int().positive(),
+  generation: z.number().int().nonnegative(),
+  idempotencyKey: identifierSchema,
+})
+export const createBreakGlassRequestSchema = z.object({
+  schemaVersion: z.literal(1),
+  sessionId: identifierSchema,
+  objectId: identifierSchema,
+  actions: z.array(supportAccessActionSchema).min(1).max(4),
+  incidentId: z.string().regex(/^INC-[A-Z0-9-]{4,64}$/),
+  reason: z.string().min(8).max(500),
+  durationMinutes: z.number().int().min(1).max(15),
+})
+export const supportMfaRequestSchema = z.object({
+  schemaVersion: z.literal(1),
+  expectedVersion: z.number().int().positive(),
+  mfaEvidenceId: identifierSchema,
+})
+export const supportApprovalRequestSchema = supportMfaRequestSchema
+export const supportRevokeRequestSchema = z.object({
+  schemaVersion: z.literal(1),
+  expectedVersion: z.number().int().positive(),
+})
+export const outboxDeliveryResultRequestSchema = z.object({
+  schemaVersion: z.literal(1),
+  delivered: z.boolean(),
+  retryAt: z.iso.datetime().optional(),
+})
+export const securityOutboxRecordSchema = z.object({
+  outboxId: identifierSchema,
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  kind: z.enum(['break_glass_alarm', 'tenant_notification']),
+  aggregateId: identifierSchema,
+  status: z.enum(['pending', 'delivered']),
+  attempts: z.number().int().nonnegative(),
+  availableAt: z.iso.datetime(),
+  deliveredAt: z.iso.datetime().nullable(),
+  idempotencyKey: identifierSchema,
+  lastResultIdempotencyKey: identifierSchema.nullable(),
+})
+export const protectedContentResponseSchema = z.object({
+  schemaVersion: z.literal(1),
+  action: supportAccessActionSchema,
+  mediaType: z.string().min(1),
+  encoding: z.enum(['utf8', 'base64', 'json']),
+  content: z.union([
+    z.string(),
+    z.array(z.unknown()),
+    z.record(z.string(), z.unknown()),
+  ]),
+})
+
 export type SubscribeMessage = z.infer<typeof subscribeMessageSchema>
 export type ReplayMessage = z.infer<typeof replayMessageSchema>
 export type SubscribedMessage = z.infer<typeof subscribedMessageSchema>
@@ -826,3 +944,6 @@ export type SupportGrantDecisionRequest = z.infer<
   typeof supportGrantDecisionRequestSchema
 >
 export type SecurityAuditRecord = z.infer<typeof securityAuditRecordSchema>
+export type JitLeaseIssueRequest = z.infer<typeof jitLeaseIssueRequestSchema>
+export type JitLease = z.infer<typeof jitLeaseSchema>
+export type BreakGlassRequest = z.infer<typeof breakGlassRequestSchema>

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { execFile } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
+import { execFile, execFileSync, spawnSync } from 'node:child_process'
 import {
   createReadStream,
   existsSync,
   lstatSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
 } from 'node:fs'
 import { createServer } from 'node:http'
@@ -22,10 +23,7 @@ import type {
   OrganizationMembership,
 } from '../packages/control-plane-contracts/src/index'
 import { SqliteEventStore } from '../packages/event-store/src/index'
-import {
-  SupportAccessError,
-  SupportAccessService,
-} from '../packages/support-access/src/index'
+import { createPostgresSupportAccessRepository } from '../packages/support-access/src/index'
 import { buildControlPlane } from '../services/control-plane/src/server'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -43,6 +41,71 @@ const organizationId = 'org_phase3'
 const workspaceId = 'wsp_phase3'
 const sessionId = 'ses_phase3'
 let currentTime = Date.now()
+const postgresName = `persistent-phase3-browser-${randomUUID()}`
+const postgresImage = process.env.WP20_POSTGRES_IMAGE ?? 'postgres:17-alpine'
+const docker = (...args: string[]) =>
+  execFileSync('docker', args, { encoding: 'utf8' })
+docker(
+  'run',
+  '--rm',
+  '-d',
+  '--name',
+  postgresName,
+  '-e',
+  'POSTGRES_PASSWORD=test',
+  '-p',
+  '127.0.0.1::5432',
+  postgresImage,
+)
+for (let attempt = 0; attempt < 60; attempt++) {
+  const logs = spawnSync('docker', ['logs', postgresName], { encoding: 'utf8' })
+  if (
+    `${logs.stdout}${logs.stderr}`.match(
+      /database system is ready to accept connections/g,
+    )?.length === 2
+  )
+    break
+  await new Promise((resolveWait) => setTimeout(resolveWait, 500))
+  if (attempt === 59) throw new Error('Browser PostgreSQL did not become ready')
+}
+const migration = (name: string) =>
+  readFileSync(join(root, 'infra/postgres/migrations', name), 'utf8')
+execFileSync(
+  'docker',
+  [
+    'exec',
+    '-i',
+    postgresName,
+    'psql',
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-U',
+    'postgres',
+  ],
+  {
+    input: `${migration('0018_oidc_authorization_rls.sql')}
+${migration('0019_runtime_secrets_envelope_encryption.sql')}
+${migration('0020_admin_access_governance.sql')}
+INSERT INTO persistent_codex.organizations VALUES ('${organizationId}','Browser','active');
+INSERT INTO persistent_codex.workspaces VALUES ('${organizationId}','${workspaceId}','Browser');
+INSERT INTO persistent_codex.sessions VALUES ('${organizationId}','${workspaceId}','${sessionId}','active');
+CREATE ROLE browser_runtime LOGIN PASSWORD 'runtime' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+GRANT USAGE ON SCHEMA persistent_codex TO browser_runtime;
+GRANT SELECT,INSERT,UPDATE,DELETE ON persistent_codex.support_grants,persistent_codex.support_grant_approvals,persistent_codex.jit_access_leases,persistent_codex.break_glass_requests,persistent_codex.break_glass_approvals,persistent_codex.security_notification_outbox,persistent_codex.access_revocation_epochs TO browser_runtime;
+GRANT SELECT ON persistent_codex.immutable_security_audit,persistent_codex.security_audit_chain_heads TO browser_runtime;
+GRANT EXECUTE ON FUNCTION persistent_codex.append_security_audit(text,text,text,jsonb,text,text,text,text,text,text) TO browser_runtime;`,
+    stdio: ['pipe', 'ignore', 'inherit'],
+  },
+)
+const postgresPort = docker('port', postgresName, '5432/tcp')
+  .trim()
+  .split(':')
+  .at(-1)!
+const supportAccessRepository = createPostgresSupportAccessRepository({
+  connectionString: `postgresql://browser_runtime:runtime@127.0.0.1:${postgresPort}/postgres`,
+  now: () => new Date(currentTime),
+})
+assert.equal(supportAccessRepository.adapter, 'postgresql')
 
 function opaque(subject: string) {
   return `sha256:${createHash('sha256').update(`${issuer}\0${subject}`).digest('hex')}`
@@ -100,7 +163,6 @@ store.createSession({
   sessionId,
   status: 'active',
 })
-const supportAccess = new SupportAccessService(() => new Date(currentTime))
 const api = await buildControlPlane({
   eventStore: store,
   artifactRoot: join(temporaryRoot, 'artifacts'),
@@ -109,7 +171,7 @@ const api = await buildControlPlane({
   workspaceCwd: root,
   authenticationAdapter: new BrowserAuthentication(),
   membershipDirectory: directory,
-  supportAccessService: supportAccess,
+  supportAccessRepository,
 })
 const contentTypes: Record<string, string> = {
   '.css': 'text/css',
@@ -207,7 +269,12 @@ try {
     form.querySelector('button[type=submit]').click(); return true
   })()`)
   await browser('wait', '700')
-  let grant = supportAccess.listGrants({ organizationId, workspaceId })[0]!
+  let grant = (
+    await supportAccessRepository.transaction(
+      { tenantId: organizationId, organizationId, workspaceId },
+      (service) => service.listGrants({ organizationId, workspaceId }),
+    )
+  )[0]!
   assert.equal(grant.status, 'pending_approval')
   assert.deepEqual(grant.actions, ['content.view', 'artifact.download'])
 
@@ -235,33 +302,90 @@ try {
       },
     )
     assert.equal(response.status, 200, await response.text())
-    grant = supportAccess.listGrants({ organizationId, workspaceId })[0]!
+    grant = (
+      await supportAccessRepository.transaction(
+        { tenantId: organizationId, organizationId, workspaceId },
+        (service) => service.listGrants({ organizationId, workspaceId }),
+      )
+    )[0]!
   }
   assert.equal(grant.status, 'active')
-  const lease = supportAccess.issueLease({
-    grantId: grant.grantId,
-    actor: { principalId: opaque('support'), role: 'support' },
-    sessionId,
-    action: 'content.view',
-    correlationId: 'browser-lease',
+  const leaseResponse = await apiCall('/v1/support-access/leases', 'support', {
+    method: 'POST',
+    headers: { 'idempotency-key': 'browser-view-lease' },
+    body: JSON.stringify({
+      schemaVersion: 1,
+      grantId: grant.grantId,
+      sessionId,
+      objectId: null,
+      action: 'content.view',
+    }),
   })
-  assert.throws(
-    () =>
-      supportAccess.consumeLease({
-        leaseId: lease.lease.leaseId,
+  assert.equal(leaseResponse.status, 200, await leaseResponse.clone().text())
+  const lease = await leaseResponse.json()
+  const wrongScope = await apiCall(
+    `/v1/support-access/leases/${lease.lease.leaseId}/consume`,
+    'support',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        schemaVersion: 1,
         token: lease.token,
-        tenantId: organizationId,
-        organizationId,
-        workspaceId,
         sessionId: 'wrong',
+        objectId: null,
         action: 'content.view',
-        principalId: opaque('support'),
-        correlationId: 'wrong',
       }),
-    (error) =>
-      error instanceof SupportAccessError &&
-      error.code === 'LEASE_SCOPE_MISMATCH',
+    },
   )
+  assert.equal(wrongScope.status, 403)
+  const protectedView = await apiCall(
+    `/v1/support-access/leases/${lease.lease.leaseId}/consume`,
+    'support',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        schemaVersion: 1,
+        token: lease.token,
+        sessionId,
+        objectId: null,
+        action: 'content.view',
+      }),
+    },
+  )
+  assert.equal(protectedView.status, 200, await protectedView.clone().text())
+  assert.equal((await protectedView.json()).action, 'content.view')
+  const replay = await apiCall(
+    `/v1/support-access/leases/${lease.lease.leaseId}/consume`,
+    'support',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        schemaVersion: 1,
+        token: lease.token,
+        sessionId,
+        objectId: null,
+        action: 'content.view',
+      }),
+    },
+  )
+  assert.equal(replay.status, 403)
+  const revokeLeaseResponse = await apiCall(
+    '/v1/support-access/leases',
+    'support',
+    {
+      method: 'POST',
+      headers: { 'idempotency-key': 'browser-revoke-lease' },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        grantId: grant.grantId,
+        sessionId,
+        objectId: null,
+        action: 'content.view',
+      }),
+    },
+  )
+  assert.equal(revokeLeaseResponse.status, 200)
+  const revokeLease = await revokeLeaseResponse.json()
 
   await browser('reload')
   await browser('wait', '700')
@@ -270,26 +394,29 @@ try {
   )
   await browser('wait', '700')
   assert.equal(
-    supportAccess.listGrants({ organizationId, workspaceId })[0]!.status,
+    (
+      await supportAccessRepository.transaction(
+        { tenantId: organizationId, organizationId, workspaceId },
+        (service) => service.listGrants({ organizationId, workspaceId }),
+      )
+    )[0]!.status,
     'revoked',
   )
-  assert.throws(
-    () =>
-      supportAccess.consumeLease({
-        leaseId: lease.lease.leaseId,
-        token: lease.token,
-        tenantId: organizationId,
-        organizationId,
-        workspaceId,
+  const revokedLease = await apiCall(
+    `/v1/support-access/leases/${revokeLease.lease.leaseId}/consume`,
+    'support',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        schemaVersion: 1,
+        token: revokeLease.token,
         sessionId,
+        objectId: null,
         action: 'content.view',
-        principalId: opaque('support'),
-        correlationId: 'replay',
       }),
-    (error) =>
-      error instanceof SupportAccessError &&
-      error.code === 'LEASE_REVOKED_OR_EXPIRED',
+    },
   )
+  assert.equal(revokedLease.status, 403)
 
   await browser('reload')
   await browser('wait', '700')
@@ -306,10 +433,17 @@ try {
     errors === '[]' || /"errors"\s*:\s*\[\s*\]/.test(errors),
     `Browser page errors: ${errors}`,
   )
-  assert(supportAccess.verifyAuditChain())
+  assert(
+    await supportAccessRepository.verifyAuditChain({
+      tenantId: organizationId,
+      organizationId,
+      workspaceId,
+    }),
+  )
   console.log(
     JSON.stringify({
       browser: 'passed',
+      supportRepository: supportAccessRepository.adapter,
       viewports: ['1280x720', '390x844'],
       grantFlow: 'user-create+mfa+double-approval+scope-deny+revoke-generation',
       adminWithoutGrant: 'denied',
@@ -325,6 +459,9 @@ try {
   await api.close()
   await new Promise<void>((resolveClose) => web.close(() => resolveClose()))
   store.close()
+  try {
+    docker('rm', '-f', postgresName)
+  } catch {}
   rmSync(temporaryRoot, {
     recursive: true,
     force: true,

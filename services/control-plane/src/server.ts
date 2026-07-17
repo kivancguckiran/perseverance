@@ -17,11 +17,24 @@ import {
   supportGrantRevokeRequestSchema,
   supportGrantSchema,
   securityAuditListResponseSchema,
+  jitLeaseIssueRequestSchema,
+  jitLeaseIssueResponseSchema,
+  jitLeaseConsumeRequestSchema,
+  protectedContentResponseSchema,
+  createBreakGlassRequestSchema,
+  breakGlassRequestSchema,
+  supportMfaRequestSchema,
+  supportApprovalRequestSchema,
+  supportRevokeRequestSchema,
+  outboxDeliveryResultRequestSchema,
+  securityOutboxRecordSchema,
 } from '@persistent-codex/control-plane-contracts'
 import {
+  InMemorySupportAccessRepository,
   SupportAccessError,
-  SupportAccessService,
   type SupportActor,
+  type SupportAccessRepository,
+  type SupportAccessScope,
 } from '@persistent-codex/support-access'
 import { randomBytes } from 'node:crypto'
 import {
@@ -29,6 +42,7 @@ import {
   constants,
   lstatSync,
   realpathSync,
+  readFileSync,
   statfsSync,
 } from 'node:fs'
 import cors from '@fastify/cors'
@@ -169,7 +183,14 @@ export interface ControlPlaneOptions {
   authenticationAdapter?: AuthenticationAdapter
   membershipDirectory?: MembershipDirectory
   allowExplicitDevAuthentication?: boolean
-  supportAccessService?: SupportAccessService
+  supportAccessRepository?: SupportAccessRepository
+  allowInMemorySupportAccess?: boolean
+  decryptSupportContent?: (input: {
+    tenantId: string
+    workspaceId: string
+    sessionId: string | null
+    objectId: string | null
+  }) => Promise<string> | string
 }
 
 export interface PublicRouteAuthorizationEntry {
@@ -240,6 +261,48 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/support-grants/:grantId/revoke',
       action: 'support.grant.revoke',
       resourceType: 'support_grant',
+    },
+    {
+      method: 'POST',
+      route: '/v1/support-access/leases',
+      action: 'support.access.use',
+      resourceType: 'jit_lease',
+    },
+    {
+      method: 'POST',
+      route: '/v1/support-access/leases/:leaseId/consume',
+      action: 'support.access.use',
+      resourceType: 'protected_content',
+    },
+    {
+      method: 'POST',
+      route: '/v1/break-glass',
+      action: 'break_glass.request',
+      resourceType: 'break_glass',
+    },
+    {
+      method: 'POST',
+      route: '/v1/break-glass/:breakGlassId/mfa',
+      action: 'break_glass.request',
+      resourceType: 'break_glass',
+    },
+    {
+      method: 'POST',
+      route: '/v1/break-glass/:breakGlassId/approve',
+      action: 'break_glass.approve',
+      resourceType: 'break_glass',
+    },
+    {
+      method: 'POST',
+      route: '/v1/break-glass/:breakGlassId/revoke',
+      action: 'break_glass.request',
+      resourceType: 'break_glass',
+    },
+    {
+      method: 'POST',
+      route: '/v1/security-outbox/:outboxId/result',
+      action: 'break_glass.request',
+      resourceType: 'security_outbox',
     },
     {
       method: 'GET',
@@ -474,6 +537,19 @@ function requestScope(
   const workspaceId = headerValue(headers['x-workspace-id'])
   if (!tenantId || !workspaceId) return undefined
   return { tenantId, workspaceId, sessionId }
+}
+
+function supportRepositoryScope(
+  headers: Record<string, string | string[] | undefined>,
+): SupportAccessScope | undefined {
+  const organizationId = headerValue(headers['x-tenant-id'])
+  const workspaceId = headerValue(headers['x-workspace-id'])
+  if (!organizationId || !workspaceId) return undefined
+  return {
+    tenantId: organizationId,
+    organizationId,
+    workspaceId,
+  }
 }
 
 function workspaceScope(
@@ -729,8 +805,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const metrics = options.metricRecorder ?? new BoundedMetricRecorder({ now })
   const turnStartedAt = new Map<string, number>()
   const store = options.eventStore ?? new SqliteEventStore(options.databasePath)
+  const explicitInMemory =
+    options.allowInMemorySupportAccess === true ||
+    process.env.NODE_ENV === 'test'
+  if (!options.supportAccessRepository && !explicitInMemory)
+    throw new SupportAccessError('SUPPORT_ACCESS_REPOSITORY_REQUIRED')
   const supportAccess =
-    options.supportAccessService ?? new SupportAccessService(now)
+    options.supportAccessRepository ??
+    new InMemorySupportAccessRepository({ explicitUsage: 'test', now })
   const ownsStore = options.eventStore === undefined
   const artifacts = new LocalArtifactStorage(
     options.artifactRoot ?? '.runtime/artifacts',
@@ -1130,6 +1212,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
 
   app.addHook('onClose', async () => {
     await orchestrator.close()
+    await supportAccess.close()
     if (ownsStore) store.close()
   })
 
@@ -1277,12 +1360,20 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
       store.getSession(scope)
       return supportGrantListResponseSchema.parse({
-        grants: supportAccess
-          .listGrants({
+        grants: await supportAccess.transaction(
+          {
+            tenantId: scope.tenantId,
             organizationId: scope.tenantId,
             workspaceId: scope.workspaceId,
-          })
-          .filter((grant) => grant.sessionId === scope.sessionId),
+          },
+          (service) =>
+            service
+              .listGrants({
+                organizationId: scope.tenantId,
+                workspaceId: scope.workspaceId,
+              })
+              .filter((grant) => grant.sessionId === scope.sessionId),
+        ),
       })
     },
   )
@@ -1297,15 +1388,28 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
       store.getSession(scope)
       return securityAuditListResponseSchema.parse({
-        records: supportAccess
-          .listAudit({
+        records: await supportAccess.transaction(
+          {
+            tenantId: scope.tenantId,
             organizationId: scope.tenantId,
             workspaceId: scope.workspaceId,
-          })
-          .filter(
-            (record) => JSON.parse(record.scope).sessionId === scope.sessionId,
-          ),
-        chainValid: supportAccess.verifyAuditChain(),
+          },
+          (service) =>
+            service
+              .listAudit({
+                organizationId: scope.tenantId,
+                workspaceId: scope.workspaceId,
+              })
+              .filter(
+                (record) =>
+                  JSON.parse(record.scope).sessionId === scope.sessionId,
+              ),
+        ),
+        chainValid: await supportAccess.verifyAuditChain({
+          tenantId: scope.tenantId,
+          organizationId: scope.tenantId,
+          workspaceId: scope.workspaceId,
+        }),
       })
     },
   )
@@ -1326,35 +1430,46 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         context.memberships,
         scope.tenantId,
       )
-      let grant = supportAccess.createGrant({
+      const repositoryScope = {
         tenantId: scope.tenantId,
         organizationId: scope.tenantId,
         workspaceId: scope.workspaceId,
-        sessionId: body.sessionId ?? scope.sessionId,
-        ...(body.artifactId !== undefined
-          ? { artifactId: body.artifactId }
-          : {}),
-        ...(body.attachmentId !== undefined
-          ? { attachmentId: body.attachmentId }
-          : {}),
-        actions: body.actions,
-        reason: body.reason,
-        requester: actor,
-        supportPrincipalId: body.supportPrincipalId,
-        durationMinutes: body.durationMinutes,
-        idempotencyKey:
-          headerValue(request.headers['idempotency-key']) ?? request.id,
-        correlationId: auditContext(request).correlationId ?? request.id,
-      })
-      if (context.principal.assurance.mfa)
-        grant = supportAccess.verifyGrantMfa({
-          grantId: grant.grantId,
-          actor,
-          mfaEvidenceId: `oidc:${context.principal.authenticatedAt}`,
-          expectedVersion: grant.version,
-          idempotencyKey: `oidc-mfa:${grant.grantId}`,
-          correlationId: auditContext(request).correlationId ?? request.id,
-        })
+      }
+      const grant = await supportAccess.transaction(
+        repositoryScope,
+        (service) => {
+          let created = service.createGrant({
+            tenantId: scope.tenantId,
+            organizationId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+            sessionId: body.sessionId ?? scope.sessionId,
+            ...(body.artifactId !== undefined
+              ? { artifactId: body.artifactId }
+              : {}),
+            ...(body.attachmentId !== undefined
+              ? { attachmentId: body.attachmentId }
+              : {}),
+            actions: body.actions,
+            reason: body.reason,
+            requester: actor,
+            supportPrincipalId: body.supportPrincipalId,
+            durationMinutes: body.durationMinutes,
+            idempotencyKey:
+              headerValue(request.headers['idempotency-key']) ?? request.id,
+            correlationId: auditContext(request).correlationId ?? request.id,
+          })
+          if (context.principal.assurance.mfa)
+            created = service.verifyGrantMfa({
+              grantId: created.grantId,
+              actor,
+              mfaEvidenceId: `oidc:${context.principal.authenticatedAt}`,
+              expectedVersion: created.version,
+              idempotencyKey: `oidc-mfa:${created.grantId}`,
+              correlationId: auditContext(request).correlationId ?? request.id,
+            })
+          return created
+        },
+      )
       return reply.code(201).send(supportGrantSchema.parse(grant))
     },
   )
@@ -1370,19 +1485,23 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       if (!context.principal.assurance.mfa)
         throw new SupportAccessError('STRONG_MFA_REQUIRED')
       return supportGrantSchema.parse(
-        supportAccess.verifyGrantMfa({
-          grantId: request.params.grantId,
-          actor: supportActor(
-            context.principal,
-            context.memberships,
-            organizationId,
-          ),
-          mfaEvidenceId: body.mfaEvidenceId,
-          expectedVersion: body.expectedVersion,
-          idempotencyKey:
-            headerValue(request.headers['idempotency-key']) ?? request.id,
-          correlationId: auditContext(request).correlationId ?? request.id,
-        }),
+        await supportAccess.transaction(
+          supportRepositoryScope(request.headers)!,
+          (service) =>
+            service.verifyGrantMfa({
+              grantId: request.params.grantId,
+              actor: supportActor(
+                context.principal,
+                context.memberships,
+                organizationId,
+              ),
+              mfaEvidenceId: body.mfaEvidenceId,
+              expectedVersion: body.expectedVersion,
+              idempotencyKey:
+                headerValue(request.headers['idempotency-key']) ?? request.id,
+              correlationId: auditContext(request).correlationId ?? request.id,
+            }),
+        ),
       )
     },
   )
@@ -1396,19 +1515,24 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       if (!context.principal.assurance.mfa)
         throw new SupportAccessError('STRONG_MFA_REQUIRED')
       return supportGrantSchema.parse(
-        supportAccess.decideGrant({
-          grantId: request.params.grantId,
-          actor: supportActor(
-            context.principal,
-            context.memberships,
-            organizationId,
-          ),
-          decision: body.decision,
-          expectedVersion: body.expectedVersion,
-          idempotencyKey:
-            headerValue(request.headers['idempotency-key']) ?? request.id,
-          correlationId: auditContext(request).correlationId ?? request.id,
-        }),
+        await supportAccess.transaction(
+          supportRepositoryScope(request.headers)!,
+          (service) =>
+            service.decideGrant({
+              grantId: request.params.grantId,
+              actor: supportActor(
+                context.principal,
+                context.memberships,
+                organizationId,
+              ),
+              decision: body.decision,
+              expectedVersion: body.expectedVersion,
+              idempotencyKey:
+                headerValue(request.headers['idempotency-key']) ?? request.id,
+              mfaEvidenceId: body.mfaEvidenceId,
+              correlationId: auditContext(request).correlationId ?? request.id,
+            }),
+        ),
       )
     },
   )
@@ -1420,18 +1544,290 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       const context = authContexts.get(request)!
       const organizationId = headerValue(request.headers['x-tenant-id'])!
       return supportGrantSchema.parse(
-        supportAccess.revokeGrant({
-          grantId: request.params.grantId,
-          actor: supportActor(
-            context.principal,
-            context.memberships,
-            organizationId,
-          ),
-          expectedVersion: body.expectedVersion,
-          idempotencyKey:
-            headerValue(request.headers['idempotency-key']) ?? request.id,
+        await supportAccess.transaction(
+          supportRepositoryScope(request.headers)!,
+          (service) =>
+            service.revokeGrant({
+              grantId: request.params.grantId,
+              actor: supportActor(
+                context.principal,
+                context.memberships,
+                organizationId,
+              ),
+              expectedVersion: body.expectedVersion,
+              idempotencyKey:
+                headerValue(request.headers['idempotency-key']) ?? request.id,
+              correlationId: auditContext(request).correlationId ?? request.id,
+            }),
+        ),
+      )
+    },
+  )
+
+  app.post('/v1/support-access/leases', async (request) => {
+    const body = jitLeaseIssueRequestSchema.parse(request.body)
+    const scope = supportRepositoryScope(request.headers)!
+    const context = authContexts.get(request)!
+    const actor = supportActor(
+      context.principal,
+      context.memberships,
+      scope.organizationId,
+    )
+    const issued = await supportAccess.transaction(scope, (service) =>
+      body.grantId
+        ? service.issueLease({
+            grantId: body.grantId,
+            actor,
+            sessionId: body.sessionId,
+            objectId: body.objectId,
+            action: body.action,
+            idempotencyKey:
+              headerValue(request.headers['idempotency-key']) ?? request.id,
+            correlationId: auditContext(request).correlationId ?? request.id,
+          })
+        : service.issueBreakGlassLease({
+            breakGlassId: body.breakGlassId!,
+            actor,
+            sessionId: body.sessionId!,
+            objectId: body.objectId!,
+            action: body.action,
+            idempotencyKey:
+              headerValue(request.headers['idempotency-key']) ?? request.id,
+            correlationId: auditContext(request).correlationId ?? request.id,
+          }),
+    )
+    return jitLeaseIssueResponseSchema.parse({
+      ...issued,
+      lease: { schemaVersion: 1, ...issued.lease },
+    })
+  })
+
+  app.post<{ Params: { leaseId: string } }>(
+    '/v1/support-access/leases/:leaseId/consume',
+    async (request) => {
+      const body = jitLeaseConsumeRequestSchema.parse(request.body)
+      const scope = supportRepositoryScope(request.headers)!
+      const context = authContexts.get(request)!
+      const actor = supportActor(
+        context.principal,
+        context.memberships,
+        scope.organizationId,
+      )
+      if (body.action === 'content.decrypt' && !options.decryptSupportContent)
+        throw new SupportAccessError('KMS_DECRYPT_PORT_REQUIRED')
+      return supportAccess.transaction(scope, async (service) => {
+        service.consumeLease({
+          leaseId: request.params.leaseId,
+          token: body.token,
+          tenantId: scope.tenantId,
+          organizationId: scope.organizationId,
+          workspaceId: scope.workspaceId,
+          sessionId: body.sessionId,
+          objectId: body.objectId,
+          action: body.action,
+          principalId: actor.principalId,
           correlationId: auditContext(request).correlationId ?? request.id,
-        }),
+        })
+        if (body.action === 'content.view') {
+          const events = store.replaySessionEvents(
+            {
+              tenantId: scope.tenantId,
+              workspaceId: scope.workspaceId,
+              sessionId: body.sessionId!,
+            },
+            0,
+            500,
+          )
+          return protectedContentResponseSchema.parse({
+            schemaVersion: 1,
+            action: body.action,
+            mediaType: 'application/json',
+            encoding: 'json',
+            content: events,
+          })
+        }
+        if (body.action === 'artifact.download') {
+          const stream = artifacts.openReadStream(body.objectId!, scope)
+          const chunks: Buffer[] = []
+          for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+          return protectedContentResponseSchema.parse({
+            schemaVersion: 1,
+            action: body.action,
+            mediaType: 'application/octet-stream',
+            encoding: 'base64',
+            content: Buffer.concat(chunks).toString('base64'),
+          })
+        }
+        if (body.action === 'attachment.download') {
+          const attachment = attachments.resolve(
+            {
+              tenantId: scope.tenantId,
+              workspaceId: scope.workspaceId,
+              sessionId: body.sessionId!,
+            },
+            body.objectId!,
+          )
+          return protectedContentResponseSchema.parse({
+            schemaVersion: 1,
+            action: body.action,
+            mediaType: attachment.mediaType,
+            encoding: 'base64',
+            content: readFileSync(attachment.path).toString('base64'),
+          })
+        }
+        return protectedContentResponseSchema.parse({
+          schemaVersion: 1,
+          action: body.action,
+          mediaType: 'text/plain; charset=utf-8',
+          encoding: 'utf8',
+          content: await options.decryptSupportContent!({
+            tenantId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+            sessionId: body.sessionId,
+            objectId: body.objectId,
+          }),
+        })
+      })
+    },
+  )
+
+  app.post('/v1/break-glass', async (request, reply) => {
+    const body = createBreakGlassRequestSchema.parse(request.body)
+    const scope = supportRepositoryScope(request.headers)!
+    const context = authContexts.get(request)!
+    const actor = supportActor(
+      context.principal,
+      context.memberships,
+      scope.organizationId,
+    )
+    const created = await supportAccess.transaction(scope, (service) => {
+      let value = service.createBreakGlass({
+        ...scope,
+        sessionId: body.sessionId,
+        objectId: body.objectId,
+        actions: body.actions,
+        incidentId: body.incidentId,
+        reason: body.reason,
+        requester: actor,
+        durationMinutes: body.durationMinutes,
+        idempotencyKey:
+          headerValue(request.headers['idempotency-key']) ?? request.id,
+        correlationId: auditContext(request).correlationId ?? request.id,
+      })
+      if (context.principal.assurance.mfa)
+        value = service.verifyBreakGlassMfa({
+          breakGlassId: value.breakGlassId,
+          actor,
+          mfaEvidenceId: `oidc:${context.principal.authenticatedAt}`,
+          expectedVersion: value.version,
+          idempotencyKey: `oidc-mfa:${value.breakGlassId}`,
+          correlationId: auditContext(request).correlationId ?? request.id,
+        })
+      return value
+    })
+    return reply.code(201).send(breakGlassRequestSchema.parse(created))
+  })
+
+  app.post<{ Params: { breakGlassId: string } }>(
+    '/v1/break-glass/:breakGlassId/mfa',
+    async (request) => {
+      const body = supportMfaRequestSchema.parse(request.body)
+      const scope = supportRepositoryScope(request.headers)!
+      const context = authContexts.get(request)!
+      if (!context.principal.assurance.mfa)
+        throw new SupportAccessError('STRONG_MFA_REQUIRED')
+      return breakGlassRequestSchema.parse(
+        await supportAccess.transaction(scope, (service) =>
+          service.verifyBreakGlassMfa({
+            breakGlassId: request.params.breakGlassId,
+            actor: supportActor(
+              context.principal,
+              context.memberships,
+              scope.organizationId,
+            ),
+            mfaEvidenceId: body.mfaEvidenceId,
+            expectedVersion: body.expectedVersion,
+            idempotencyKey:
+              headerValue(request.headers['idempotency-key']) ?? request.id,
+            correlationId: auditContext(request).correlationId ?? request.id,
+          }),
+        ),
+      )
+    },
+  )
+
+  app.post<{ Params: { breakGlassId: string } }>(
+    '/v1/break-glass/:breakGlassId/approve',
+    async (request) => {
+      const body = supportApprovalRequestSchema.parse(request.body)
+      const scope = supportRepositoryScope(request.headers)!
+      const context = authContexts.get(request)!
+      if (!context.principal.assurance.mfa)
+        throw new SupportAccessError('STRONG_MFA_REQUIRED')
+      return breakGlassRequestSchema.parse(
+        await supportAccess.transaction(scope, (service) =>
+          service.approveBreakGlass({
+            breakGlassId: request.params.breakGlassId,
+            actor: supportActor(
+              context.principal,
+              context.memberships,
+              scope.organizationId,
+            ),
+            expectedVersion: body.expectedVersion,
+            mfaEvidenceId: body.mfaEvidenceId,
+            idempotencyKey:
+              headerValue(request.headers['idempotency-key']) ?? request.id,
+            correlationId: auditContext(request).correlationId ?? request.id,
+          }),
+        ),
+      )
+    },
+  )
+
+  app.post<{ Params: { breakGlassId: string } }>(
+    '/v1/break-glass/:breakGlassId/revoke',
+    async (request) => {
+      const body = supportRevokeRequestSchema.parse(request.body)
+      const scope = supportRepositoryScope(request.headers)!
+      const context = authContexts.get(request)!
+      return breakGlassRequestSchema.parse(
+        await supportAccess.transaction(scope, (service) =>
+          service.revokeBreakGlass({
+            breakGlassId: request.params.breakGlassId,
+            actor: supportActor(
+              context.principal,
+              context.memberships,
+              scope.organizationId,
+            ),
+            expectedVersion: body.expectedVersion,
+            idempotencyKey:
+              headerValue(request.headers['idempotency-key']) ?? request.id,
+            correlationId: auditContext(request).correlationId ?? request.id,
+          }),
+        ),
+      )
+    },
+  )
+
+  app.post<{ Params: { outboxId: string } }>(
+    '/v1/security-outbox/:outboxId/result',
+    async (request) => {
+      const body = outboxDeliveryResultRequestSchema.parse(request.body)
+      const scope = supportRepositoryScope(request.headers)!
+      return securityOutboxRecordSchema.parse(
+        await supportAccess.transaction(scope, (service) =>
+          body.delivered
+            ? service.deliverOutbox(
+                request.params.outboxId,
+                headerValue(request.headers['idempotency-key']) ?? request.id,
+              )
+            : service.failOutbox(
+                request.params.outboxId,
+                body.retryAt ??
+                  new Date(now().getTime() + 60_000).toISOString(),
+                headerValue(request.headers['idempotency-key']) ?? request.id,
+              ),
+        ),
       )
     },
   )
@@ -1499,6 +1895,17 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       return reply.code(400).send({
         code: 'MISSING_SCOPE',
         message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    const context = authContexts.get(request)!
+    const actor = supportActor(
+      context.principal,
+      context.memberships,
+      scope.tenantId,
+    )
+    if (request.query.metadata !== '1' && actor.role !== 'tenant_user')
+      return reply.code(403).send({
+        code: 'JIT_LEASE_REQUIRED',
+        message: 'Protected artifact content requires a consumed JIT lease',
       })
     try {
       const metadata = store.getArtifact(scope, request.params.artifactId)
@@ -1584,6 +1991,17 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         return reply.code(400).send({
           code: 'MISSING_SCOPE',
           message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      const context = authContexts.get(request)!
+      const actor = supportActor(
+        context.principal,
+        context.memberships,
+        scope.tenantId,
+      )
+      if (actor.role !== 'tenant_user')
+        return reply.code(403).send({
+          code: 'JIT_LEASE_REQUIRED',
+          message: 'Protected artifact content requires a consumed JIT lease',
         })
       try {
         store.getArtifact(scope, request.params.artifactId)

@@ -22,8 +22,16 @@ const steps = [
   ['WP19 key rotation', 'pnpm', ['wp19:key-rotation']],
   ['WP19 crypto-erasure', 'pnpm', ['wp19:crypto-erasure']],
   ['WP19 encrypted backup/restore', 'pnpm', ['wp19:backup-restore']],
-  ['WP20 grant/JIT/audit/break-glass adversarial', 'pnpm', ['wp20:test']],
-  ['WP20 PostgreSQL RLS and immutable hash-chain', 'pnpm', ['wp20:postgres']],
+  [
+    'WP20 approval orders, failed-decision rollback and JIT adversarial',
+    'pnpm',
+    ['wp20:test'],
+  ],
+  [
+    'WP20 PostgreSQL control-plane restart, break-glass and outbox recovery',
+    'pnpm',
+    ['wp20:postgres'],
+  ],
   [
     'production build for security browser',
     'pnpm',
@@ -31,7 +39,7 @@ const steps = [
     { VITE_CONTROL_PLANE_URL: 'http://127.0.0.1:3217' },
   ],
   [
-    'responsive browser security E2E',
+    'persistent-adapter browser JIT content enforcement and responsive E2E',
     'pnpm',
     ['exec', 'tsx', 'scripts/phase3-browser-security-accept.ts'],
   ],

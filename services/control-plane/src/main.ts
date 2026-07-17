@@ -17,6 +17,10 @@ import {
   ExplicitDevAuthenticationAdapter,
   OidcAuthenticationAdapter,
 } from '@persistent-codex/authz'
+import {
+  createPostgresSupportAccessRepository,
+  InMemorySupportAccessRepository,
+} from '@persistent-codex/support-access'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -27,6 +31,16 @@ if (
   throw new Error('APPROVAL_POLICY must be untrusted, on-request, or never')
 }
 const localAlpha = process.env.PERSISTENT_CODEX_LOCAL_ALPHA === '1'
+const supportDatabaseUrl = process.env.SUPPORT_DATABASE_URL
+if (!localAlpha && !supportDatabaseUrl)
+  throw new Error(
+    'Production requires SUPPORT_DATABASE_URL for durable support access governance',
+  )
+const supportAccessRepository = supportDatabaseUrl
+  ? createPostgresSupportAccessRepository({
+      connectionString: supportDatabaseUrl,
+    })
+  : new InMemorySupportAccessRepository({ explicitUsage: 'development' })
 const runtimeBackend =
   process.env.PERSISTENT_RUNTIME_BACKEND ??
   (localAlpha ? 'local-process' : undefined)
@@ -157,6 +171,7 @@ const app = await buildControlPlane({
     : {}),
   logger: true,
   authenticationAdapter,
+  supportAccessRepository,
   securityReadiness: {
     runtimeBackend:
       runtimeBackend === 'kata-kubernetes'
@@ -174,7 +189,12 @@ const app = await buildControlPlane({
     encryptionFormatVersion: 1,
     chunkedEncryptionFormatVersion: 1,
   },
-  ...(localAlpha ? { allowExplicitDevAuthentication: true } : {}),
+  ...(localAlpha
+    ? {
+        allowExplicitDevAuthentication: true,
+        allowInMemorySupportAccess: true,
+      }
+    : {}),
   ...(approvalPolicy
     ? {
         approvalPolicy: approvalPolicy as 'untrusted' | 'on-request' | 'never',

@@ -54,6 +54,8 @@ try {
     name,
     '-e',
     'POSTGRES_PASSWORD=test',
+    '-p',
+    '127.0.0.1::5432',
     image,
   )
   let ready = false
@@ -81,12 +83,14 @@ try {
   ).trim()
   psql(`${migration(18, '0018_oidc_authorization_rls.sql')}\n${migration(19, '0019_runtime_secrets_envelope_encryption.sql')}\n${migration(20, '0020_admin_access_governance.sql')}\n${migration(20, '0020_admin_access_governance.sql')}
 INSERT INTO persistent_codex.organizations VALUES ('org_a','A','active'),('org_b','B','active');
-INSERT INTO persistent_codex.workspaces VALUES ('org_a','wsp_a','A'),('org_b','wsp_b','B');
-INSERT INTO persistent_codex.sessions VALUES ('org_a','wsp_a','ses_a','active'),('org_b','wsp_b','ses_b','active');
+INSERT INTO persistent_codex.organizations VALUES ('org_cp','Control plane','active');
+INSERT INTO persistent_codex.workspaces VALUES ('org_a','wsp_a','A'),('org_b','wsp_b','B'),('org_cp','wsp_cp','Control plane');
+INSERT INTO persistent_codex.sessions VALUES ('org_a','wsp_a','ses_a','active'),('org_b','wsp_b','ses_b','active'),('org_cp','wsp_cp','ses_cp','active');
 CREATE ROLE app_runtime LOGIN PASSWORD 'runtime' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
 GRANT USAGE ON SCHEMA persistent_codex TO app_runtime;
 GRANT SELECT,INSERT,UPDATE,DELETE ON persistent_codex.support_grants,persistent_codex.support_grant_approvals,persistent_codex.jit_access_leases,persistent_codex.break_glass_requests,persistent_codex.break_glass_approvals,persistent_codex.security_notification_outbox,persistent_codex.access_revocation_epochs TO app_runtime;
 GRANT SELECT ON persistent_codex.immutable_security_audit TO app_runtime;
+GRANT SELECT ON persistent_codex.security_audit_chain_heads TO app_runtime;
 GRANT EXECUTE ON FUNCTION persistent_codex.append_security_audit(text,text,text,jsonb,text,text,text,text,text,text) TO app_runtime;
 DO $$ BEGIN IF NOT persistent_codex.wp20_security_ready() THEN RAISE EXCEPTION 'WP20 readiness missing'; END IF; END $$;
 BEGIN; SET LOCAL ROLE app_runtime; SELECT set_config('app.organization_id','org_a',true); SELECT set_config('app.workspace_id','wsp_a',true);
@@ -111,6 +115,23 @@ BEGIN; SET LOCAL ROLE app_runtime; DO $$ BEGIN IF (SELECT count(*) FROM persiste
   psql(
     `DO $$ DECLARE invalid_count integer; BEGIN SELECT count(*) INTO invalid_count FROM (SELECT chain_sequence,previous_hash,lag(record_hash) OVER (ORDER BY chain_sequence) expected FROM persistent_codex.immutable_security_audit WHERE organization_id='org_a' AND workspace_id='wsp_a') chain WHERE chain_sequence > 1 AND previous_hash <> expected; IF invalid_count <> 0 THEN RAISE EXCEPTION 'audit hash chain broken'; END IF; IF (SELECT count(*) FROM persistent_codex.immutable_security_audit WHERE organization_id='org_a' AND workspace_id='wsp_a') <> 3 THEN RAISE EXCEPTION 'concurrent audit insert lost'; END IF; END $$;`,
   )
+  const port = run('port', name, '5432/tcp').trim().split(':').at(-1)
+  const integration = spawnSync(
+    'pnpm',
+    ['exec', 'tsx', 'scripts/wp20-control-plane-postgres-integration.ts'],
+    {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        WP20_DATABASE_URL: `postgresql://app_runtime:runtime@127.0.0.1:${port}/postgres`,
+      },
+    },
+  )
+  if (integration.error) throw integration.error
+  if (integration.status !== 0)
+    throw new Error(
+      `Control-plane PostgreSQL integration failed: ${integration.status}`,
+    )
 } catch (error) {
   failure = error
 } finally {
@@ -132,6 +153,7 @@ process.stdout.write(
     crossTenantGrant: 'rejected',
     immutableAuditMutation: 'rejected',
     concurrentHashChain: 'verified',
+    controlPlaneRestartRecovery: 'passed',
     transactionContextLeak: false,
     cleanup: { containerRemoved: true },
   }) + '\n',
