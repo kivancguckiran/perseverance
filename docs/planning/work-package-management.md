@@ -73,7 +73,7 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP17 — Cursor Agent provider adapter         | Tamamlandı | Cursor adapter güncel runtime ve gerçek smoke ile bağımsız kabul edildi                                     |
 | WP18 — Tenant kimliği ve data isolation      | Tamamlandı | OIDC, deny-by-default authorization, RLS/object/cache tenant sınırı bağımsız kabul edildi                   |
 | WP19 — Runtime ve encryption isolation       | Tamamlandı | Kata runtime, egress, secret lease, KMS envelope encryption ve restore sınırı bağımsız kabul edildi         |
-| WP20 — Security beta kabulü                  | Aktif      | Support grant/break-glass ve birleşik adversarial Faz 3 kabulü tamamlanacak                                 |
+| WP20 — Security beta kabulü                  | Tamamlandı | Durable support grant/JIT/break-glass ve birleşik adversarial Faz 3 kabulü bağımsız doğrulandı              |
 
 ## WP1 nihai denetim sonucu
 
@@ -956,3 +956,37 @@ Doğrulananlar:
 Uygulama commit'leri: `3e5e6f7`, `18d0dcb`.
 
 Aktif iş paketi WP20'dir. WP20 tamamlanmadan Faz 3 kapatılamaz.
+
+## WP20 nihai kabul ve Faz 3 kapanış sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Uygulama commit'i `b842d6a` ve durable production düzeltme commit'i `f4863e7`
+  mevcut.
+- Contract, control-plane route'ları ve PostgreSQL migration 20 aynı versioned grant,
+  approval, JIT lease, break-glass, outbox, audit ve revocation modeline bağlandı.
+- Production modu PostgreSQL support repository olmadan fail-closed. In-memory adapter
+  yalnız explicit test/development kullanımıyla açılıyor.
+- Gerçek PostgreSQL-backed control-plane restart testinde pending/active grant,
+  revocation generation, tek kullanımlık lease, audit zinciri ve outbox retry durumu
+  kayıpsız geri geldi.
+- Normal admin grantsiz içeriğe erişemedi; support erişimi exact-scope JIT lease
+  tüketerek gerçek korunan content/download hattından geçti. Replay, yanlış scope ve
+  revoke sonrası kullanım reddedildi.
+- KMS approval sıraları, failed-decision rollback, separation-of-duty, break-glass çift
+  onayı, alarm ve notification recovery testleri geçti.
+- `pnpm phase3:accept` migration 18–20, WP18–WP20 adversarial paketleri,
+  persistent-adapter responsive browser E2E, credential scan ve cleanup ile geçti.
+- `pnpm verify` 21 dosyada 265 test, typecheck, production build ve SSR HTTP smoke ile
+  tamamlandı. Browser 1280x720 ve 390x844 görünümde sıfır page error/secret leak
+  üretti.
+- WP19'da bağımsız kabul edilen gerçek Kata micro-VM, encrypted storage ve AWS KMS
+  kanıtı geçerliliğini koruyor; WP20 düzeltmesi bu kod yollarını değiştirmedi.
+- Çalışma ağacı ve geçici PostgreSQL container'ları temizdi.
+
+Uygulama commit'leri: `b842d6a`, `f4863e7`.
+
+WP20 ve Faz 3 tamamlandı. Aktif iş paketi yoktur; Faz 4 planlanıp kabul edilmeden yeni
+uygulama paketi başlatılmaz.
