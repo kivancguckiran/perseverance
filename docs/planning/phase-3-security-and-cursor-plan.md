@@ -359,6 +359,10 @@ audit ile uygulanır. Backup/restore, key rotation ve runtime escape testleri ge
 - Faz 5 — Production hardening: HA/DR, bölgesellik, SLO/alerting, kapasite/noisy-neighbor,
   pentest, compliance, incident response ve kontrollü rollout.
 
+Faz 4 WP21–WP24 ve Faz 5 WP25–WP29 uygulama sırası
+`docs/planning/phase-4-corpus-mobile-and-phase-5-production-plan.md` içinde kabul
+edilmiş; WP21 tek aktif iş paketi olarak açılmıştır.
+
 ## 9. Cursor için doğrulanan resmi yüzeyler
 
 - Overview: `https://docs.cursor.com/en/cli/overview`

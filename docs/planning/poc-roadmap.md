@@ -54,8 +54,10 @@ bağımsız kalıcı çalışma, PWA ve Codex/Claude/Gemini provider platformu k
 olarak `docs/planning/phase-2-provider-platform-plan.md` içinde tamamlanmıştır. Yeni faz
 ayrı bir plan kabul edilmeden ve tek aktif work package açılmadan başlatılmaz. Cursor
 provider köprüsü ile yeniden numaralanan Faz 3 Multi-tenant Security Beta taslağı
-`docs/planning/phase-3-security-and-cursor-plan.md` içindedir; sonrasında Faz 4 Corpus ve
-mobil ürün, Faz 5 Production hardening gelir.
+`docs/planning/phase-3-security-and-cursor-plan.md` içinde tamamlanmıştır. Faz 4 Corpus
+ve mobil ürün WP21–WP24, Faz 5 Production hardening WP25–WP29 olarak
+`docs/planning/phase-4-corpus-mobile-and-phase-5-production-plan.md` içinde planlanmış;
+WP21 tek aktif iş paketi olarak açılmıştır.
 
 ## Uygulama sırası
 
