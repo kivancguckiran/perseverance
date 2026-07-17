@@ -23,6 +23,7 @@ import {
   supportGrantListResponseSchema,
   supportGrantSchema,
   securityAuditListResponseSchema,
+  sourceListResponseSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
@@ -124,6 +125,32 @@ export function attachmentMediaType(file: Pick<File, 'name' | 'type'>) {
         : extension === 'pdf'
           ? 'application/pdf'
           : undefined
+}
+
+export function sourceMediaType(file: Pick<File, 'name' | 'type'>) {
+  const extension = file.name.toLowerCase().split('.').pop()
+  if (file.type === 'application/pdf' || extension === 'pdf')
+    return 'application/pdf'
+  if (
+    file.type === 'text/markdown' ||
+    ['md', 'markdown'].includes(extension ?? '')
+  )
+    return 'text/markdown'
+  if (file.type === 'text/plain' || ['txt', 'text'].includes(extension ?? ''))
+    return 'text/plain'
+  const codeTypes: Record<string, string> = {
+    json: 'application/json',
+    js: 'application/javascript',
+    jsx: 'application/javascript',
+    ts: 'application/typescript',
+    tsx: 'application/typescript',
+    py: 'text/x-python',
+    rs: 'text/x-rust',
+    sh: 'text/x-shellscript',
+    css: 'text/css',
+    html: 'text/html',
+  }
+  return extension ? codeTypes[extension] : undefined
 }
 
 async function readPlatformMeta(): Promise<PlatformMeta> {
@@ -339,6 +366,15 @@ async function readConversationFolders() {
   })
   if (!response.ok) throw await apiError(response)
   return conversationFolderListResponseSchema.parse(await response.json())
+}
+
+async function readSources() {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/sources`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return sourceListResponseSchema.parse(await response.json())
 }
 
 async function readGitSnapshots(sessionId: string) {
@@ -2076,6 +2112,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryFn: readConversationFolders,
     enabled: online && identity.isSuccess,
   })
+  const sources = useQuery({
+    queryKey: ['corpus-sources', cacheNamespace],
+    queryFn: readSources,
+    enabled: online && identity.isSuccess,
+    refetchInterval: (query) =>
+      query.state.data?.sources.some((source) =>
+        ['pending', 'extracting'].includes(source.status),
+      )
+        ? 1_000
+        : false,
+  })
   const gitSnapshots = useQuery({
     queryKey: ['git-snapshots', cacheNamespace, sessionId],
     queryFn: () => readGitSnapshots(sessionId!),
@@ -2124,6 +2171,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
   const [attachmentPending, setAttachmentPending] = useState(false)
+  const [sourcePending, setSourcePending] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<
     'codex' | 'claude' | 'gemini' | 'cursor'
   >('codex')
@@ -2888,6 +2936,38 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
   }
 
+  async function uploadSource(file: File) {
+    const mediaType = sourceMediaType(file)
+    if (!mediaType || sourcePending || !online) return
+    setSourcePending(true)
+    setError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/sources`,
+        {
+          method: 'POST',
+          headers: {
+            ...scopeHeaders,
+            'content-type': 'application/octet-stream',
+            'x-source-name': encodeURIComponent(file.name),
+            'x-source-media-type': mediaType,
+          },
+          body: file,
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      await sources.refetch()
+    } catch (uploadError) {
+      setError(
+        uploadError instanceof Error
+          ? uploadError.message
+          : 'Source yüklenemedi',
+      )
+    } finally {
+      setSourcePending(false)
+    }
+  }
+
   return (
     <main className="workspace-shell" data-session-id={sessionId}>
       {identity.isPending && online ? (
@@ -3268,6 +3348,43 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </div>
               </details>
             ) : null}
+            <details className="source-panel">
+              <summary
+                aria-label={`Corpus sources (${sources.data?.sources.length ?? 0})`}
+              >
+                <span className="source-panel-icon" aria-hidden="true">
+                  ▤
+                </span>
+                <span className="source-panel-label">Sources</span>
+                <span>{sources.data?.sources.length ?? 0}</span>
+              </summary>
+              <label className="source-upload">
+                <span>{sourcePending ? 'Yükleniyor…' : 'Source ekle'}</span>
+                <input
+                  type="file"
+                  disabled={!online || sourcePending}
+                  accept=".pdf,.md,.markdown,.txt,.text,.json,.js,.jsx,.ts,.tsx,.py,.rs,.sh,.css,.html"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) void uploadSource(file)
+                    event.currentTarget.value = ''
+                  }}
+                />
+              </label>
+              <ul aria-label="Corpus source durumları">
+                {(sources.data?.sources ?? []).map((source) => (
+                  <li key={source.sourceId}>
+                    <span title={source.displayName}>{source.displayName}</span>
+                    <strong data-source-status={source.status}>
+                      {source.status}
+                    </strong>
+                  </li>
+                ))}
+              </ul>
+              {sources.isError ? (
+                <p role="alert">Source listesi alınamadı.</p>
+              ) : null}
+            </details>
             <label>
               <span>Folder</span>
               <select

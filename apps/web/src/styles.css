@@ -900,6 +900,12 @@ select {
   .chat-header label span {
     display: none;
   }
+  .chat-header select {
+    max-width: 106px;
+  }
+  .source-panel-label {
+    display: none;
+  }
   .usage-summary {
     min-width: 0;
   }
@@ -1038,6 +1044,62 @@ h2 {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: #c8d6d1;
+}
+
+.source-panel {
+  border: 1px solid #26332f;
+  border-radius: 12px;
+  padding: 0.7rem;
+}
+
+.source-panel summary,
+.source-panel li,
+.source-upload {
+  align-items: center;
+  display: flex;
+  gap: 0.55rem;
+  justify-content: space-between;
+}
+
+.source-panel summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.source-panel ul {
+  display: grid;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+}
+
+.source-panel li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-panel li strong {
+  color: #8da097;
+  font-size: 0.72rem;
+}
+
+.source-panel li strong[data-source-status='indexed'] {
+  color: #55c996;
+}
+
+.source-panel li strong[data-source-status='failed'] {
+  color: #ff8f8f;
+}
+
+.source-upload {
+  cursor: pointer;
+  margin-top: 0.7rem;
+}
+
+.source-upload input {
+  max-width: 10rem;
 }
 
 .session-button {

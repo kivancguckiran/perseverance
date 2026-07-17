@@ -8,6 +8,7 @@ import {
 import {
   boundedTail,
   attachmentMediaType,
+  sourceMediaType,
   chatFollowStateAfterScroll,
   coalesceTimelineEvents,
   conversationFolderPickerState,
@@ -857,6 +858,21 @@ describe('attachment selection', () => {
     expect(
       attachmentMediaType({ name: 'archive.zip', type: '' }),
     ).toBeUndefined()
+  })
+})
+
+describe('corpus source selection', () => {
+  it('accepts the bounded WP21 source file set', () => {
+    expect(sourceMediaType({ name: 'paper.pdf', type: '' })).toBe(
+      'application/pdf',
+    )
+    expect(sourceMediaType({ name: 'notes.md', type: '' })).toBe(
+      'text/markdown',
+    )
+    expect(sourceMediaType({ name: 'worker.ts', type: '' })).toBe(
+      'application/typescript',
+    )
+    expect(sourceMediaType({ name: 'archive.zip', type: '' })).toBeUndefined()
   })
 })
 

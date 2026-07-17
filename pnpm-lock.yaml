@@ -128,6 +128,12 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/corpus-ingestion:
+    dependencies:
+      '@persistent-codex/control-plane-contracts':
+        specifier: workspace:*
+        version: link:../control-plane-contracts
+
   packages/domain-events:
     dependencies:
       zod:
@@ -210,6 +216,9 @@ importers:
       '@persistent-codex/control-plane-contracts':
         specifier: workspace:*
         version: link:../../packages/control-plane-contracts
+      '@persistent-codex/corpus-ingestion':
+        specifier: workspace:*
+        version: link:../../packages/corpus-ingestion
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events
