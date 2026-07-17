@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   CorpusError,
   extractDocument,
+  extractDocumentBounded,
   LocalCorpusRegistry,
   singleChunk,
   sniffMediaType,
@@ -19,7 +20,9 @@ const scope = {
 }
 const roots: string[] = []
 function registry(
-  options: ConstructorParameters<typeof LocalCorpusRegistry>[1] = {},
+  options: ConstructorParameters<typeof LocalCorpusRegistry>[1] = {
+    explicitUsage: 'test',
+  },
 ) {
   const root = mkdtempSync(join(tmpdir(), 'wp21-corpus-'))
   roots.push(root)
@@ -36,10 +39,10 @@ describe('WP21 golden extraction', () => {
     ['golden.txt', 'text/plain', 'line'],
   ] as const)(
     'extracts %s with stable citation locators',
-    (name, mediaType, locator) => {
+    async (name, mediaType, locator) => {
       const bytes = fixture(name)
       expect(sniffMediaType(name, bytes)).toBe(mediaType)
-      const extracted = extractDocument({ mediaType, bytes })
+      const extracted = await extractDocumentBounded({ mediaType, bytes })
       expect(extracted.length).toBeGreaterThan(0)
       expect(extracted[0]!.locator.kind).toBe(locator)
       expect(extracted.map((entry) => entry.text).join('\n')).toContain('WP21')
@@ -47,12 +50,12 @@ describe('WP21 golden extraction', () => {
   )
 
   it('rejects malformed, MIME mismatch, oversized, timeout and archive input without plaintext errors', async () => {
-    expect(() =>
-      extractDocument({
+    await expect(
+      extractDocumentBounded({
         mediaType: 'application/pdf',
         bytes: Buffer.from('%PDF-broken'),
       }),
-    ).toThrowError(expect.objectContaining({ code: 'MALFORMED_PDF' }))
+    ).rejects.toMatchObject({ code: 'MALFORMED_PDF' })
     expect(() =>
       sniffMediaType('archive.zip', Buffer.from('PK\x03\x04')),
     ).toThrowError(expect.objectContaining({ code: 'ARCHIVE_REJECTED' }))
@@ -64,7 +67,10 @@ describe('WP21 golden extraction', () => {
         elapsedMs: () => 2,
       }),
     ).toThrowError(expect.objectContaining({ code: 'PARSER_TIMEOUT' }))
-    const { value } = registry({ limits: { maxBytes: 8 } })
+    const { value } = registry({
+      explicitUsage: 'test',
+      limits: { maxBytes: 8 },
+    })
     await expect(
       value.createSource({
         scope,
@@ -80,6 +86,48 @@ describe('WP21 golden extraction', () => {
         chunks: singleChunk(Buffer.from('plain text only')),
       }),
     ).rejects.toMatchObject({ code: 'MIME_MISMATCH' })
+  })
+
+  it('handles multipage/compressed/Unicode PDFs and returns typed unsupported outcomes', async () => {
+    const multipage = await extractDocumentBounded({
+      mediaType: 'application/pdf',
+      bytes: fixture('golden.pdf'),
+    })
+    expect(multipage.map((entry) => entry.locator)).toEqual([
+      { kind: 'page', pageStart: 1, pageEnd: 1 },
+      { kind: 'page', pageStart: 2, pageEnd: 2 },
+    ])
+    const unicode = await extractDocumentBounded({
+      mediaType: 'application/pdf',
+      bytes: fixture('unicode.pdf'),
+    })
+    expect(unicode.map((entry) => entry.text).join('\n')).toContain(
+      'İstanbul Türkiye café Ελληνικά',
+    )
+    const tjArray = await extractDocumentBounded({
+      mediaType: 'application/pdf',
+      bytes: fixture('tj-array.pdf'),
+    })
+    expect(tjArray[0]?.text).toContain('WP21 TJ array operator fixture')
+    await expect(
+      extractDocumentBounded({
+        mediaType: 'application/pdf',
+        bytes: fixture('password-protected.pdf'),
+      }),
+    ).rejects.toMatchObject({ code: 'PDF_PASSWORD_PROTECTED' })
+    await expect(
+      extractDocumentBounded({
+        mediaType: 'application/pdf',
+        bytes: fixture('image-only.pdf'),
+      }),
+    ).rejects.toMatchObject({ code: 'OCR_REQUIRED' })
+    await expect(
+      extractDocumentBounded({
+        mediaType: 'application/pdf',
+        bytes: fixture('golden.pdf'),
+        limits: { parserTimeoutMs: 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'PARSER_TIMEOUT' })
   })
 })
 
@@ -102,7 +150,7 @@ describe('WP21 idempotent registry and worker', () => {
     await value.processJob(scope, job.jobId, 'worker_1')
     await value.processJob(scope, job.jobId, 'worker_1')
     const before = value.derivedSnapshot(scope)
-    expect(before.usage).toHaveLength(1)
+    expect(before.usage).toHaveLength(0)
     const [reindex] = value.rebuildDerivedIndex(scope)
     const claimed = value.claimNext(scope, 'worker_1')!
     expect(claimed.jobId).toBe(reindex!.jobId)
@@ -116,16 +164,17 @@ describe('WP21 idempotent registry and worker', () => {
     ).toEqual(
       before.indexDocuments.map(({ indexDocumentId }) => indexDocumentId),
     )
-    expect(after.usage).toHaveLength(1)
-    expect(after.usage[0]).toMatchObject({
-      meter: 'index_embedding_token',
-      completeness: 'complete',
+    expect(after.usage).toHaveLength(0)
+    expect(after.indexDocuments[0]).toMatchObject({
+      embeddingVersion: 'unembedded-placeholder-v1',
+      embeddingTokenCount: 0,
     })
   })
 
   it('recovers an expired worker lease after restart', async () => {
     let now = new Date('2026-07-17T10:00:00.000Z')
     const { root, value } = registry({
+      explicitUsage: 'test',
       now: () => now,
       limits: { leaseMs: 10 },
     })
@@ -137,6 +186,7 @@ describe('WP21 idempotent registry and worker', () => {
     expect(value.claimNext(scope, 'crashed_worker')?.status).toBe('extracting')
     now = new Date('2026-07-17T10:00:01.000Z')
     const restarted = new LocalCorpusRegistry(root, {
+      explicitUsage: 'test',
       now: () => now,
       limits: { leaseMs: 10 },
     })
@@ -147,7 +197,10 @@ describe('WP21 idempotent registry and worker', () => {
   })
 
   it('moves poison input to failed without blocking the next source', async () => {
-    const { value } = registry({ limits: { maxAttempts: 3 } })
+    const { value } = registry({
+      explicitUsage: 'test',
+      limits: { maxAttempts: 3 },
+    })
     const poison = await value.createSource({
       scope,
       name: 'poison.pdf',
@@ -171,7 +224,7 @@ describe('WP21 idempotent registry and worker', () => {
       value.sourceDetail(scope, poison.source.sourceId).jobs[0],
     ).toMatchObject({
       usageCompleteness: 'partial',
-      errorCode: 'PDF_TEXT_UNAVAILABLE',
+      errorCode: 'MALFORMED_PDF',
     })
     expect(value.derivedSnapshot(scope).usage).toEqual([])
     const healthy = value.claimNext(scope, 'worker')!

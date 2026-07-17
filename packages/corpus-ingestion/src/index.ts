@@ -33,11 +33,20 @@ import type {
   Source,
   SourceRevision,
 } from '@persistent-codex/control-plane-contracts'
+import { extractPdfInSandbox, PDF_PARSER_VERSION } from './pdf-parser'
+
+export * from './storage'
+export * from './pdf-parser'
+export * from './embedding'
+export * from './repository'
+export * from './service'
 
 export const DEFAULT_CORPUS_LIMITS = {
   maxBytes: 16 * 1024 * 1024,
   maxPdfPages: 500,
   parserTimeoutMs: 30_000,
+  maxParserOutputBytes: 32 * 1024 * 1024,
+  maxParserMemoryBytes: 512 * 1024 * 1024,
   maxChunkCharacters: 2_000,
   overlapCharacters: 200,
   maxAttempts: 3,
@@ -47,6 +56,8 @@ export interface CorpusLimits {
   maxBytes: number
   maxPdfPages: number
   parserTimeoutMs: number
+  maxParserOutputBytes: number
+  maxParserMemoryBytes: number
   maxChunkCharacters: number
   overlapCharacters: number
   maxAttempts: number
@@ -207,14 +218,6 @@ function inferredLanguage(mediaType: SourceRevision['mediaType']) {
   return values[mediaType] ?? 'und'
 }
 
-function decodePdfLiteral(value: string) {
-  return value
-    .replace(/\\([()\\])/g, '$1')
-    .replace(/\\n/g, '\n')
-    .replace(/\\r/g, '\n')
-    .replace(/\\t/g, '\t')
-}
-
 export function extractDocument(input: {
   mediaType: SourceRevision['mediaType']
   bytes: Uint8Array
@@ -234,39 +237,10 @@ export function extractDocument(input: {
       throw new CorpusError('PARSER_TIMEOUT', 'Source parser timed out')
   }
   if (input.mediaType === 'application/pdf') {
-    const raw = Buffer.from(input.bytes).toString('latin1')
-    if (!raw.startsWith('%PDF-') || !raw.includes('%%EOF'))
-      throw new CorpusError('MALFORMED_PDF', 'PDF structure is invalid')
-    const pageMarkers = raw.match(/\/Type\s*\/Page\b/g)?.length ?? 0
-    const pages = Math.max(1, pageMarkers)
-    if (pages > limits.maxPdfPages)
-      throw new CorpusError(
-        'PDF_PAGE_LIMIT',
-        'PDF exceeds configured page limit',
-      )
-    const literals = [...raw.matchAll(/\(((?:\\.|[^()])*)\)\s*Tj/g)].map(
-      (match) => decodePdfLiteral(match[1]!),
+    throw new CorpusError(
+      'ASYNC_PDF_PARSER_REQUIRED',
+      'PDF extraction requires the isolated async parser',
     )
-    if (!literals.length)
-      throw new CorpusError(
-        'PDF_TEXT_UNAVAILABLE',
-        'PDF contains no bounded extractable text',
-      )
-    const perPage = Math.max(1, Math.ceil(literals.length / pages))
-    return Array.from({ length: pages }, (_, index) => {
-      assertTime()
-      return {
-        text: literals
-          .slice(index * perPage, (index + 1) * perPage)
-          .join(' ')
-          .trim(),
-        locator: {
-          kind: 'page' as const,
-          pageStart: index + 1,
-          pageEnd: index + 1,
-        },
-      }
-    }).filter((entry) => entry.text.length > 0)
   }
   const text = Buffer.from(input.bytes).toString('utf8')
   if (text.includes('\uFFFD'))
@@ -303,6 +277,29 @@ export function extractDocument(input: {
   return result
 }
 
+export async function extractDocumentBounded(input: {
+  mediaType: SourceRevision['mediaType']
+  bytes: Uint8Array
+  limits?: Partial<CorpusLimits>
+}) {
+  const limits = { ...DEFAULT_CORPUS_LIMITS, ...input.limits }
+  if (input.mediaType !== 'application/pdf') return extractDocument(input)
+  const pages = await extractPdfInSandbox({
+    bytes: input.bytes,
+    limits: {
+      maxBytes: limits.maxBytes,
+      maxPdfPages: limits.maxPdfPages,
+      parserTimeoutMs: limits.parserTimeoutMs,
+      maxOutputBytes: limits.maxParserOutputBytes,
+      maxMemoryBytes: limits.maxParserMemoryBytes,
+    },
+  })
+  return pages.map(({ text, page }) => ({
+    text,
+    locator: { kind: 'page' as const, pageStart: page, pageEnd: page },
+  }))
+}
+
 export class LocalCorpusRegistry {
   readonly #root: string
   readonly #statePath: string
@@ -312,10 +309,16 @@ export class LocalCorpusRegistry {
   constructor(
     root: string,
     options: {
+      explicitUsage: 'test' | 'development'
       limits?: Partial<CorpusLimits>
       now?: () => Date
-    } = {},
+    },
   ) {
+    if (!options.explicitUsage)
+      throw new CorpusError(
+        'EXPLICIT_LOCAL_REGISTRY_USAGE_REQUIRED',
+        'Local corpus registry requires explicit test or development usage',
+      )
     mkdirSync(root, { recursive: true, mode: 0o700 })
     this.#root = realpathSync(root)
     this.#statePath = join(this.#root, 'registry.v1.json')
@@ -472,7 +475,10 @@ export class LocalCorpusRegistry {
         contentHash,
         byteLength: length,
         mediaType,
-        parserVersion: 'corpus-parser-v1',
+        parserVersion:
+          mediaType === 'application/pdf'
+            ? PDF_PARSER_VERSION
+            : 'corpus-text-parser-v1',
         language: inferredLanguage(mediaType),
         provenance: {
           kind: input.provenance?.kind ?? 'upload',
@@ -692,7 +698,7 @@ export class LocalCorpusRegistry {
           'SNAPSHOT_INTEGRITY_FAILED',
           'Snapshot hash changed',
         )
-      const extracted = extractDocument({
+      const extracted = await extractDocumentBounded({
         mediaType: revision.mediaType,
         bytes,
         limits: this.#limits,
@@ -722,7 +728,6 @@ export class LocalCorpusRegistry {
             document.revisionId === revision.revisionId
           ),
       )
-      let tokenCount = 0
       extracted.forEach((entry, ordinal) => {
         const chunkHash = sha256(entry.text)
         const chunkId = `chk_${createHash('sha256')
@@ -748,8 +753,6 @@ export class LocalCorpusRegistry {
           },
           createdAt: this.#now().toISOString(),
         }
-        const embeddingTokens = Math.ceil(entry.text.length / 4)
-        tokenCount += embeddingTokens
         state.chunks.push(chunk)
         state.indexDocuments.push({
           version: 1,
@@ -760,29 +763,11 @@ export class LocalCorpusRegistry {
           revisionId: revision.revisionId,
           contentHash: chunkHash,
           embeddingVersion: 'unembedded-placeholder-v1',
-          embeddingTokenCount: embeddingTokens,
+          embeddingTokenCount: 0,
           status: 'indexed',
           derivedAt: this.#now().toISOString(),
         })
       })
-      const usageDedupe = `embedding:${revision.revisionId}:unembedded-placeholder-v1`
-      if (
-        !state.usage.some(
-          (entry) => scoped(entry, scope) && entry.dedupeKey === usageDedupe,
-        )
-      )
-        state.usage.push({
-          ...scope,
-          usageId: `iusg_${randomUUID()}`,
-          sourceId: source.sourceId,
-          revisionId: revision.revisionId,
-          jobId,
-          meter: 'index_embedding_token',
-          quantity: tokenCount,
-          completeness: 'complete',
-          dedupeKey: usageDedupe,
-          occurredAt: this.#now().toISOString(),
-        })
       liveJob.status = 'indexed'
       liveJob.leaseOwner = null
       liveJob.leaseExpiresAt = null
