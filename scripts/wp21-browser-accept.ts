@@ -117,6 +117,7 @@ try {
       GRANT USAGE ON SCHEMA persistent_codex TO corpus_browser;
       GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA persistent_codex TO corpus_browser;
       GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA persistent_codex TO corpus_browser;
+      GRANT EXECUTE ON FUNCTION persistent_codex.corpus_recoverable_scopes() TO corpus_browser;
       INSERT INTO persistent_codex.organizations VALUES ('${organizationId}','Browser','active'),('tenant_other','Other','active');
       INSERT INTO persistent_codex.workspaces VALUES ('${organizationId}','${workspaceId}','Browser'),('tenant_other','${workspaceId}','Other');
       INSERT INTO persistent_codex.sessions VALUES ('${organizationId}','${workspaceId}','corpus_usage_${workspaceId}','active'),('tenant_other','${workspaceId}','corpus_usage_${workspaceId}','active');`,

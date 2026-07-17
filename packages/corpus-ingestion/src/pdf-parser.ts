@@ -138,6 +138,7 @@ export async function extractPdfInSandbox(input: {
         'PDF exceeds configured page limit',
       )
     const extracted: Array<{ text: string; page: number }> = []
+    let extractedBytes = 0
     for (let page = 1; page <= pages; page++) {
       const result = await command(
         'pdftotext',
@@ -154,6 +155,12 @@ export async function extractPdfInSandbox(input: {
         input.limits,
       )
       if (result.exitCode !== 0) throw typedPdfFailure(result)
+      extractedBytes += result.stdout.byteLength
+      if (extractedBytes > input.limits.maxOutputBytes)
+        throw new CorpusError(
+          'PDF_OUTPUT_LIMIT',
+          'PDF parser exceeded configured total output limit',
+        )
       const text = result.stdout.toString('utf8').replace(/\f+$/g, '').trim()
       if (text) extracted.push({ text, page })
     }

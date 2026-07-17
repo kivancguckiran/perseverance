@@ -115,6 +115,7 @@ try {
     GRANT USAGE ON SCHEMA persistent_codex TO corpus_runtime;
     GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA persistent_codex TO corpus_runtime;
     GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA persistent_codex TO corpus_runtime;
+    GRANT EXECUTE ON FUNCTION persistent_codex.corpus_recoverable_scopes() TO corpus_runtime;
     INSERT INTO persistent_codex.organizations VALUES ('tenant_a','A','active'),('tenant_b','B','active');
     INSERT INTO persistent_codex.workspaces VALUES ('tenant_a','workspace_a','A'),('tenant_b','workspace_a','B');
     INSERT INTO persistent_codex.sessions VALUES
@@ -213,11 +214,51 @@ try {
   })
   if (duplicate.json().revision?.revisionId !== created.revision.revisionId)
     throw new Error('Duplicate upload was not deduplicated')
+  const startupRecovery = await app.inject({
+    method: 'POST',
+    url: '/v1/workspaces/workspace_a/sources',
+    headers: {
+      ...headers,
+      'content-type': 'application/octet-stream',
+      'x-source-name': 'startup-recovery.txt',
+      'x-source-media-type': 'text/plain',
+    },
+    payload: Buffer.from('WP21 control-plane startup recovery fixture'),
+  })
+  const startupRecoverySourceId = startupRecovery.json().source
+    .sourceId as string
   await app.close()
 
   app = await buildControlPlane({
     databasePath: join(root, 'events-2.sqlite'),
     artifactRoot: join(root, 'artifacts-2'),
+    allowExplicitDevAuthentication: true,
+    allowInMemorySupportAccess: true,
+    corpusRepository: createPostgresCorpusRepository({ connectionString: url }),
+    corpusSnapshotStorage: storage,
+    corpusAutoDrain: true,
+  })
+  let startupRecovered = false
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const recovered = await app.inject({
+      method: 'GET',
+      url: `/v1/workspaces/workspace_a/sources/${startupRecoverySourceId}`,
+      headers,
+    })
+    if (recovered.json().source?.status === 'indexed') {
+      startupRecovered = true
+      break
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  if (!startupRecovered)
+    throw new Error(
+      'Control-plane startup did not auto-recover pending corpus job',
+    )
+  await app.close()
+  app = await buildControlPlane({
+    databasePath: join(root, 'events-3.sqlite'),
+    artifactRoot: join(root, 'artifacts-3'),
     allowExplicitDevAuthentication: true,
     allowInMemorySupportAccess: true,
     corpusRepository: createPostgresCorpusRepository({ connectionString: url }),
@@ -485,6 +526,7 @@ try {
     storage: 'encrypted-filesystem',
     apiWorkerPath: 'passed',
     controlPlaneRestart: 'passed',
+    startupAutoRecovery: 'passed',
     workerRestartRecovery: 'passed',
     concurrentClaim: { workers: 2, winners: 1 },
     duplicateUpload: 'deduped',

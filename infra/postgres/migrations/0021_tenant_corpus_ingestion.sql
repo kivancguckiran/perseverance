@@ -100,6 +100,20 @@ CREATE INDEX IF NOT EXISTS extraction_jobs_claim_idx
 ALTER TABLE persistent_codex.extraction_jobs
   ADD COLUMN IF NOT EXISTS lock_version bigint NOT NULL DEFAULT 0;
 
+CREATE OR REPLACE FUNCTION persistent_codex.corpus_recoverable_scopes()
+RETURNS TABLE (tenant_id text, organization_id text, workspace_id text)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, persistent_codex
+SET row_security = off
+AS $$
+  SELECT DISTINCT jobs.tenant_id, jobs.organization_id, jobs.workspace_id
+  FROM persistent_codex.extraction_jobs AS jobs
+  WHERE jobs.status = 'pending'
+     OR (jobs.status = 'extracting' AND jobs.lease_expires_at <= now())
+$$;
+REVOKE ALL ON FUNCTION persistent_codex.corpus_recoverable_scopes() FROM PUBLIC;
+
 CREATE TABLE IF NOT EXISTS persistent_codex.corpus_chunks (
   tenant_id text NOT NULL,
   organization_id text NOT NULL,

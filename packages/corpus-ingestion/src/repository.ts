@@ -19,6 +19,7 @@ export const CORPUS_REPOSITORY_VERSION = 1 as const
 export interface CorpusRepository {
   readonly version: typeof CORPUS_REPOSITORY_VERSION
   readonly adapter: 'postgresql'
+  recoverableScopes(): Promise<CorpusScope[]>
   registerSource(input: {
     scope: CorpusScope
     source: Source
@@ -170,6 +171,18 @@ export class PostgresCorpusRepository implements CorpusRepository {
     this.#ownsPool = options.ownsPool ?? false
   }
 
+  async recoverableScopes() {
+    const result = await this.#pool.query(
+      `SELECT tenant_id,organization_id,workspace_id
+       FROM persistent_codex.corpus_recoverable_scopes()`,
+    )
+    return result.rows.map((row) => ({
+      tenantId: String(row.tenant_id),
+      organizationId: String(row.organization_id),
+      workspaceId: String(row.workspace_id),
+    }))
+  }
+
   async #transaction<T>(
     scope: CorpusScope,
     fn: (client: PoolClient) => Promise<T>,
@@ -242,6 +255,17 @@ export class PostgresCorpusRepository implements CorpusRepository {
       const s = input.source
       const r = input.revision
       const j = input.job
+      await client.query(
+        `INSERT INTO persistent_codex.sessions
+         (organization_id,workspace_id,session_id,status)
+         VALUES ($1,$2,$3,'active')
+         ON CONFLICT (organization_id,workspace_id,session_id) DO NOTHING`,
+        [
+          input.scope.organizationId,
+          input.scope.workspaceId,
+          `corpus_usage_${input.scope.workspaceId}`,
+        ],
+      )
       await client.query(
         `INSERT INTO persistent_codex.sources
          (tenant_id,organization_id,workspace_id,source_id,kind,display_name,status,current_revision_id,created_at,updated_at,deleted_at)
