@@ -154,6 +154,64 @@ describe('WP20 support access governance', () => {
     ).toThrowError(new SupportAccessError('KMS_DECRYPT_ROLE_REQUIRED'))
   })
 
+  it('accepts both KMS approval orders and rolls a failed terminal decision back completely', () => {
+    for (const actors of [
+      [approver, kms],
+      [kms, approver],
+    ] as const) {
+      const test = fixture(['content.decrypt'])
+      const first = test.service.decideGrant({
+        grantId: test.grant.grantId,
+        actor: actors[0],
+        decision: 'approve',
+        expectedVersion: test.grant.version,
+        idempotencyKey: `first-${actors[0].principalId}`,
+        mfaEvidenceId: `mfa-${actors[0].principalId}`,
+        correlationId: 'corr-order',
+      })
+      const active = test.service.decideGrant({
+        grantId: first.grantId,
+        actor: actors[1],
+        decision: 'approve',
+        expectedVersion: first.version,
+        idempotencyKey: `second-${actors[1].principalId}`,
+        mfaEvidenceId: `mfa-${actors[1].principalId}`,
+        correlationId: 'corr-order',
+      })
+      expect(active.status).toBe('active')
+      expect(
+        test.service
+          .snapshot()
+          .approvals.map((value) => [
+            value.approverPrincipalId,
+            value.approverRole,
+          ]),
+      ).toEqual(actors.map((actor) => [actor.principalId, actor.role]))
+    }
+
+    const failed = fixture(['content.decrypt'])
+    const first = failed.service.decideGrant({
+      grantId: failed.grant.grantId,
+      actor: approver,
+      decision: 'approve',
+      expectedVersion: failed.grant.version,
+      idempotencyKey: 'rollback-first',
+      correlationId: 'corr-rollback',
+    })
+    const before = failed.service.snapshot()
+    expect(() =>
+      failed.service.decideGrant({
+        grantId: first.grantId,
+        actor: support,
+        decision: 'approve',
+        expectedVersion: first.version,
+        idempotencyKey: 'rollback-second',
+        correlationId: 'corr-rollback',
+      }),
+    ).toThrowError(new SupportAccessError('KMS_OPERATOR_APPROVAL_REQUIRED'))
+    expect(failed.service.snapshot()).toEqual(before)
+  })
+
   it('invalidates one-use leases immediately through generation on revoke and expiry', () => {
     const test = fixture()
     let grant = test.service.decideGrant({
@@ -343,7 +401,16 @@ describe('WP20 break-glass', () => {
     })
     expect(lease.lease.expiresAt).toBeTruthy()
     const alarm = service.listOutbox(tenant)[0]!
-    service.failOutbox(alarm.outboxId, '2026-07-17T10:01:00.000Z')
+    service.failOutbox(
+      alarm.outboxId,
+      '2026-07-17T10:01:00.000Z',
+      'delivery-attempt-1',
+    )
+    service.failOutbox(
+      alarm.outboxId,
+      '2026-07-17T10:01:00.000Z',
+      'delivery-attempt-1',
+    )
     const restarted = new SupportAccessService(service.now, service.snapshot())
     expect(restarted.listOutbox(tenant)[0]).toMatchObject({
       status: 'pending',

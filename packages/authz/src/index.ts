@@ -363,6 +363,7 @@ const ROLE_ACTIONS: Record<OrganizationMembership['role'], Set<string>> = {
     'support.grant.read',
     'support.grant.approve',
     'support.access.use',
+    'break_glass.approve',
   ]),
 }
 

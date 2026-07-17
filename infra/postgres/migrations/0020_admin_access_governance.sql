@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS persistent_codex.support_grants (
   version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
   generation bigint NOT NULL DEFAULT 0 CHECK (generation >= 0),
   idempotency_key text NOT NULL,
+  operation_idempotency_keys text[] NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (organization_id, workspace_id, grant_id),
   UNIQUE (organization_id, workspace_id, idempotency_key),
@@ -72,10 +73,12 @@ CREATE TABLE IF NOT EXISTS persistent_codex.jit_access_leases (
   generation bigint NOT NULL CHECK (generation >= 0),
   issued_at timestamptz NOT NULL DEFAULT now(),
   expires_at timestamptz NOT NULL,
+  idempotency_key text NOT NULL,
   consumed_at timestamptz,
   revoked_at timestamptz,
   PRIMARY KEY (organization_id, workspace_id, lease_id),
   UNIQUE (organization_id, workspace_id, token_hash),
+  UNIQUE (organization_id, workspace_id, idempotency_key),
   CHECK (num_nonnulls(grant_id, break_glass_id) = 1),
   FOREIGN KEY (organization_id, workspace_id)
     REFERENCES persistent_codex.workspaces (organization_id, workspace_id)
@@ -102,6 +105,7 @@ CREATE TABLE IF NOT EXISTS persistent_codex.break_glass_requests (
   version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
   generation bigint NOT NULL DEFAULT 0 CHECK (generation >= 0),
   idempotency_key text NOT NULL,
+  operation_idempotency_keys text[] NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (organization_id, workspace_id, break_glass_id),
   UNIQUE (organization_id, workspace_id, idempotency_key),
@@ -109,6 +113,16 @@ CREATE TABLE IF NOT EXISTS persistent_codex.break_glass_requests (
     REFERENCES persistent_codex.sessions (organization_id, workspace_id, session_id),
   CHECK (expires_at <= created_at + interval '15 minutes')
 );
+
+ALTER TABLE persistent_codex.support_grants
+  ADD COLUMN IF NOT EXISTS operation_idempotency_keys text[] NOT NULL DEFAULT '{}';
+ALTER TABLE persistent_codex.break_glass_requests
+  ADD COLUMN IF NOT EXISTS operation_idempotency_keys text[] NOT NULL DEFAULT '{}';
+ALTER TABLE persistent_codex.jit_access_leases
+  ADD COLUMN IF NOT EXISTS idempotency_key text NOT NULL DEFAULT public.gen_random_uuid()::text;
+CREATE UNIQUE INDEX IF NOT EXISTS jit_access_leases_idempotency_unique
+  ON persistent_codex.jit_access_leases
+  (organization_id, workspace_id, idempotency_key);
 
 ALTER TABLE persistent_codex.jit_access_leases
   DROP CONSTRAINT IF EXISTS jit_access_leases_grant_fk;
@@ -184,11 +198,15 @@ CREATE TABLE IF NOT EXISTS persistent_codex.security_notification_outbox (
   available_at timestamptz NOT NULL DEFAULT now(),
   delivered_at timestamptz,
   idempotency_key text NOT NULL,
+  result_idempotency_key text,
   PRIMARY KEY (organization_id, workspace_id, outbox_id),
   UNIQUE (organization_id, workspace_id, idempotency_key),
   FOREIGN KEY (organization_id, workspace_id)
     REFERENCES persistent_codex.workspaces (organization_id, workspace_id)
 );
+
+ALTER TABLE persistent_codex.security_notification_outbox
+  ADD COLUMN IF NOT EXISTS result_idempotency_key text;
 
 CREATE TABLE IF NOT EXISTS persistent_codex.access_revocation_epochs (
   organization_id text NOT NULL,

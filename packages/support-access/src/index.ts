@@ -59,6 +59,7 @@ export interface AccessLease {
   generation: number
   issuedAt: string
   expiresAt: string
+  consumedAt: string | null
   revokedAt: string | null
   tokenHash: string
 }
@@ -108,12 +109,31 @@ export interface SecurityOutboxRecord {
   attempts: number
   availableAt: string
   deliveredAt: string | null
+  idempotencyKey: string
+  lastResultIdempotencyKey: string | null
 }
 
-interface PersistedState {
+export interface SupportApprovalRecord {
+  aggregateKind: 'support_grant' | 'break_glass'
+  aggregateId: string
+  approvalId: string
+  approverPrincipalId: string
+  approverRole: Extract<
+    SupportRole,
+    'support' | 'security_approver' | 'kms_operator'
+  >
+  decision: 'approve' | 'deny'
+  mfaEvidenceId: string
+  idempotencyKey: string
+  decidedAt: string
+}
+
+export interface SupportAccessState {
   grants: SupportGrant[]
   breakGlass: BreakGlassRequest[]
   leases: AccessLease[]
+  approvals: SupportApprovalRecord[]
+  idempotency: Array<{ key: string; aggregateId: string }>
   audit: SecurityAuditRecord[]
   outbox: SecurityOutboxRecord[]
 }
@@ -144,12 +164,13 @@ export class SupportAccessService {
   readonly #grants = new Map<string, SupportGrant>()
   readonly #breakGlass = new Map<string, BreakGlassRequest>()
   readonly #leases = new Map<string, AccessLease>()
+  readonly #approvals: SupportApprovalRecord[] = []
   readonly #idempotency = new Map<string, string>()
   readonly #audit: SecurityAuditRecord[] = []
   readonly #outbox: SecurityOutboxRecord[] = []
 
   readonly now: () => Date
-  constructor(now: () => Date = () => new Date(), state?: PersistedState) {
+  constructor(now: () => Date = () => new Date(), state?: SupportAccessState) {
     this.now = now
     for (const grant of state?.grants ?? []) {
       const parsed = supportGrantSchema.parse(grant)
@@ -165,15 +186,35 @@ export class SupportAccessService {
     }
     for (const lease of state?.leases ?? [])
       this.#leases.set(lease.leaseId, structuredClone(lease))
+    this.#approvals.push(
+      ...(state?.approvals ?? []).map((value) => structuredClone(value)),
+    )
+    for (const approval of this.#approvals) {
+      const prefix =
+        approval.aggregateKind === 'support_grant'
+          ? 'grant-decision'
+          : 'break-approval'
+      this.#idempotency.set(
+        `${prefix}:${approval.idempotencyKey}`,
+        approval.aggregateId,
+      )
+    }
+    for (const entry of state?.idempotency ?? [])
+      this.#idempotency.set(entry.key, entry.aggregateId)
     this.#audit.push(...(state?.audit ?? []).map((v) => structuredClone(v)))
     this.#outbox.push(...(state?.outbox ?? []).map((v) => structuredClone(v)))
   }
 
-  snapshot(): PersistedState {
+  snapshot(): SupportAccessState {
     return structuredClone({
       grants: [...this.#grants.values()],
       breakGlass: [...this.#breakGlass.values()],
       leases: [...this.#leases.values()],
+      approvals: this.#approvals,
+      idempotency: [...this.#idempotency].map(([key, aggregateId]) => ({
+        key,
+        aggregateId,
+      })),
       audit: this.#audit,
       outbox: this.#outbox,
     })
@@ -299,6 +340,7 @@ export class SupportAccessService {
     decision: 'approve' | 'deny'
     expectedVersion: number
     idempotencyKey: string
+    mfaEvidenceId?: string
     correlationId: string
   }) {
     const grant = this.#grant(input.grantId)
@@ -322,25 +364,44 @@ export class SupportAccessService {
       throw new SupportAccessError('SEPARATION_OF_DUTY_REQUIRED')
     if (grant.approvalPrincipalIds.includes(input.actor.principalId))
       throw new SupportAccessError('DISTINCT_APPROVER_REQUIRED')
+    const approval: SupportApprovalRecord = {
+      aggregateKind: 'support_grant',
+      aggregateId: grant.grantId,
+      approvalId: `sap_${randomUUID()}`,
+      approverPrincipalId: input.actor.principalId,
+      approverRole: input.actor.role as SupportApprovalRecord['approverRole'],
+      decision: input.decision,
+      mfaEvidenceId: input.mfaEvidenceId ?? 'strong_mfa',
+      idempotencyKey: input.idempotencyKey,
+      decidedAt: this.now().toISOString(),
+    }
     if (input.decision === 'deny') {
       grant.status = 'denied'
       grant.generation++
     } else {
-      grant.approvalPrincipalIds.push(input.actor.principalId)
-      if (grant.approvalPrincipalIds.length >= grant.requiredApprovals) {
+      const candidateApprovals = [
+        ...this.#approvals.filter(
+          (value) =>
+            value.aggregateKind === 'support_grant' &&
+            value.aggregateId === grant.grantId &&
+            value.decision === 'approve',
+        ),
+        approval,
+      ]
+      if (candidateApprovals.length >= grant.requiredApprovals) {
         if (
           grant.actions.includes('content.decrypt') &&
-          !grant.approvalPrincipalIds.some((id) =>
-            id === input.actor.principalId
-              ? input.actor.role === 'kms_operator'
-              : false,
+          !candidateApprovals.some(
+            (value) => value.approverRole === 'kms_operator',
           )
         )
           throw new SupportAccessError('KMS_OPERATOR_APPROVAL_REQUIRED')
         grant.status = 'active'
         grant.issuedAt = this.now().toISOString()
       }
+      grant.approvalPrincipalIds.push(input.actor.principalId)
     }
+    this.#approvals.push(approval)
     grant.version++
     this.#idempotency.set(
       `grant-decision:${input.idempotencyKey}`,
@@ -411,6 +472,7 @@ export class SupportAccessService {
     sessionId?: string | null
     objectId?: string | null
     action: SupportAccessAction
+    idempotencyKey?: string
     correlationId: string
   }): IssuedAccessLease {
     this.expire()
@@ -449,6 +511,7 @@ export class SupportAccessService {
       generation: grant.generation,
       issuedAt: issuedAt.toISOString(),
       expiresAt,
+      consumedAt: null,
       revokedAt: null,
       tokenHash: hash(token),
     }
@@ -471,6 +534,7 @@ export class SupportAccessService {
     sessionId: string
     objectId: string
     action: SupportAccessAction
+    idempotencyKey?: string
     correlationId: string
   }): IssuedAccessLease {
     this.expire()
@@ -514,6 +578,7 @@ export class SupportAccessService {
           issuedAt.getTime() + 2 * 60_000,
         ),
       ).toISOString(),
+      consumedAt: null,
       revokedAt: null,
       tokenHash: hash(token),
     }
@@ -552,6 +617,7 @@ export class SupportAccessService {
     if (
       aggregate.status !== 'active' ||
       aggregate.generation !== lease.generation ||
+      lease.consumedAt ||
       lease.revokedAt ||
       Date.parse(lease.expiresAt) <= this.now().getTime()
     )
@@ -566,7 +632,7 @@ export class SupportAccessService {
       lease.principalId !== input.principalId
     )
       throw new SupportAccessError('LEASE_SCOPE_MISMATCH')
-    lease.revokedAt = this.now().toISOString()
+    lease.consumedAt = this.now().toISOString()
     const auditAction =
       input.action === 'content.view'
         ? 'content.viewed'
@@ -689,6 +755,7 @@ export class SupportAccessService {
     actor: SupportActor
     expectedVersion: number
     idempotencyKey: string
+    mfaEvidenceId?: string
     correlationId: string
   }) {
     const request = this.#breakGlassRequest(input.breakGlassId)
@@ -709,9 +776,35 @@ export class SupportAccessService {
       request.approvalPrincipalIds.includes(input.actor.principalId)
     )
       throw new SupportAccessError('SEPARATION_OF_DUTY_REQUIRED')
+    const approval: SupportApprovalRecord = {
+      aggregateKind: 'break_glass',
+      aggregateId: request.breakGlassId,
+      approvalId: `bap_${randomUUID()}`,
+      approverPrincipalId: input.actor.principalId,
+      approverRole: input.actor.role as SupportApprovalRecord['approverRole'],
+      decision: 'approve',
+      mfaEvidenceId: input.mfaEvidenceId ?? 'strong_mfa',
+      idempotencyKey: input.idempotencyKey,
+      decidedAt: this.now().toISOString(),
+    }
+    const candidateApprovals = [
+      ...this.#approvals.filter(
+        (value) =>
+          value.aggregateKind === 'break_glass' &&
+          value.aggregateId === request.breakGlassId,
+      ),
+      approval,
+    ]
+    if (
+      candidateApprovals.length === 2 &&
+      request.actions.includes('content.decrypt') &&
+      !candidateApprovals.some((value) => value.approverRole === 'kms_operator')
+    )
+      throw new SupportAccessError('KMS_OPERATOR_APPROVAL_REQUIRED')
     request.approvalPrincipalIds.push(input.actor.principalId)
+    this.#approvals.push(approval)
     request.version++
-    if (request.approvalPrincipalIds.length === 2) {
+    if (candidateApprovals.length === 2) {
       const alarm: SecurityOutboxRecord = {
         outboxId: `out_${randomUUID()}`,
         tenantId: request.tenantId,
@@ -723,6 +816,8 @@ export class SupportAccessService {
         attempts: 0,
         availableAt: this.now().toISOString(),
         deliveredAt: null,
+        idempotencyKey: `break-glass-alarm:${request.breakGlassId}`,
+        lastResultIdempotencyKey: null,
       }
       this.#outbox.push(alarm)
       request.status = 'active'
@@ -755,6 +850,7 @@ export class SupportAccessService {
     breakGlassId: string
     actor: SupportActor
     expectedVersion: number
+    idempotencyKey?: string
     correlationId: string
   }) {
     const request = this.#breakGlassRequest(input.breakGlassId)
@@ -831,21 +927,30 @@ export class SupportAccessService {
       )
       .map((v) => structuredClone(v))
   }
-  deliverOutbox(outboxId: string) {
+  deliverOutbox(outboxId: string, idempotencyKey?: string) {
     const record = this.#outbox.find((v) => v.outboxId === outboxId)
     if (!record) throw new SupportAccessError('OUTBOX_NOT_FOUND')
+    if (
+      record.status === 'delivered' ||
+      (idempotencyKey && record.lastResultIdempotencyKey === idempotencyKey)
+    )
+      return structuredClone(record)
     record.attempts++
     record.status = 'delivered'
     record.deliveredAt = this.now().toISOString()
+    record.lastResultIdempotencyKey = idempotencyKey ?? null
     return structuredClone(record)
   }
-  failOutbox(outboxId: string, retryAt: string) {
+  failOutbox(outboxId: string, retryAt: string, idempotencyKey?: string) {
     const record = this.#outbox.find((value) => value.outboxId === outboxId)
     if (!record) throw new SupportAccessError('OUTBOX_NOT_FOUND')
+    if (idempotencyKey && record.lastResultIdempotencyKey === idempotencyKey)
+      return structuredClone(record)
     record.attempts++
     record.status = 'pending'
     record.availableAt = retryAt
     record.deliveredAt = null
+    record.lastResultIdempotencyKey = idempotencyKey ?? null
     return structuredClone(record)
   }
   verifyAuditChain() {
@@ -911,6 +1016,8 @@ export class SupportAccessService {
       attempts: 0,
       availableAt: this.now().toISOString(),
       deliveredAt: null,
+      idempotencyKey: `tenant-notification:${request.breakGlassId}`,
+      lastResultIdempotencyKey: null,
     })
   }
   #appendAudit(
@@ -967,3 +1074,5 @@ export class SupportAccessService {
     })
   }
 }
+
+export * from './repository'
