@@ -74,6 +74,15 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP18 — Tenant kimliği ve data isolation      | Tamamlandı | OIDC, deny-by-default authorization, RLS/object/cache tenant sınırı bağımsız kabul edildi                   |
 | WP19 — Runtime ve encryption isolation       | Tamamlandı | Kata runtime, egress, secret lease, KMS envelope encryption ve restore sınırı bağımsız kabul edildi         |
 | WP20 — Security beta kabulü                  | Tamamlandı | Durable support grant/JIT/break-glass ve birleşik adversarial Faz 3 kabulü bağımsız doğrulandı              |
+| WP21 — Corpus ingestion temeli               | Aktif      | Tenant-aware source registry, extraction, chunk ve derived index omurgası kurulacak                         |
+| WP22 — Hybrid retrieval ve MCP               | Planlandı  | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP tamamlanacak                   |
+| WP23 — Mobil approval ve push                | Planlandı  | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği tamamlanacak                                   |
+| WP24 — Billing ve Faz 4 kabulü               | Planlandı  | Plan/kota/billing entegrasyonu ile corpus-mobil ürün fazı uçtan uca kapatılacak                             |
+| WP25 — HA topology ve kapasite               | Planlandı  | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
+| WP26 — SLO ve DR                             | Planlandı  | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
+| WP27 — Enterprise lifecycle                  | Planlandı  | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
+| WP28 — Supply-chain ve canary                | Planlandı  | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
+| WP29 — Production kabul ve rollout           | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
 
 ## WP1 nihai denetim sonucu
 
@@ -990,3 +999,13 @@ Uygulama commit'leri: `b842d6a`, `f4863e7`.
 
 WP20 ve Faz 3 tamamlandı. Aktif iş paketi yoktur; Faz 4 planlanıp kabul edilmeden yeni
 uygulama paketi başlatılmaz.
+
+## Faz 4 ve Faz 5 plan kabulü
+
+Faz 4 Corpus ve mobil ürün WP21–WP24; Faz 5 Production hardening WP25–WP29 olarak
+`docs/planning/phase-4-corpus-mobile-and-phase-5-production-plan.md` içinde planlandı.
+Paketler source ingestion, retrieval/MCP, mobil/push, billing/kota, HA/capacity,
+observability/DR, enterprise lifecycle, supply-chain/canary ve nihai production
+kabulünü bağımsız doğrulanabilir sınırlara ayırır.
+
+WP21 tek aktif iş paketidir. WP21 bağımsız kabul edilmeden WP22'ye geçilemez.
