@@ -133,6 +133,13 @@ importers:
       '@persistent-codex/control-plane-contracts':
         specifier: workspace:*
         version: link:../control-plane-contracts
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
 
   packages/domain-events:
     dependencies:

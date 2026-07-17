@@ -1,9 +1,13 @@
 import { setImmediate as waitForImmediate } from 'node:timers/promises'
 import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import {
+  CorpusIngestionService,
   CorpusError,
   LocalCorpusRegistry,
   singleChunk,
+  type CorpusRepository,
+  type CorpusSnapshotStorage,
+  type EmbeddingProvider,
 } from '@persistent-codex/corpus-ingestion'
 import {
   AuthenticationError,
@@ -155,6 +159,11 @@ export interface ControlPlaneOptions {
   artifactRoot?: string
   attachmentRoot?: string
   corpusRoot?: string
+  corpusRepository?: CorpusRepository
+  corpusSnapshotStorage?: CorpusSnapshotStorage
+  corpusEmbeddingProvider?: EmbeddingProvider
+  allowLocalCorpus?: boolean
+  corpusAutoDrain?: boolean
   preflightChecks?: Array<{
     name:
       | 'codex'
@@ -861,11 +870,45 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     options.attachmentRoot ??
       `${options.artifactRoot ?? '.runtime/artifacts'}/attachments`,
   )
-  const corpus = new LocalCorpusRegistry(
-    options.corpusRoot ??
-      `${options.artifactRoot ?? '.runtime/artifacts'}/corpus`,
-    { now },
+  const explicitLocalCorpus =
+    options.allowLocalCorpus === true || process.env.NODE_ENV === 'test'
+  if (!options.corpusRepository && !explicitLocalCorpus)
+    throw new CorpusError(
+      'CORPUS_REPOSITORY_REQUIRED',
+      'Production requires a PostgreSQL corpus repository',
+    )
+  if (options.corpusRepository && !options.corpusSnapshotStorage)
+    throw new CorpusError(
+      'CORPUS_SNAPSHOT_STORAGE_REQUIRED',
+      'Durable corpus repository requires snapshot storage',
+    )
+  if (
+    options.corpusRepository &&
+    options.corpusSnapshotStorage?.adapter === 'local-development' &&
+    !explicitLocalCorpus
   )
+    throw new CorpusError(
+      'ENCRYPTED_CORPUS_STORAGE_REQUIRED',
+      'Production requires encrypted corpus snapshot storage',
+    )
+  const corpus = options.corpusRepository
+    ? new CorpusIngestionService({
+        repository: options.corpusRepository,
+        storage: options.corpusSnapshotStorage!,
+        ...(options.corpusEmbeddingProvider
+          ? { embeddingProvider: options.corpusEmbeddingProvider }
+          : {}),
+        now,
+      })
+    : new LocalCorpusRegistry(
+        options.corpusRoot ??
+          `${options.artifactRoot ?? '.runtime/artifacts'}/corpus`,
+        {
+          explicitUsage:
+            process.env.NODE_ENV === 'test' ? 'test' : 'development',
+          now,
+        },
+      )
   const corpusDrains = new Map<string, Promise<void>>()
   let corpusWorkerTail = Promise.resolve()
   const scheduleCorpusDrain = (scope: SupportAccessScope) => {
@@ -882,7 +925,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     const drain = corpusWorkerTail
       .then(async () => {
         for (let processed = 0; processed < 64; processed++) {
-          const job = corpus.claimNext(scope, workerId)
+          const job = await corpus.claimNext(scope, workerId)
           if (!job) break
           try {
             await corpus.processJob(scope, job.jobId, workerId)
@@ -895,7 +938,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     corpusDrains.set(key, drain)
     corpusWorkerTail = drain.catch(() => undefined)
   }
-  for (const scope of corpus.recoverableScopes())
+  for (const scope of await corpus.recoverableScopes())
     setImmediate(() => scheduleCorpusDrain(scope))
   const securityReadiness = options.securityReadiness ?? {
     runtimeBackend: 'local-process' as const,
@@ -1289,6 +1332,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   app.addHook('onClose', async () => {
     await orchestrator.close()
     await supportAccess.close()
+    if ('close' in corpus && typeof corpus.close === 'function')
+      await corpus.close()
     if (ownsStore) store.close()
   })
 
@@ -1523,7 +1568,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             : {}),
           chunks: singleChunk(request.body),
         })
-        setImmediate(() => scheduleCorpusDrain(scope))
+        if (options.corpusAutoDrain !== false)
+          setImmediate(() => scheduleCorpusDrain(scope))
         return reply.code(201).send(createSourceResponseSchema.parse(created))
       } catch (error) {
         if (error instanceof Error && error.name === 'ZodError')
@@ -1558,7 +1604,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Workspace scope is required',
         })
       return sourceListResponseSchema.parse({
-        sources: corpus.listSources(scope),
+        sources: await corpus.listSources(scope),
       })
     },
   )
@@ -1574,7 +1620,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       try {
         return sourceDetailResponseSchema.parse(
-          corpus.sourceDetail(scope, request.params.sourceId),
+          await corpus.sourceDetail(scope, request.params.sourceId),
         )
       } catch (error) {
         if (error instanceof CorpusError)
@@ -1596,7 +1642,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Workspace scope is required',
         })
       try {
-        corpus.deleteSource(scope, request.params.sourceId)
+        await corpus.deleteSource(scope, request.params.sourceId)
         return reply.code(204).send()
       } catch (error) {
         if (error instanceof CorpusError)
@@ -1618,8 +1664,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Workspace scope is required',
         })
       try {
-        const job = corpus.reindexSource(scope, request.params.sourceId)
-        setImmediate(() => scheduleCorpusDrain(scope))
+        const job = await corpus.reindexSource(scope, request.params.sourceId)
+        if (options.corpusAutoDrain !== false)
+          setImmediate(() => scheduleCorpusDrain(scope))
         return reply.code(202).send(job)
       } catch (error) {
         if (error instanceof CorpusError)

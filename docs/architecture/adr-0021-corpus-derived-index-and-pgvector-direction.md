@@ -1,6 +1,6 @@
 # ADR-0021: Corpus doğruluk kaynağı ve MVP vector backend yönü
 
-- Durum: Kabul edildi
+- Durum: Kabul önerisi
 - Tarih: 17 Temmuz 2026
 - Kapsam: WP21 source registry, extraction, chunk ve derived index temeli
 
@@ -30,6 +30,23 @@ Embedding kullanımı append-only `usage_ledger` içinde
 key ile kaydedilir. Interrupted veya failed iş `partial` kalır; sıfır kullanım
 uydurulmaz.
 
+Production ingestion yalnız versioned `CorpusRepository` PostgreSQL adapter'ı ve
+versioned, encrypted `CorpusSnapshotStorage` adapter'ı birlikte sağlandığında açılır;
+eksik adapter ile control-plane fail-closed başlar. PostgreSQL metadata transaction'ı
+ile immutable object write atomik olamayacağı için pre-commit hata orphan snapshot'ı
+hemen siler, post-commit cleanup hatası tenant-scoped durable cleanup outbox'a yazılır.
+
+`LocalCorpusRegistry` ve plaintext `LocalCorpusSnapshotStorage` yalnız açıkça
+`test`/`development` seçilmiş adapter'lardır. Bunların test sonucu production corpus
+durability, RLS veya worker concurrency kanıtı sayılmaz. Production kanıtı gerçek
+PostgreSQL repository, encrypted snapshot adapter ve API/worker restart smoke'undan
+gelir.
+
+PDF parser control-plane dışında Poppler child process olarak çalışır. Production
+Linux runtime child'a `prlimit` ile address-space sınırı uygular ve limiter yoksa
+fail-closed davranır; test/development macOS yolu byte/page/output sınırları ve gerçek
+timeout kill ile doğrulanır.
+
 ## Sonuçlar
 
 - Index kaybı raw snapshot ve revision metadata kaybı değildir.
@@ -39,4 +56,6 @@ uydurulmaz.
 - Attachment geçici conversation girdisi olarak kalır. Durable source, attachment
   kimliği veya lifecycle'ı reuse etmez; yalnız güvenli yerel storage ilkelerini reuse
   eder.
-- Hybrid ranking, citation tool'u, watcher ve gerçek embedding çağrısı WP22'ye aittir.
+- Hybrid ranking, citation tool'u ve watcher WP22'ye aittir. WP21 yalnız
+  `EmbeddingProvider` port'unu ve doğru usage muhasebesini kurar; placeholder veya
+  fake-test provider billable usage üretmez.

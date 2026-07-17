@@ -21,6 +21,10 @@ import {
   createPostgresSupportAccessRepository,
   InMemorySupportAccessRepository,
 } from '@persistent-codex/support-access'
+import {
+  createPostgresCorpusRepository,
+  EncryptedFilesystemCorpusSnapshotStorage,
+} from '@persistent-codex/corpus-ingestion'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -41,6 +45,20 @@ const supportAccessRepository = supportDatabaseUrl
       connectionString: supportDatabaseUrl,
     })
   : new InMemorySupportAccessRepository({ explicitUsage: 'development' })
+const corpusEncryptionKey = process.env.CORPUS_SNAPSHOT_KEY_BASE64
+if (!localAlpha && !corpusEncryptionKey)
+  throw new Error(
+    'Production requires CORPUS_SNAPSHOT_KEY_BASE64 for encrypted corpus snapshots',
+  )
+const corpusRepository = supportDatabaseUrl
+  ? createPostgresCorpusRepository({ connectionString: supportDatabaseUrl })
+  : undefined
+const corpusSnapshotStorage = corpusEncryptionKey
+  ? new EncryptedFilesystemCorpusSnapshotStorage(
+      resolve(process.env.CORPUS_SNAPSHOT_ROOT ?? '.runtime/alpha/corpus'),
+      Buffer.from(corpusEncryptionKey, 'base64'),
+    )
+  : undefined
 const runtimeBackend =
   process.env.PERSISTENT_RUNTIME_BACKEND ??
   (localAlpha ? 'local-process' : undefined)
@@ -172,6 +190,9 @@ const app = await buildControlPlane({
   logger: true,
   authenticationAdapter,
   supportAccessRepository,
+  ...(corpusRepository && corpusSnapshotStorage
+    ? { corpusRepository, corpusSnapshotStorage }
+    : { allowLocalCorpus: true }),
   securityReadiness: {
     runtimeBackend:
       runtimeBackend === 'kata-kubernetes'
