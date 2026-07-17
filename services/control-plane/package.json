@@ -15,6 +15,7 @@
     "@fastify/cors": "^11.3.0",
     "@fastify/websocket": "^11.3.0",
     "@persistent-codex/control-plane-contracts": "workspace:*",
+    "@persistent-codex/corpus-ingestion": "workspace:*",
     "@persistent-codex/codex-event-adapter": "workspace:*",
     "@persistent-codex/codex-protocol-generated": "workspace:*",
     "@persistent-codex/domain-events": "workspace:*",

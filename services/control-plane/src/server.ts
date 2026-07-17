@@ -1,6 +1,11 @@
 import { setImmediate as waitForImmediate } from 'node:timers/promises'
 import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import {
+  CorpusError,
+  LocalCorpusRegistry,
+  singleChunk,
+} from '@persistent-codex/corpus-ingestion'
+import {
   AuthenticationError,
   ExplicitDevAuthenticationAdapter,
   authorize,
@@ -28,6 +33,10 @@ import {
   supportRevokeRequestSchema,
   outboxDeliveryResultRequestSchema,
   securityOutboxRecordSchema,
+  createSourceResponseSchema,
+  sourceDetailResponseSchema,
+  sourceListResponseSchema,
+  sourceUploadMetadataSchema,
 } from '@persistent-codex/control-plane-contracts'
 import {
   InMemorySupportAccessRepository,
@@ -145,6 +154,7 @@ export interface ControlPlaneOptions {
   codexProvisioningSource?: string
   artifactRoot?: string
   attachmentRoot?: string
+  corpusRoot?: string
   preflightChecks?: Array<{
     name:
       | 'codex'
@@ -441,6 +451,36 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/sessions/:sessionId/attachments',
       action: 'attachment.upload',
       resourceType: 'attachment',
+    },
+    {
+      method: 'POST',
+      route: '/v1/workspaces/:workspaceId/sources',
+      action: 'source.create',
+      resourceType: 'source',
+    },
+    {
+      method: 'GET',
+      route: '/v1/workspaces/:workspaceId/sources',
+      action: 'source.read',
+      resourceType: 'source',
+    },
+    {
+      method: 'GET',
+      route: '/v1/workspaces/:workspaceId/sources/:sourceId',
+      action: 'source.read',
+      resourceType: 'source',
+    },
+    {
+      method: 'DELETE',
+      route: '/v1/workspaces/:workspaceId/sources/:sourceId',
+      action: 'source.delete',
+      resourceType: 'source',
+    },
+    {
+      method: 'POST',
+      route: '/v1/workspaces/:workspaceId/sources/:sourceId/reindex',
+      action: 'source.reindex',
+      resourceType: 'source',
     },
     {
       method: 'DELETE',
@@ -821,6 +861,42 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     options.attachmentRoot ??
       `${options.artifactRoot ?? '.runtime/artifacts'}/attachments`,
   )
+  const corpus = new LocalCorpusRegistry(
+    options.corpusRoot ??
+      `${options.artifactRoot ?? '.runtime/artifacts'}/corpus`,
+    { now },
+  )
+  const corpusDrains = new Map<string, Promise<void>>()
+  let corpusWorkerTail = Promise.resolve()
+  const scheduleCorpusDrain = (scope: SupportAccessScope) => {
+    const key = JSON.stringify([
+      scope.tenantId,
+      scope.organizationId,
+      scope.workspaceId,
+    ])
+    if (corpusDrains.has(key)) return
+    const workerId = `control-plane-${createHash('sha256')
+      .update(key)
+      .digest('hex')
+      .slice(0, 16)}`
+    const drain = corpusWorkerTail
+      .then(async () => {
+        for (let processed = 0; processed < 64; processed++) {
+          const job = corpus.claimNext(scope, workerId)
+          if (!job) break
+          try {
+            await corpus.processJob(scope, job.jobId, workerId)
+          } catch {
+            // Error metadata is persisted; poison jobs must not block the queue.
+          }
+        }
+      })
+      .finally(() => corpusDrains.delete(key))
+    corpusDrains.set(key, drain)
+    corpusWorkerTail = drain.catch(() => undefined)
+  }
+  for (const scope of corpus.recoverableScopes())
+    setImmediate(() => scheduleCorpusDrain(scope))
   const securityReadiness = options.securityReadiness ?? {
     runtimeBackend: 'local-process' as const,
     isolationLevel: 'development_only' as const,
@@ -845,7 +921,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   }
   app.addContentTypeParser(
     'application/octet-stream',
-    { parseAs: 'buffer', bodyLimit: Number.MAX_SAFE_INTEGER },
+    { parseAs: 'buffer', bodyLimit: 16 * 1024 * 1024 },
     (_request, body, done) => done(null, body),
   )
   const downloadTokens = new Map<
@@ -1411,6 +1487,147 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           workspaceId: scope.workspaceId,
         }),
       })
+    },
+  )
+
+  app.post<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/sources',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      const encodedName = headerValue(request.headers['x-source-name'])
+      const declaredMediaType = headerValue(
+        request.headers['x-source-media-type'],
+      )
+      if (
+        !scope ||
+        scope.workspaceId !== request.params.workspaceId ||
+        !encodedName ||
+        !Buffer.isBuffer(request.body)
+      )
+        return reply.code(400).send({
+          code: 'INVALID_SOURCE_REQUEST',
+          message: 'Scoped source name and binary body are required',
+        })
+      try {
+        const metadata = sourceUploadMetadataSchema.parse({
+          version: 1,
+          displayName: decodeURIComponent(encodedName),
+          ...(declaredMediaType ? { declaredMediaType } : {}),
+          provenance: { kind: 'upload', workspacePath: null },
+        })
+        const created = await corpus.createSource({
+          scope,
+          name: metadata.displayName,
+          ...(metadata.declaredMediaType
+            ? { declaredMediaType: metadata.declaredMediaType }
+            : {}),
+          chunks: singleChunk(request.body),
+        })
+        setImmediate(() => scheduleCorpusDrain(scope))
+        return reply.code(201).send(createSourceResponseSchema.parse(created))
+      } catch (error) {
+        if (error instanceof Error && error.name === 'ZodError')
+          return reply.code(400).send({
+            code: 'INVALID_SOURCE_METADATA',
+            message: 'Source metadata is invalid',
+          })
+        if (error instanceof URIError)
+          return reply.code(400).send({
+            code: 'INVALID_SOURCE_NAME',
+            message: 'Source name encoding is invalid',
+          })
+        if (error instanceof CorpusError)
+          return reply
+            .code(error.code === 'SOURCE_TOO_LARGE' ? 413 : 400)
+            .send({
+              code: error.code,
+              message: error.message,
+            })
+        throw error
+      }
+    },
+  )
+
+  app.get<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/sources',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      if (!scope || scope.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'Workspace scope is required',
+        })
+      return sourceListResponseSchema.parse({
+        sources: corpus.listSources(scope),
+      })
+    },
+  )
+
+  app.get<{ Params: { workspaceId: string; sourceId: string } }>(
+    '/v1/workspaces/:workspaceId/sources/:sourceId',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      if (!scope || scope.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'Workspace scope is required',
+        })
+      try {
+        return sourceDetailResponseSchema.parse(
+          corpus.sourceDetail(scope, request.params.sourceId),
+        )
+      } catch (error) {
+        if (error instanceof CorpusError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.delete<{ Params: { workspaceId: string; sourceId: string } }>(
+    '/v1/workspaces/:workspaceId/sources/:sourceId',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      if (!scope || scope.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'Workspace scope is required',
+        })
+      try {
+        corpus.deleteSource(scope, request.params.sourceId)
+        return reply.code(204).send()
+      } catch (error) {
+        if (error instanceof CorpusError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { workspaceId: string; sourceId: string } }>(
+    '/v1/workspaces/:workspaceId/sources/:sourceId/reindex',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      if (!scope || scope.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'Workspace scope is required',
+        })
+      try {
+        const job = corpus.reindexSource(scope, request.params.sourceId)
+        setImmediate(() => scheduleCorpusDrain(scope))
+        return reply.code(202).send(job)
+      } catch (error) {
+        if (error instanceof CorpusError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
     },
   )
 

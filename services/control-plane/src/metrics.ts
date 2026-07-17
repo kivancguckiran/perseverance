@@ -114,6 +114,7 @@ export const METRIC_DEFINITIONS = {
         'event',
         'approval',
         'attachment',
+        'source',
         'artifact',
         'workspace',
         'usage',

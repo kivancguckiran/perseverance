@@ -83,6 +83,10 @@ export const authorizationActionSchema = z.enum([
   'attachment.upload',
   'attachment.read',
   'attachment.delete',
+  'source.create',
+  'source.read',
+  'source.delete',
+  'source.reindex',
   'artifact.metadata.read',
   'artifact.read',
   'artifact.download',
@@ -103,6 +107,164 @@ export const authorizationActionSchema = z.enum([
   'break_glass.request',
   'break_glass.approve',
 ])
+
+export const CORPUS_CONTRACT_VERSION = 1 as const
+export const corpusLifecycleStatusSchema = z.enum([
+  'pending',
+  'extracting',
+  'indexed',
+  'failed',
+  'deleted',
+])
+const corpusScopeSchema = z.object({
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+})
+const contentHashSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+export const sourceSchema = corpusScopeSchema.extend({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  sourceId: identifierSchema,
+  kind: z.enum(['pdf', 'markdown', 'text', 'code']),
+  displayName: z.string().trim().min(1).max(255),
+  status: corpusLifecycleStatusSchema,
+  currentRevisionId: identifierSchema.nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  deletedAt: z.iso.datetime().nullable(),
+})
+export const sourceRevisionSchema = corpusScopeSchema.extend({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  sourceId: identifierSchema,
+  revisionId: identifierSchema,
+  contentHash: contentHashSchema,
+  byteLength: z.number().int().positive(),
+  mediaType: z.enum([
+    'application/pdf',
+    'text/markdown',
+    'text/plain',
+    'application/json',
+    'application/javascript',
+    'application/typescript',
+    'text/css',
+    'text/html',
+    'text/x-python',
+    'text/x-rust',
+    'text/x-shellscript',
+  ]),
+  parserVersion: identifierSchema,
+  language: z.string().min(2).max(35),
+  provenance: z.object({
+    kind: z.enum(['upload', 'workspace_file']),
+    originalName: z.string().trim().min(1).max(255),
+    workspacePath: z.string().min(1).nullable(),
+  }),
+  rawSnapshot: z.object({
+    immutable: z.literal(true),
+    storageKey: z.string().min(1),
+    createdAt: z.iso.datetime(),
+  }),
+  status: corpusLifecycleStatusSchema,
+  createdAt: z.iso.datetime(),
+})
+export const extractionJobSchema = corpusScopeSchema.extend({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  jobId: identifierSchema,
+  sourceId: identifierSchema,
+  revisionId: identifierSchema,
+  status: corpusLifecycleStatusSchema,
+  attempt: z.number().int().positive(),
+  maxAttempts: z.number().int().positive(),
+  leaseOwner: identifierSchema.nullable(),
+  leaseExpiresAt: z.iso.datetime().nullable(),
+  retryAt: z.iso.datetime().nullable(),
+  errorCode: z.string().min(1).nullable(),
+  usageCompleteness: z.enum(['complete', 'partial']),
+  startedAt: z.iso.datetime().nullable(),
+  completedAt: z.iso.datetime().nullable(),
+  updatedAt: z.iso.datetime(),
+})
+export const corpusLocatorSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('page'),
+    pageStart: z.number().int().positive(),
+    pageEnd: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal('line'),
+    lineStart: z.number().int().positive(),
+    lineEnd: z.number().int().positive(),
+  }),
+])
+export const corpusChunkSchema = corpusScopeSchema.extend({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  chunkId: identifierSchema,
+  sourceId: identifierSchema,
+  revisionId: identifierSchema,
+  ordinal: z.number().int().nonnegative(),
+  contentHash: contentHashSchema,
+  locator: corpusLocatorSchema,
+  chunkingPolicy: z.object({
+    version: identifierSchema,
+    maxCharacters: z.number().int().positive(),
+    overlapCharacters: z.number().int().nonnegative(),
+  }),
+  metadata: z.record(z.string(), z.string()),
+  createdAt: z.iso.datetime(),
+})
+export const indexDocumentSchema = corpusScopeSchema.extend({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  indexDocumentId: identifierSchema,
+  chunkId: identifierSchema,
+  sourceId: identifierSchema,
+  revisionId: identifierSchema,
+  contentHash: contentHashSchema,
+  embeddingVersion: identifierSchema,
+  embeddingTokenCount: z.number().int().nonnegative(),
+  status: corpusLifecycleStatusSchema,
+  derivedAt: z.iso.datetime(),
+})
+export const ingestionAuditSchema = corpusScopeSchema.extend({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  auditId: identifierSchema,
+  sourceId: identifierSchema,
+  revisionId: identifierSchema.nullable(),
+  jobId: identifierSchema.nullable(),
+  action: z.enum([
+    'source.created',
+    'revision.registered',
+    'extraction.started',
+    'extraction.completed',
+    'extraction.failed',
+    'source.deleted',
+    'source.reindexed',
+  ]),
+  outcome: z.enum(['success', 'failure']),
+  reasonCode: z.string().min(1),
+  occurredAt: z.iso.datetime(),
+})
+export const createSourceResponseSchema = z.object({
+  source: sourceSchema,
+  revision: sourceRevisionSchema,
+  job: extractionJobSchema,
+})
+export const sourceUploadMetadataSchema = z.object({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  displayName: z.string().trim().min(1).max(255),
+  declaredMediaType: sourceRevisionSchema.shape.mediaType.optional(),
+  provenance: sourceRevisionSchema.shape.provenance.pick({
+    kind: true,
+    workspacePath: true,
+  }),
+})
+export const sourceListResponseSchema = z.object({
+  sources: z.array(sourceSchema),
+})
+export const sourceDetailResponseSchema = z.object({
+  source: sourceSchema,
+  revisions: z.array(sourceRevisionSchema),
+  jobs: z.array(extractionJobSchema),
+})
 export const authorizationDecisionSchema = z.object({
   version: z.literal(1),
   allow: z.boolean(),
@@ -918,6 +1080,18 @@ export type AuthPrincipal = z.infer<typeof authPrincipalSchema>
 export type MeResponse = z.infer<typeof meResponseSchema>
 export type AuthorizationAction = z.infer<typeof authorizationActionSchema>
 export type AuthorizationDecision = z.infer<typeof authorizationDecisionSchema>
+export type CorpusLifecycleStatus = z.infer<typeof corpusLifecycleStatusSchema>
+export type Source = z.infer<typeof sourceSchema>
+export type SourceRevision = z.infer<typeof sourceRevisionSchema>
+export type ExtractionJob = z.infer<typeof extractionJobSchema>
+export type CorpusLocator = z.infer<typeof corpusLocatorSchema>
+export type CorpusChunk = z.infer<typeof corpusChunkSchema>
+export type IndexDocument = z.infer<typeof indexDocumentSchema>
+export type IngestionAudit = z.infer<typeof ingestionAuditSchema>
+export type CreateSourceResponse = z.infer<typeof createSourceResponseSchema>
+export type SourceUploadMetadata = z.infer<typeof sourceUploadMetadataSchema>
+export type SourceListResponse = z.infer<typeof sourceListResponseSchema>
+export type SourceDetailResponse = z.infer<typeof sourceDetailResponseSchema>
 export type Approval = z.infer<typeof approvalSchema>
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 export type ApprovalDecisionRequest = z.infer<
