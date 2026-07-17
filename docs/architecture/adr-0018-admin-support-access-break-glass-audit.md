@@ -1,6 +1,6 @@
 # ADR-0018: Admin içerik ayrımı, support JIT grant, break-glass ve immutable audit
 
-- Durum: Kabul önerisi
+- Durum: Kabul edildi
 - Tarih: 17 Temmuz 2026
 - Kapsam: Faz 3 WP20
 

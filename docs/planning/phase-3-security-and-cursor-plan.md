@@ -1,8 +1,8 @@
 # Cursor provider köprüsü ve Faz 3 — Multi-tenant Security Beta
 
-- Plan durumu: Aktif
+- Plan durumu: Tamamlandı
 - Plan tarihi: 16 Temmuz 2026
-- Aktif iş paketi: WP20
+- Aktif iş paketi: Yok
 - Ön koşul: Faz 2 ve WP16 tamamlandı
 - Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
 
@@ -31,15 +31,14 @@ confidential-computing/attestation mimarisi gerektirir ve Faz 3 kapsamı dışı
 
 ## 2. İş paketi özeti
 
-| Paket | Durum                      | Hedef                                                                  |
-| ----- | -------------------------- | ---------------------------------------------------------------------- |
-| WP17  | Tamamlandı                 | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
-| WP18  | Tamamlandı                 | OIDC principal, deny-by-default authorization ve tenant data isolation |
-| WP19  | Tamamlandı                 | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
-| WP20  | Uygulandı / kabul bekliyor | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
+| Paket | Durum      | Hedef                                                                  |
+| ----- | ---------- | ---------------------------------------------------------------------- |
+| WP17  | Tamamlandı | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
+| WP18  | Tamamlandı | OIDC principal, deny-by-default authorization ve tenant data isolation |
+| WP19  | Tamamlandı | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
+| WP20  | Tamamlandı | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
 
-Her zaman yalnız bir paket aktif olabilir. WP19 bağımsız kabul edildi; WP20 Faz 3'ün
-tek aktif iş paketidir.
+WP17–WP20 bağımsız kabul edildi. Faz 3 kapandı ve aktif iş paketi kalmadı.
 
 ## 3. WP17 — Cursor Agent provider adapter
 
@@ -313,12 +312,45 @@ katmanlarında adversarial testlerle kapatmak.
 
 `feat: complete multi-tenant security beta acceptance`
 
+### Bağımsız kabul ve Faz 3 kapanış sonucu
+
+Karar: **Tamamlandı**
+
+- WP20 uygulama commit'i `b842d6a` ve production persistence/enforcement düzeltme
+  commit'i `f4863e7` mevcut.
+- PostgreSQL production repository migration 20'deki grant, approval, JIT lease,
+  break-glass, immutable audit, outbox ve revocation epoch kayıtlarına bağlandı.
+  Production başlatma durable repository olmadan fail-closed davranıyor.
+- Control-plane restart sonrasında pending/active grant, revocation generation,
+  consumed lease, audit zinciri ve pending outbox durumu doğru geri geldi.
+- JIT lease gerçek content view ve artifact/attachment download yolunda exact scope,
+  tek kullanım ve revoke/expiry generation kontrolüyle uygulandı. Normal admin grantsiz
+  içeriğe erişemedi.
+- KMS operator onayı her iki approval sırasında çalıştı; separation-of-duty ve
+  başarısız karar rollback'i doğrulandı. Break-glass API, çift onay, durable alarm,
+  revoke ve notification/outbox recovery akışları geçti.
+- `pnpm phase3:accept` PostgreSQL 17.10 migration 18–20, WP18–WP20 adversarial
+  kontrolleri, persistent-adapter browser E2E, credential scan ve cleanup ile geçti.
+  `pnpm verify` 21 dosyada 265 test, bütün typecheck'ler, production build ve SSR HTTP
+  smoke'u tamamladı. Browser kabulü 1280x720 ve 390x844 görünümde sıfır page error ve
+  secret leak ile geçti.
+- Bu kapanış turu önceki WP19 kod yolunu değiştirmediği için maliyetli Kata/AWS KMS
+  production profili yeniden kurulmadı. WP19 kabulünde gerçek `kata-qemu`, encrypted
+  storage ve customer-managed AWS KMS kanıtı ayrı olarak doğrulanmıştı.
+- Çalışma ağacı ve bütün geçici PostgreSQL container'ları temizdi.
+
+Uygulama commit'leri: `b842d6a`, `f4863e7`.
+
+WP20 ve Faz 3 tamamlandı. Aktif iş paketi yoktur.
+
 ## 7. Faz 3 exit kriteri
 
 İki adversarial tenant arasında session, event, file, artifact, attachment, usage,
 cache, secret, network ve encryption context erişimi fail-closed biçimde ayrıdır. Normal
 admin içerik okuyamaz; support grant ve break-glass dar kapsam, süre, onay ve immutable
 audit ile uygulanır. Backup/restore, key rotation ve runtime escape testleri geçer.
+
+**Exit durumu:** Karşılandı.
 
 ## 8. Sonraki fazlar
 
