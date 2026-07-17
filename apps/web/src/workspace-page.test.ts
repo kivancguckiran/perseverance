@@ -25,6 +25,7 @@ import {
   parseStoredProviderSelection,
   sessionScopedCursor,
   serverOwnedRunLabel,
+  supportGrantStatusLabel,
   shouldSubmitComposer,
 } from './workspace-page'
 import MessageMarkdown from './message-markdown'
@@ -62,6 +63,15 @@ describe('tenant-aware client cache namespace', () => {
       expect(
         snapshots.get(offlineConversationKey(nextNamespace, 'ses-a')),
       ).toBeUndefined()
+  })
+})
+
+describe('WP20 support access presentation', () => {
+  it('distinguishes pending, active, revoked and expired states', () => {
+    expect(supportGrantStatusLabel('pending_approval')).toContain('bekliyor')
+    expect(supportGrantStatusLabel('active')).toBe('Aktif')
+    expect(supportGrantStatusLabel('revoked')).toContain('iptal')
+    expect(supportGrantStatusLabel('expired')).toContain('doldu')
   })
 })
 

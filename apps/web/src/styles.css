@@ -267,7 +267,7 @@ select {
   padding: 0;
   background: #0a100e;
 }
-.timeline-panel > section:not(.chat-surface),
+.timeline-panel > section:not(.chat-surface):not(.support-access-panel),
 .timeline-panel > .timeline-heading,
 .timeline-panel > .timeline-stream,
 .timeline-panel > .read-only-banner {
@@ -1195,6 +1195,124 @@ h2 {
   border: 1px solid #294038;
   border-radius: 14px;
   background: #0c1613;
+}
+
+.support-access-panel {
+  margin: 16px;
+  padding: 18px;
+  border: 1px solid var(--border, #d9d9d9);
+  border-radius: 16px;
+  background: var(--panel, #fff);
+}
+
+.support-access-heading,
+.support-grant-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.support-access-heading h2,
+.support-access-heading p {
+  margin: 0;
+}
+
+.support-access-note {
+  color: var(--muted, #626262);
+  max-width: 70ch;
+}
+
+.support-access-form {
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+  padding: 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+
+.support-access-form label,
+.support-access-form fieldset {
+  display: grid;
+  gap: 7px;
+}
+
+.support-access-form fieldset label {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+}
+
+.support-access-form input:not([type='checkbox']),
+.support-access-form textarea,
+.support-access-form select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px;
+  font: inherit;
+}
+
+.support-access-form textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.support-grant-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.support-grant-list li {
+  padding: 12px;
+  border-left: 4px solid #8b8b8b;
+  background: color-mix(in srgb, currentColor 3%, transparent);
+}
+
+.support-grant-list li[data-status='active'] {
+  border-left-color: #16803b;
+}
+.support-grant-list li[data-status='pending_approval'],
+.support-grant-list li[data-status='pending_verification'] {
+  border-left-color: #b96c00;
+}
+.support-grant-list li[data-status='revoked'],
+.support-grant-list li[data-status='denied'] {
+  border-left-color: #b42318;
+}
+
+.support-grant-list li > div {
+  display: grid;
+  gap: 4px;
+}
+
+.support-audit-list ol {
+  display: grid;
+  gap: 6px;
+  padding-left: 22px;
+}
+
+.support-audit-list li {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) auto auto;
+  gap: 10px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 600px) {
+  .support-access-panel {
+    margin: 10px;
+    padding: 14px;
+  }
+  .support-access-heading,
+  .support-grant-list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .support-access-form {
+    padding: 12px;
+  }
 }
 
 .audit-heading {

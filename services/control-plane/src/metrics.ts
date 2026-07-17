@@ -121,6 +121,8 @@ export const METRIC_DEFINITIONS = {
         'metrics',
         'folder',
         'provider',
+        'support',
+        'break_glass',
       ],
       outcome: ['allow', 'deny'],
       reason: [

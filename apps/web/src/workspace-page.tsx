@@ -19,6 +19,10 @@ import {
   providerCatalogListResponseSchema,
   conversationUsageCostSchema,
   meResponseSchema,
+  createSupportGrantRequestSchema,
+  supportGrantListResponseSchema,
+  supportGrantSchema,
+  securityAuditListResponseSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
@@ -33,6 +37,9 @@ import {
   type ConversationUsageCost,
   type UsageCostSummary,
   type MeResponse,
+  type SupportGrant,
+  type SupportAccessAction,
+  type SecurityAuditRecord,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
@@ -352,6 +359,274 @@ async function readAudit(sessionId: string, cursor: string | null) {
   )
   if (!response.ok) throw await apiError(response)
   return auditListResponseSchema.parse(await response.json())
+}
+
+async function readSupportGrants(sessionId: string) {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-grants`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return supportGrantListResponseSchema.parse(await response.json()).grants
+}
+async function readSupportAudit(sessionId: string) {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-audit`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return securityAuditListResponseSchema.parse(await response.json())
+}
+
+export function supportGrantStatusLabel(status: SupportGrant['status']) {
+  return {
+    pending_verification: 'MFA doğrulaması bekliyor',
+    pending_approval: 'Yetkili onayı bekliyor',
+    active: 'Aktif',
+    revoked: 'Erken iptal edildi',
+    expired: 'Süresi doldu',
+    denied: 'Reddedildi',
+  }[status]
+}
+
+function SupportAccessPanel({
+  sessionId,
+  grants,
+  pending,
+  audit,
+  auditChainValid,
+  onChanged,
+}: {
+  sessionId: string
+  grants: SupportGrant[]
+  pending: boolean
+  audit: SecurityAuditRecord[]
+  auditChainValid: boolean
+  onChanged(): void
+}) {
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState('')
+  const [supportPrincipalId, setSupportPrincipalId] = useState('')
+  const [durationMinutes, setDurationMinutes] = useState(15)
+  const [actions, setActions] = useState<SupportAccessAction[]>([
+    'content.view',
+  ])
+  const [submitting, setSubmitting] = useState(false)
+  const [panelError, setPanelError] = useState<string>()
+
+  function toggleAction(action: SupportAccessAction) {
+    setActions((current) =>
+      current.includes(action)
+        ? current.filter((value) => value !== action)
+        : [...current, action],
+    )
+  }
+
+  async function createGrant(event: React.FormEvent) {
+    event.preventDefault()
+    setSubmitting(true)
+    setPanelError(undefined)
+    try {
+      const body = createSupportGrantRequestSchema.parse({
+        sessionId,
+        actions,
+        reason,
+        supportPrincipalId,
+        durationMinutes,
+      })
+      const response = await fetch(
+        `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-grants`,
+        {
+          method: 'POST',
+          headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
+          body: JSON.stringify(body),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      supportGrantSchema.parse(await response.json())
+      setReason('')
+      setOpen(false)
+      onChanged()
+    } catch (cause) {
+      setPanelError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function revoke(grant: SupportGrant) {
+    setSubmitting(true)
+    setPanelError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/support-grants/${encodeURIComponent(grant.grantId)}/revoke`,
+        {
+          method: 'POST',
+          headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
+          body: JSON.stringify({ expectedVersion: grant.version }),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      supportGrantSchema.parse(await response.json())
+      onChanged()
+    } catch (cause) {
+      setPanelError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section
+      className="support-access-panel"
+      aria-labelledby="support-access-title"
+    >
+      <div className="support-access-heading">
+        <div>
+          <p className="section-label">Kullanıcı kontrollü erişim</p>
+          <h2 id="support-access-title">Support erişimi</h2>
+        </div>
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'Kapat' : 'Erişim paylaş'}
+        </button>
+      </div>
+      <p className="support-access-note">
+        Yalnız bu sohbet ve seçtiğiniz eylemler paylaşılır. Tüm hesaba erişim
+        verilmez.
+      </p>
+      {panelError ? (
+        <p className="form-error" role="alert">
+          {panelError}
+        </p>
+      ) : null}
+      {open ? (
+        <form
+          className="support-access-form"
+          onSubmit={(event) => void createGrant(event)}
+        >
+          <p>
+            <strong>Paylaşılan nesne:</strong> session <code>{sessionId}</code>
+          </p>
+          <fieldset>
+            <legend>İzin verilen eylemler</legend>
+            {(
+              [
+                ['content.view', 'Prompt ve output görüntüleme'],
+                ['artifact.download', 'Artifact indirme (çift onay)'],
+                ['attachment.download', 'Attachment indirme (çift onay)'],
+                ['content.decrypt', 'İçerik decrypt (KMS rolü + çift onay)'],
+              ] as const
+            ).map(([action, label]) => (
+              <label key={action}>
+                <input
+                  type="checkbox"
+                  checked={actions.includes(action)}
+                  onChange={() => toggleAction(action)}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </fieldset>
+          <label>
+            <span>Atanan support principal</span>
+            <input
+              value={supportPrincipalId}
+              required
+              maxLength={160}
+              onChange={(event) => setSupportPrincipalId(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Kullanıcı gerekçesi</span>
+            <textarea
+              value={reason}
+              required
+              minLength={8}
+              maxLength={500}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Süre</span>
+            <select
+              value={durationMinutes}
+              onChange={(event) =>
+                setDurationMinutes(Number(event.target.value))
+              }
+            >
+              <option value={5}>5 dakika</option>
+              <option value={15}>15 dakika</option>
+              <option value={30}>30 dakika</option>
+              <option value={60}>60 dakika</option>
+            </select>
+          </label>
+          <button
+            type="submit"
+            disabled={
+              submitting ||
+              actions.length === 0 ||
+              reason.trim().length < 8 ||
+              !supportPrincipalId.trim()
+            }
+          >
+            {submitting ? 'Oluşturuluyor…' : 'Dar kapsamlı grant oluştur'}
+          </button>
+        </form>
+      ) : null}
+      {pending ? <p>Grant’ler yükleniyor…</p> : null}
+      <ul className="support-grant-list">
+        {grants.map((grant) => (
+          <li key={grant.grantId} data-status={grant.status}>
+            <div>
+              <strong>{supportGrantStatusLabel(grant.status)}</strong>
+              <span>{grant.actions.join(' · ')}</span>
+              <small>
+                Son kullanım:{' '}
+                {new Date(grant.expiresAt).toLocaleString('tr-TR')}
+              </small>
+            </div>
+            {['pending_verification', 'pending_approval', 'active'].includes(
+              grant.status,
+            ) ? (
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void revoke(grant)}
+              >
+                Erken iptal et
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {audit.length ? (
+        <details className="support-audit-list">
+          <summary>
+            Immutable support audit · {audit.length} kayıt ·{' '}
+            {auditChainValid ? 'zincir doğrulandı' : 'zincir hatası'}
+          </summary>
+          <ol>
+            {audit
+              .slice()
+              .reverse()
+              .map((record) => (
+                <li key={record.sequence}>
+                  <strong>{record.action}</strong>
+                  <span>{record.outcome}</span>
+                  <time dateTime={record.occurredAt}>
+                    {new Date(record.occurredAt).toLocaleString('tr-TR')}
+                  </time>
+                </li>
+              ))}
+          </ol>
+        </details>
+      ) : null}
+    </section>
+  )
 }
 
 function AuditPanel({
@@ -1814,6 +2089,18 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     enabled: Boolean(sessionId) && online && identity.isSuccess,
     staleTime: 30_000,
   })
+  const supportGrants = useQuery({
+    queryKey: ['support-grants', cacheNamespace, sessionId],
+    queryFn: () => readSupportGrants(sessionId!),
+    enabled: Boolean(sessionId) && online && identity.isSuccess,
+    staleTime: 10_000,
+  })
+  const supportAudit = useQuery({
+    queryKey: ['support-audit', cacheNamespace, sessionId],
+    queryFn: () => readSupportAudit(sessionId!),
+    enabled: Boolean(sessionId) && online && identity.isSuccess,
+    staleTime: 10_000,
+  })
   const [session, setSession] = useState<SessionResponse>()
   const [events, setEvents] = useState<Map<string, TimelineEvent>>(new Map())
   const [sessionPending, setSessionPending] = useState(false)
@@ -3133,6 +3420,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </section>
           {session ? (
             <>
+              <SupportAccessPanel
+                sessionId={session.sessionId}
+                grants={supportGrants.data ?? []}
+                pending={supportGrants.isPending}
+                audit={supportAudit.data?.records ?? []}
+                auditChainValid={supportAudit.data?.chainValid ?? true}
+                onChanged={() => {
+                  void supportGrants.refetch()
+                  void supportAudit.refetch()
+                }}
+              />
               <AuditPanel
                 records={
                   audit.data?.pages.flatMap((page) => page.records) ?? []
