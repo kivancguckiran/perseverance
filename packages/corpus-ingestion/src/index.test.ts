@@ -128,6 +128,20 @@ describe('WP21 golden extraction', () => {
         limits: { parserTimeoutMs: 1 },
       }),
     ).rejects.toMatchObject({ code: 'PARSER_TIMEOUT' })
+    await expect(
+      extractDocumentBounded({
+        mediaType: 'application/pdf',
+        bytes: fixture('golden.pdf'),
+        limits: { maxPdfPages: 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'PDF_PAGE_LIMIT' })
+    await expect(
+      extractDocumentBounded({
+        mediaType: 'application/pdf',
+        bytes: fixture('golden.pdf'),
+        limits: { maxParserOutputBytes: 32 },
+      }),
+    ).rejects.toMatchObject({ code: 'PDF_OUTPUT_LIMIT' })
   })
 })
 

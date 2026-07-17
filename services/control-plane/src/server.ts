@@ -938,8 +938,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     corpusDrains.set(key, drain)
     corpusWorkerTail = drain.catch(() => undefined)
   }
-  for (const scope of await corpus.recoverableScopes())
-    setImmediate(() => scheduleCorpusDrain(scope))
+  if (options.corpusAutoDrain !== false)
+    for (const scope of await corpus.recoverableScopes())
+      setImmediate(() => scheduleCorpusDrain(scope))
   const securityReadiness = options.securityReadiness ?? {
     runtimeBackend: 'local-process' as const,
     isolationLevel: 'development_only' as const,

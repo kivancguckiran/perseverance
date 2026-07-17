@@ -234,8 +234,8 @@ export class CorpusIngestionService {
   sourceDetail(scope: CorpusScope, sourceId: string) {
     return this.repository.sourceDetail(scope, sourceId)
   }
-  recoverableScopes(): CorpusScope[] {
-    return []
+  recoverableScopes() {
+    return this.repository.recoverableScopes()
   }
   claimNext(scope: CorpusScope, workerId: string) {
     return this.repository.claimNext(scope, workerId, this.#limits.leaseMs)

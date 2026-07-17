@@ -42,6 +42,14 @@ durability, RLS veya worker concurrency kanıtı sayılmaz. Production kanıtı 
 PostgreSQL repository, encrypted snapshot adapter ve API/worker restart smoke'undan
 gelir.
 
+Production bootstrap ayrı `CORPUS_DATABASE_URL` ve 32-byte
+`CORPUS_SNAPSHOT_KEY_BASE64` ister; support-access bağlantısını corpus worker kimliği
+olarak reuse etmez. Restart discovery yalnız pending veya lease'i dolmuş işlerin
+tenant/organization/workspace kimliklerini döndüren security-definer
+`corpus_recoverable_scopes()` fonksiyonudur. `PUBLIC` execute kapalıdır; yalnız corpus
+worker rolüne açıkça grant edilir ve source/chunk içeriği döndürmez. Claim sonrasında
+normal forced-RLS transaction context'i zorunludur.
+
 PDF parser control-plane dışında Poppler child process olarak çalışır. Production
 Linux runtime child'a `prlimit` ile address-space sınırı uygular ve limiter yoksa
 fail-closed davranır; test/development macOS yolu byte/page/output sınırları ve gerçek

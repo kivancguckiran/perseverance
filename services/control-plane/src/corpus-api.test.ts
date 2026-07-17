@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sourceListResponseSchema } from '@persistent-codex/control-plane-contracts'
 import { buildControlPlane } from './server'
 
@@ -11,6 +11,23 @@ afterEach(() => {
 })
 
 describe('WP21 workspace source API', () => {
+  it('fails closed without a production corpus repository', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wp21-api-production-'))
+    roots.push(root)
+    vi.stubEnv('NODE_ENV', 'production')
+    try {
+      await expect(
+        buildControlPlane({
+          databasePath: ':memory:',
+          artifactRoot: join(root, 'artifacts'),
+          allowInMemorySupportAccess: true,
+        }),
+      ).rejects.toMatchObject({ code: 'CORPUS_REPOSITORY_REQUIRED' })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
   it('creates, lists, details, reindexes and deletes within the authorized workspace', async () => {
     const root = mkdtempSync(join(tmpdir(), 'wp21-api-'))
     roots.push(root)

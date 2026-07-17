@@ -46,12 +46,17 @@ const supportAccessRepository = supportDatabaseUrl
     })
   : new InMemorySupportAccessRepository({ explicitUsage: 'development' })
 const corpusEncryptionKey = process.env.CORPUS_SNAPSHOT_KEY_BASE64
+const corpusDatabaseUrl = process.env.CORPUS_DATABASE_URL
+if (!localAlpha && !corpusDatabaseUrl)
+  throw new Error(
+    'Production requires CORPUS_DATABASE_URL for the durable corpus repository',
+  )
 if (!localAlpha && !corpusEncryptionKey)
   throw new Error(
     'Production requires CORPUS_SNAPSHOT_KEY_BASE64 for encrypted corpus snapshots',
   )
-const corpusRepository = supportDatabaseUrl
-  ? createPostgresCorpusRepository({ connectionString: supportDatabaseUrl })
+const corpusRepository = corpusDatabaseUrl
+  ? createPostgresCorpusRepository({ connectionString: corpusDatabaseUrl })
   : undefined
 const corpusSnapshotStorage = corpusEncryptionKey
   ? new EncryptedFilesystemCorpusSnapshotStorage(
