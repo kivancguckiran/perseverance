@@ -18,6 +18,10 @@ export const organizationRoleSchema = z.enum([
   'developer',
   'viewer',
   'billing',
+  'support',
+  'operator',
+  'security_approver',
+  'kms_operator',
 ])
 export const organizationMembershipSchema = z.object({
   version: z.literal(1),
@@ -91,6 +95,13 @@ export const authorizationActionSchema = z.enum([
   'folder.manage',
   'provider.catalog.read',
   'provider.readiness.read',
+  'support.grant.create',
+  'support.grant.read',
+  'support.grant.revoke',
+  'support.grant.approve',
+  'support.access.use',
+  'break_glass.request',
+  'break_glass.approve',
 ])
 export const authorizationDecisionSchema = z.object({
   version: z.literal(1),
@@ -651,6 +662,90 @@ export const apiErrorResponseSchema = z.object({
   issues: z.array(z.string()).optional(),
 })
 
+export const supportGrantStatusSchema = z.enum([
+  'pending_verification',
+  'pending_approval',
+  'active',
+  'revoked',
+  'expired',
+  'denied',
+])
+export const supportAccessActionSchema = z.enum([
+  'content.view',
+  'artifact.download',
+  'attachment.download',
+  'content.decrypt',
+])
+export const supportGrantSchema = z.object({
+  schemaVersion: z.literal(1),
+  grantId: identifierSchema,
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  sessionId: identifierSchema.nullable(),
+  artifactId: identifierSchema.nullable(),
+  attachmentId: identifierSchema.nullable(),
+  actions: z.array(supportAccessActionSchema).min(1).max(4),
+  reason: z.string().trim().min(8).max(500),
+  requesterPrincipalId: identifierSchema,
+  supportPrincipalId: identifierSchema,
+  mfaEvidenceId: identifierSchema.nullable(),
+  requiredApprovals: z.number().int().min(1).max(2),
+  approvalPrincipalIds: z.array(identifierSchema).max(2),
+  status: supportGrantStatusSchema,
+  issuedAt: z.iso.datetime().nullable(),
+  expiresAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+  version: z.number().int().positive(),
+  generation: z.number().int().nonnegative(),
+  idempotencyKey: identifierSchema,
+})
+export const createSupportGrantRequestSchema = z
+  .object({
+    sessionId: identifierSchema.nullable().optional(),
+    artifactId: identifierSchema.nullable().optional(),
+    attachmentId: identifierSchema.nullable().optional(),
+    actions: z.array(supportAccessActionSchema).min(1).max(4),
+    reason: z.string().trim().min(8).max(500),
+    supportPrincipalId: identifierSchema,
+    durationMinutes: z.number().int().min(5).max(60),
+  })
+  .strict()
+export const supportGrantListResponseSchema = z.object({
+  grants: z.array(supportGrantSchema),
+})
+export const securityAuditRecordSchema = z.object({
+  sequence: z.number().int().positive(),
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  actorPrincipalId: identifierSchema,
+  scope: z.string().min(1),
+  action: identifierSchema,
+  outcome: z.enum(['requested', 'success', 'failure']),
+  reason: identifierSchema,
+  grantId: identifierSchema.nullable(),
+  breakGlassId: identifierSchema.nullable(),
+  occurredAt: z.iso.datetime(),
+  correlationId: identifierSchema,
+  previousHash: z.string().regex(/^(GENESIS|[a-f0-9]{64})$/),
+  recordHash: z.string().regex(/^[a-f0-9]{64}$/),
+})
+export const securityAuditListResponseSchema = z.object({
+  records: z.array(securityAuditRecordSchema),
+  chainValid: z.boolean(),
+})
+export const supportGrantDecisionRequestSchema = z
+  .object({
+    decision: z.enum(['approve', 'deny']),
+    expectedVersion: z.number().int().positive(),
+    mfaEvidenceId: identifierSchema,
+  })
+  .strict()
+export const supportGrantRevokeRequestSchema = z
+  .object({ expectedVersion: z.number().int().positive() })
+  .strict()
+
 export type SubscribeMessage = z.infer<typeof subscribeMessageSchema>
 export type ReplayMessage = z.infer<typeof replayMessageSchema>
 export type SubscribedMessage = z.infer<typeof subscribedMessageSchema>
@@ -721,3 +816,13 @@ export type ConversationUsageCost = z.infer<typeof conversationUsageCostSchema>
 export type UsageReconciliationResponse = z.infer<
   typeof usageReconciliationResponseSchema
 >
+export type SupportGrant = z.infer<typeof supportGrantSchema>
+export type SupportGrantStatus = z.infer<typeof supportGrantStatusSchema>
+export type SupportAccessAction = z.infer<typeof supportAccessActionSchema>
+export type CreateSupportGrantRequest = z.infer<
+  typeof createSupportGrantRequestSchema
+>
+export type SupportGrantDecisionRequest = z.infer<
+  typeof supportGrantDecisionRequestSchema
+>
+export type SecurityAuditRecord = z.infer<typeof securityAuditRecordSchema>

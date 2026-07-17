@@ -31,12 +31,12 @@ confidential-computing/attestation mimarisi gerektirir ve Faz 3 kapsamı dışı
 
 ## 2. İş paketi özeti
 
-| Paket | Durum      | Hedef                                                                  |
-| ----- | ---------- | ---------------------------------------------------------------------- |
-| WP17  | Tamamlandı | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
-| WP18  | Tamamlandı | OIDC principal, deny-by-default authorization ve tenant data isolation |
-| WP19  | Tamamlandı | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
-| WP20  | Aktif      | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
+| Paket | Durum                      | Hedef                                                                  |
+| ----- | -------------------------- | ---------------------------------------------------------------------- |
+| WP17  | Tamamlandı                 | Cursor Agent adapter teslim edildi ve bağımsız kabul edildi            |
+| WP18  | Tamamlandı                 | OIDC principal, deny-by-default authorization ve tenant data isolation |
+| WP19  | Tamamlandı                 | İzole workspace runtime, ağ, secret ve envelope encryption sınırı      |
+| WP20  | Uygulandı / kabul bekliyor | Support grant/break-glass modeli ve adversarial Faz 3 güvenlik kabulü  |
 
 Her zaman yalnız bir paket aktif olabilir. WP19 bağımsız kabul edildi; WP20 Faz 3'ün
 tek aktif iş paketidir.
@@ -272,6 +272,9 @@ Uygulama commit'leri: `3e5e6f7`, `18d0dcb`.
 WP20 Faz 3'ün tek aktif iş paketidir.
 
 ## 6. WP20 — Admin access governance ve Faz 3 adversarial kabul
+
+**Teslimat durumu:** Uygulandı / kabul bekliyor. WP20 ve Faz 3 bağımsız kabul öncesinde
+tamamlandı sayılmaz; ADR-0018 “Kabul önerisi” durumundadır.
 
 ### Hedef
 

@@ -11,7 +11,18 @@ import {
   artifactDownloadTokenSchema,
   artifactMetadataSchema,
   auditListResponseSchema,
+  createSupportGrantRequestSchema,
+  supportGrantDecisionRequestSchema,
+  supportGrantListResponseSchema,
+  supportGrantRevokeRequestSchema,
+  supportGrantSchema,
+  securityAuditListResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
+import {
+  SupportAccessError,
+  SupportAccessService,
+  type SupportActor,
+} from '@persistent-codex/support-access'
 import { randomBytes } from 'node:crypto'
 import {
   accessSync,
@@ -158,6 +169,7 @@ export interface ControlPlaneOptions {
   authenticationAdapter?: AuthenticationAdapter
   membershipDirectory?: MembershipDirectory
   allowExplicitDevAuthentication?: boolean
+  supportAccessService?: SupportAccessService
 }
 
 export interface PublicRouteAuthorizationEntry {
@@ -192,6 +204,42 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/sessions/:sessionId/audit',
       action: 'audit.read',
       resourceType: 'audit',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId/support-grants',
+      action: 'support.grant.read',
+      resourceType: 'support_grant',
+    },
+    {
+      method: 'GET',
+      route: '/v1/sessions/:sessionId/support-audit',
+      action: 'audit.read',
+      resourceType: 'security_audit',
+    },
+    {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/support-grants',
+      action: 'support.grant.create',
+      resourceType: 'support_grant',
+    },
+    {
+      method: 'POST',
+      route: '/v1/support-grants/:grantId/mfa',
+      action: 'support.grant.create',
+      resourceType: 'support_grant',
+    },
+    {
+      method: 'POST',
+      route: '/v1/support-grants/:grantId/decision',
+      action: 'support.grant.approve',
+      resourceType: 'support_grant',
+    },
+    {
+      method: 'POST',
+      route: '/v1/support-grants/:grantId/revoke',
+      action: 'support.grant.revoke',
+      resourceType: 'support_grant',
     },
     {
       method: 'GET',
@@ -366,6 +414,27 @@ function opaquePrincipalId(principal: AuthPrincipal) {
   return `sha256:${createHash('sha256')
     .update(`${principal.issuer}\0${principal.subject}`)
     .digest('hex')}`
+}
+
+function supportActor(
+  principal: AuthPrincipal,
+  memberships: OrganizationMembership[],
+  organizationId: string,
+): SupportActor {
+  const role = memberships.find(
+    (membership) => membership.organizationId === organizationId,
+  )?.role
+  return {
+    principalId: opaquePrincipalId(principal),
+    role:
+      role === 'support' ||
+      role === 'operator' ||
+      role === 'security_approver' ||
+      role === 'kms_operator' ||
+      role === 'admin'
+        ? role
+        : 'tenant_user',
+  }
 }
 
 function routeAuthorization(method: string, route: string | undefined) {
@@ -660,6 +729,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const metrics = options.metricRecorder ?? new BoundedMetricRecorder({ now })
   const turnStartedAt = new Map<string, number>()
   const store = options.eventStore ?? new SqliteEventStore(options.databasePath)
+  const supportAccess =
+    options.supportAccessService ?? new SupportAccessService(now)
   const ownsStore = options.eventStore === undefined
   const artifacts = new LocalArtifactStorage(
     options.artifactRoot ?? '.runtime/artifacts',
@@ -967,6 +1038,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           : 'Access is denied',
       })
     }
+    if (error instanceof SupportAccessError) {
+      const conflict = error.code === 'VERSION_CONFLICT'
+      const missing = error.code.endsWith('_NOT_FOUND')
+      return reply.code(missing ? 404 : conflict ? 409 : 403).send({
+        code: error.code,
+        message: 'Support access request was rejected',
+      })
+    }
     return reply.send(error)
   })
   app.addHook('onResponse', async (request, reply) => {
@@ -1187,6 +1266,175 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       activeWorkspaceId: headerValue(request.headers['x-workspace-id']),
     })
   })
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/support-grants',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply
+          .code(400)
+          .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
+      store.getSession(scope)
+      return supportGrantListResponseSchema.parse({
+        grants: supportAccess
+          .listGrants({
+            organizationId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+          })
+          .filter((grant) => grant.sessionId === scope.sessionId),
+      })
+    },
+  )
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/support-audit',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply
+          .code(400)
+          .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
+      store.getSession(scope)
+      return securityAuditListResponseSchema.parse({
+        records: supportAccess
+          .listAudit({
+            organizationId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+          })
+          .filter(
+            (record) => JSON.parse(record.scope).sessionId === scope.sessionId,
+          ),
+        chainValid: supportAccess.verifyAuditChain(),
+      })
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/support-grants',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply
+          .code(400)
+          .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
+      store.getSession(scope)
+      const body = createSupportGrantRequestSchema.parse(request.body)
+      const context = authContexts.get(request)!
+      const actor = supportActor(
+        context.principal,
+        context.memberships,
+        scope.tenantId,
+      )
+      let grant = supportAccess.createGrant({
+        tenantId: scope.tenantId,
+        organizationId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        sessionId: body.sessionId ?? scope.sessionId,
+        ...(body.artifactId !== undefined
+          ? { artifactId: body.artifactId }
+          : {}),
+        ...(body.attachmentId !== undefined
+          ? { attachmentId: body.attachmentId }
+          : {}),
+        actions: body.actions,
+        reason: body.reason,
+        requester: actor,
+        supportPrincipalId: body.supportPrincipalId,
+        durationMinutes: body.durationMinutes,
+        idempotencyKey:
+          headerValue(request.headers['idempotency-key']) ?? request.id,
+        correlationId: auditContext(request).correlationId ?? request.id,
+      })
+      if (context.principal.assurance.mfa)
+        grant = supportAccess.verifyGrantMfa({
+          grantId: grant.grantId,
+          actor,
+          mfaEvidenceId: `oidc:${context.principal.authenticatedAt}`,
+          expectedVersion: grant.version,
+          idempotencyKey: `oidc-mfa:${grant.grantId}`,
+          correlationId: auditContext(request).correlationId ?? request.id,
+        })
+      return reply.code(201).send(supportGrantSchema.parse(grant))
+    },
+  )
+
+  app.post<{ Params: { grantId: string } }>(
+    '/v1/support-grants/:grantId/mfa',
+    async (request) => {
+      const body = supportGrantDecisionRequestSchema
+        .pick({ expectedVersion: true, mfaEvidenceId: true })
+        .parse(request.body)
+      const context = authContexts.get(request)!
+      const organizationId = headerValue(request.headers['x-tenant-id'])!
+      if (!context.principal.assurance.mfa)
+        throw new SupportAccessError('STRONG_MFA_REQUIRED')
+      return supportGrantSchema.parse(
+        supportAccess.verifyGrantMfa({
+          grantId: request.params.grantId,
+          actor: supportActor(
+            context.principal,
+            context.memberships,
+            organizationId,
+          ),
+          mfaEvidenceId: body.mfaEvidenceId,
+          expectedVersion: body.expectedVersion,
+          idempotencyKey:
+            headerValue(request.headers['idempotency-key']) ?? request.id,
+          correlationId: auditContext(request).correlationId ?? request.id,
+        }),
+      )
+    },
+  )
+
+  app.post<{ Params: { grantId: string } }>(
+    '/v1/support-grants/:grantId/decision',
+    async (request) => {
+      const body = supportGrantDecisionRequestSchema.parse(request.body)
+      const context = authContexts.get(request)!
+      const organizationId = headerValue(request.headers['x-tenant-id'])!
+      if (!context.principal.assurance.mfa)
+        throw new SupportAccessError('STRONG_MFA_REQUIRED')
+      return supportGrantSchema.parse(
+        supportAccess.decideGrant({
+          grantId: request.params.grantId,
+          actor: supportActor(
+            context.principal,
+            context.memberships,
+            organizationId,
+          ),
+          decision: body.decision,
+          expectedVersion: body.expectedVersion,
+          idempotencyKey:
+            headerValue(request.headers['idempotency-key']) ?? request.id,
+          correlationId: auditContext(request).correlationId ?? request.id,
+        }),
+      )
+    },
+  )
+
+  app.post<{ Params: { grantId: string } }>(
+    '/v1/support-grants/:grantId/revoke',
+    async (request) => {
+      const body = supportGrantRevokeRequestSchema.parse(request.body)
+      const context = authContexts.get(request)!
+      const organizationId = headerValue(request.headers['x-tenant-id'])!
+      return supportGrantSchema.parse(
+        supportAccess.revokeGrant({
+          grantId: request.params.grantId,
+          actor: supportActor(
+            context.principal,
+            context.memberships,
+            organizationId,
+          ),
+          expectedVersion: body.expectedVersion,
+          idempotencyKey:
+            headerValue(request.headers['idempotency-key']) ?? request.id,
+          correlationId: auditContext(request).correlationId ?? request.id,
+        }),
+      )
+    },
+  )
 
   app.get<{
     Params: { sessionId: string }

@@ -255,13 +255,106 @@ describe('WP18 REST authorization boundary', () => {
   })
 })
 
+describe('WP20 admin and support governance boundary', () => {
+  const headers = {
+    authorization: 'Bearer valid',
+    'x-tenant-id': 'org-a',
+    'x-workspace-id': 'wsp-a',
+  }
+
+  it('denies tenant content to normal admin and denies self-issued support grants', async () => {
+    for (const role of ['admin', 'support'] as const) {
+      const fixture = setup(role)
+      const app = await buildControlPlane({
+        eventStore: fixture.store,
+        artifactRoot: join(fixture.root, 'artifacts'),
+        authenticationAdapter: new FixedAuthentication(),
+        membershipDirectory: fixture.directory,
+      })
+      try {
+        expect(
+          (
+            await app.inject({
+              method: 'GET',
+              url: '/v1/sessions/ses-a/events',
+              headers,
+            })
+          ).statusCode,
+        ).toBe(403)
+        expect(
+          (
+            await app.inject({
+              method: 'POST',
+              url: '/v1/sessions/ses-a/support-grants',
+              headers: { ...headers, 'idempotency-key': `self-${role}` },
+              payload: {
+                actions: ['content.view'],
+                reason: 'Self issued access must be rejected',
+                supportPrincipalId: 'support-self',
+                durationMinutes: 15,
+              },
+            })
+          ).statusCode,
+        ).toBe(403)
+      } finally {
+        await app.close()
+      }
+    }
+  })
+
+  it('lets an MFA tenant user create, inspect and revoke only a session-scoped grant', async () => {
+    const fixture = setup('owner')
+    const app = await buildControlPlane({
+      eventStore: fixture.store,
+      artifactRoot: join(fixture.root, 'artifacts'),
+      authenticationAdapter: new FixedAuthentication(),
+      membershipDirectory: fixture.directory,
+    })
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses-a/support-grants',
+        headers: { ...headers, 'idempotency-key': 'grant-create' },
+        payload: {
+          actions: ['content.view'],
+          reason: 'User requested session-specific diagnosis',
+          supportPrincipalId: 'support-principal-a',
+          durationMinutes: 15,
+        },
+      })
+      expect(created.statusCode, created.body).toBe(201)
+      expect(created.json()).toMatchObject({
+        sessionId: 'ses-a',
+        status: 'pending_approval',
+        requiredApprovals: 1,
+      })
+      const listed = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses-a/support-grants',
+        headers,
+      })
+      expect(listed.json().grants).toHaveLength(1)
+      const grant = created.json()
+      const revoked = await app.inject({
+        method: 'POST',
+        url: `/v1/support-grants/${grant.grantId}/revoke`,
+        headers: { ...headers, 'idempotency-key': 'grant-revoke' },
+        payload: { expectedVersion: grant.version },
+      })
+      expect(revoked.json()).toMatchObject({ status: 'revoked', generation: 1 })
+    } finally {
+      await app.close()
+    }
+  })
+})
+
 describe('public route authorization coverage', () => {
   it('has a unique deny-by-default action for every protected route', () => {
     const keys = PUBLIC_ROUTE_AUTHORIZATION_CATALOG.map(
       (entry) => `${entry.method} ${entry.route}`,
     )
     expect(new Set(keys).size).toBe(keys.length)
-    expect(keys).toHaveLength(31)
+    expect(keys).toHaveLength(37)
     expect(
       PUBLIC_ROUTE_AUTHORIZATION_CATALOG.every(
         (entry) => entry.action && entry.resourceType,
