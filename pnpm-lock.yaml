@@ -232,6 +232,19 @@ importers:
         specifier: ^8.16.0
         version: 8.20.0
 
+  packages/shared-folders:
+    dependencies:
+      '@persistent-codex/control-plane-contracts':
+        specifier: workspace:*
+        version: link:../control-plane-contracts
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
+
   packages/support-access:
     dependencies:
       '@persistent-codex/control-plane-contracts':
@@ -291,6 +304,9 @@ importers:
       '@persistent-codex/push-notifications':
         specifier: workspace:*
         version: link:../../packages/push-notifications
+      '@persistent-codex/shared-folders':
+        specifier: workspace:*
+        version: link:../../packages/shared-folders
       '@persistent-codex/support-access':
         specifier: workspace:*
         version: link:../../packages/support-access

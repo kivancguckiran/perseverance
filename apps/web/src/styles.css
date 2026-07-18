@@ -2260,3 +2260,95 @@ h2 {
     position: relative;
   }
 }
+
+.shared-folder-panel {
+  display: grid;
+  gap: 12px;
+  margin: 14px;
+  padding: 14px;
+  border: 1px solid #29443a;
+  border-radius: 16px;
+  background: #0e1b17;
+}
+.shared-folder-heading,
+.shared-folder-create,
+.shared-folder-list li,
+.shared-member-list li,
+.invite-accept-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shared-folder-heading {
+  justify-content: space-between;
+}
+.shared-folder-heading h2,
+.shared-folder-heading p {
+  margin: 0;
+}
+.shared-folder-create input {
+  min-width: 0;
+  flex: 1;
+}
+.shared-folder-list,
+.shared-member-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shared-folder-list li > button:first-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+.shared-folder-list button.is-selected {
+  border-color: #67c89f;
+  background: #173a2d;
+}
+.shared-member-list span {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.invite-token {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #162820;
+}
+.invite-token code {
+  overflow-wrap: anywhere;
+  color: #bdebd8;
+}
+.invite-accept-banner {
+  position: sticky;
+  z-index: 40;
+  top: 0;
+  justify-content: center;
+  padding: 10px 16px;
+  background: #284b3c;
+}
+.offline-banner.access-lost {
+  background: #612f32;
+}
+
+@media (max-width: 420px) {
+  .shared-folder-create,
+  .shared-member-list li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .shared-folder-create button,
+  .shared-member-list button,
+  .shared-member-list select {
+    width: 100%;
+  }
+}
