@@ -187,36 +187,51 @@ describe('async shared folder repository contract', () => {
       repository.reserveTask({
         ...owner,
         folderId: created.folder.folderId,
+        sessionId: 'session-1',
         idempotencyKey: 'task-key',
+        requestHash: 'a'.repeat(64),
       }),
       repository.reserveTask({
         ...friend,
         folderId: created.folder.folderId,
+        sessionId: 'session-1',
         idempotencyKey: 'task-key',
+        requestHash: 'a'.repeat(64),
       }),
     ])
-    expect(first.reservation.upstreamWorkId).toBe(
-      second.reservation.upstreamWorkId,
-    )
+    expect(first.reservation.taskId).toBe(second.reservation.taskId)
     expect([first.created, second.created].filter(Boolean)).toHaveLength(1)
+    await expect(
+      repository.reserveTask({
+        ...owner,
+        folderId: created.folder.folderId,
+        sessionId: 'session-1',
+        idempotencyKey: 'task-key',
+        requestHash: 'b'.repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: 'TASK_IDEMPOTENCY_CONFLICT' })
     const approvalInput = {
       ...owner,
       folderId: created.folder.folderId,
       approvalId: 'approval-1',
       expectedVersion: 1,
-      resolutionKey: 'resolution-key',
+      durableEventId: 'evt-approval-resolved',
+      codexTurnId: 'turn-1',
       decision: 'accept',
     }
     const approvalA = await repository.reserveApprovalResolution(approvalInput)
     const approvalB = await repository.reserveApprovalResolution({
       ...approvalInput,
-      resolutionKey: 'other-resolution-key',
+      durableEventId: 'evt-other',
     })
     expect(approvalA.resolutionId).toBe(approvalB.resolutionId)
     const settlementInput = {
       ...owner,
-      idempotencyKey: 'task-key',
-      settlementKey: 'settlement-key',
+      taskId: first.reservation.taskId,
+      status: 'completed' as const,
+      usageDedupeKey: 'runtime-usage:session-1:turn-1',
+      creditReservationId: 'cres-1',
+      billingSettlementId: 'cset-1',
     }
     const settlementA = await repository.settleTask(settlementInput)
     const settlementB = await repository.settleTask(settlementInput)

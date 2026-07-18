@@ -72,14 +72,30 @@ interface StoredInvitation extends FolderInvitation {
   tokenDigest: string
 }
 
-interface TaskReservation {
+export interface TaskReservation {
   key: string
   folderId: string
   principalId: string
+  sessionId: string
+  requestHash: string
   taskId: string
-  upstreamWorkId: string
+  runId: string | null
+  codexTurnId: string | null
+  upstreamWorkId: string | null
+  admissionDecisionId: string | null
+  usageDedupeKey: string | null
+  creditReservationId: string | null
   billingSettlementId: string | null
-  status: 'reserved' | 'completed'
+  status:
+    | 'reserved'
+    | 'running'
+    | 'completed'
+    | 'failed'
+    | 'interrupted'
+    | 'incomplete'
+    | 'admission_denied'
+    | 'start_failed'
+    | 'recovery_required'
 }
 
 const scopeKey = (scope: FolderScope) =>
@@ -658,18 +674,38 @@ class InMemorySharedFolderCore {
   }
 
   reserveTask(
-    input: FolderIdentity & { folderId: string; idempotencyKey: string },
+    input: FolderIdentity & {
+      folderId: string
+      sessionId: string
+      idempotencyKey: string
+      requestHash: string
+    },
   ) {
     this.getFolder(input, input.folderId, 'turn')
     const key = `${scopeKey(input)}:${input.idempotencyKey}`
     const current = this.#tasks.get(key)
-    if (current) return { reservation: clone(current), created: false }
+    if (current) {
+      if (
+        current.folderId !== input.folderId ||
+        current.sessionId !== input.sessionId ||
+        current.requestHash !== input.requestHash
+      )
+        throw new SharedFolderError('TASK_IDEMPOTENCY_CONFLICT')
+      return { reservation: clone(current), created: false }
+    }
     const reservation: TaskReservation = {
       key,
       folderId: input.folderId,
       principalId: input.principalId,
+      sessionId: input.sessionId,
+      requestHash: input.requestHash,
       taskId: `tsk_${randomUUID()}`,
-      upstreamWorkId: `up_${randomUUID()}`,
+      runId: null,
+      codexTurnId: null,
+      upstreamWorkId: null,
+      admissionDecisionId: null,
+      usageDedupeKey: null,
+      creditReservationId: null,
       billingSettlementId: null,
       status: 'reserved',
     }
@@ -677,32 +713,95 @@ class InMemorySharedFolderCore {
     return { reservation: clone(reservation), created: true }
   }
 
-  settleTask(
-    input: FolderIdentity & { idempotencyKey: string; settlementKey: string },
+  getTask(identity: FolderIdentity, sessionId: string, idempotencyKey: string) {
+    const task = this.#tasks.get(`${scopeKey(identity)}:${idempotencyKey}`)
+    if (!task || task.sessionId !== sessionId)
+      throw new SharedFolderError('TASK_NOT_FOUND')
+    this.getFolder(identity, task.folderId, 'read')
+    return clone(task)
+  }
+
+  findTaskByTurn(scope: FolderScope, codexTurnId: string) {
+    const task = [...this.#tasks.values()].find(
+      (value) => value.codexTurnId === codexTurnId,
+    )
+    return task
+      ? {
+          identity: { ...scope, principalId: task.principalId },
+          taskId: task.taskId,
+        }
+      : null
+  }
+
+  bindTaskRuntime(
+    input: FolderIdentity & {
+      taskId: string
+      runId: string
+      codexTurnId: string
+      upstreamWorkId: string
+      admissionDecisionId: string | null
+      creditReservationId: string | null
+    },
   ) {
-    const task = this.#tasks.get(`${scopeKey(input)}:${input.idempotencyKey}`)
+    const task = [...this.#tasks.values()].find(
+      (value) => value.taskId === input.taskId,
+    )
     if (!task) throw new SharedFolderError('TASK_NOT_FOUND')
-    const existing = this.#billingSettlements.get(input.settlementKey)
+    task.runId ??= input.runId
+    task.codexTurnId ??= input.codexTurnId
+    task.upstreamWorkId ??= input.upstreamWorkId
+    task.admissionDecisionId ??= input.admissionDecisionId
+    task.creditReservationId ??= input.creditReservationId
+    task.status = 'running'
+    return clone(task)
+  }
+
+  settleTask(
+    input: FolderIdentity & {
+      taskId: string
+      status: TaskReservation['status']
+      usageDedupeKey?: string | null
+      creditReservationId?: string | null
+      billingSettlementId?: string | null
+    },
+  ) {
+    const task = [...this.#tasks.values()].find(
+      (value) => value.taskId === input.taskId,
+    )
+    if (!task) throw new SharedFolderError('TASK_NOT_FOUND')
+    const settlementId = input.billingSettlementId ?? null
+    const existing = settlementId
+      ? this.#billingSettlements.get(settlementId)
+      : undefined
     if (existing && existing !== task.taskId)
       throw new SharedFolderError('BILLING_SETTLEMENT_CONFLICT')
-    if (!existing)
-      this.#billingSettlements.set(input.settlementKey, task.taskId)
-    task.billingSettlementId ??= `set_${digest(input.settlementKey).slice(0, 24)}`
-    task.status = 'completed'
+    if (settlementId && !existing)
+      this.#billingSettlements.set(settlementId, task.taskId)
+    task.usageDedupeKey ??= input.usageDedupeKey ?? null
+    task.creditReservationId ??= input.creditReservationId ?? null
+    task.billingSettlementId ??= settlementId
+    task.status = input.status
     return clone(task)
   }
 
   reserveApprovalResolution(
     approvalId: string,
     expectedVersion: number,
-    resolutionKey: string,
+    durableEventId: string,
   ) {
     const key = `${approvalId}:${expectedVersion}`
     const current = this.#approvalSettlements.get(key)
     if (current) return { resolutionId: current, created: false }
-    const resolutionId = `apr_${digest(resolutionKey).slice(0, 24)}`
+    const resolutionId = durableEventId
     this.#approvalSettlements.set(key, resolutionId)
     return { resolutionId, created: true }
+  }
+
+  getApprovalResolution(approvalId: string) {
+    const value = [...this.#approvalSettlements.entries()].find(([key]) =>
+      key.startsWith(`${approvalId}:`),
+    )
+    return value ? { resolutionId: value[1] } : null
   }
 
   onAccessChanged(listener: (event: FolderAccessChanged) => void) {
@@ -891,6 +990,18 @@ export interface SharedFolderRepository {
   reserveTask(
     input: Parameters<Core['reserveTask']>[0],
   ): Promise<ReturnType<Core['reserveTask']>>
+  getTask(
+    identity: FolderIdentity,
+    sessionId: string,
+    idempotencyKey: string,
+  ): Promise<TaskReservation>
+  findTaskByTurn(
+    scope: FolderScope,
+    codexTurnId: string,
+  ): Promise<{ identity: FolderIdentity; taskId: string } | null>
+  bindTaskRuntime(
+    input: Parameters<Core['bindTaskRuntime']>[0],
+  ): Promise<ReturnType<Core['bindTaskRuntime']>>
   settleTask(
     input: Parameters<Core['settleTask']>[0],
   ): Promise<ReturnType<Core['settleTask']>>
@@ -899,10 +1010,15 @@ export interface SharedFolderRepository {
       folderId: string
       approvalId: string
       expectedVersion: number
-      resolutionKey: string
+      durableEventId: string
+      codexTurnId: string | null
       decision: string
     },
   ): Promise<{ resolutionId: string; created: boolean }>
+  getApprovalResolution(
+    identity: FolderIdentity,
+    approvalId: string,
+  ): Promise<{ resolutionId: string } | null>
   onAccessChanged(
     listener: (event: FolderAccessChanged) => void,
   ): Promise<() => void>
@@ -1000,6 +1116,19 @@ export class InMemorySharedFolderRepository implements SharedFolderRepository {
   async reserveTask(input: Parameters<Core['reserveTask']>[0]) {
     return this.#core.reserveTask(input)
   }
+  async getTask(
+    identity: FolderIdentity,
+    sessionId: string,
+    idempotencyKey: string,
+  ) {
+    return this.#core.getTask(identity, sessionId, idempotencyKey)
+  }
+  async findTaskByTurn(scope: FolderScope, codexTurnId: string) {
+    return this.#core.findTaskByTurn(scope, codexTurnId)
+  }
+  async bindTaskRuntime(input: Parameters<Core['bindTaskRuntime']>[0]) {
+    return this.#core.bindTaskRuntime(input)
+  }
   async settleTask(input: Parameters<Core['settleTask']>[0]) {
     return this.#core.settleTask(input)
   }
@@ -1011,15 +1140,19 @@ export class InMemorySharedFolderRepository implements SharedFolderRepository {
     folderId: string
     approvalId: string
     expectedVersion: number
-    resolutionKey: string
+    durableEventId: string
+    codexTurnId: string | null
     decision: string
   }) {
     this.#core.getFolder(input, input.folderId, 'approval')
     return this.#core.reserveApprovalResolution(
       input.approvalId,
       input.expectedVersion,
-      input.resolutionKey,
+      input.durableEventId,
     )
+  }
+  async getApprovalResolution(_identity: FolderIdentity, approvalId: string) {
+    return this.#core.getApprovalResolution(approvalId)
   }
   async onAccessChanged(listener: (event: FolderAccessChanged) => void) {
     return this.#core.onAccessChanged(listener)
