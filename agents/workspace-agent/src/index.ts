@@ -48,6 +48,14 @@ export {
   type WorkspaceFileOperation,
   type WorkspaceWatchJob,
 } from './workspace-corpus-watcher'
+export {
+  WorkspaceCorpusRuntimeServices,
+  WorkspaceCorpusRuntimeError,
+  WORKSPACE_CORPUS_RUNTIME_VERSION,
+  type RuntimeCorpusCredential,
+  type RuntimeCorpusCredentialPort,
+  type RuntimeCorpusWatchSink,
+} from './runtime-corpus-integration'
 
 export type JsonRpcId = number | string
 
@@ -85,6 +93,9 @@ export interface CodexAppServerClientOptions {
   onStderr?: (chunk: string) => void
   requestTimeoutMs?: number
   restart?: Partial<RestartPolicy>
+  beforeLaunch?: (input: {
+    processGeneration: number
+  }) => Promise<NodeJS.ProcessEnv | void> | NodeJS.ProcessEnv | void
 }
 
 export interface InitializeClientInfo {
@@ -366,9 +377,12 @@ export class CodexAppServerClient {
   async #launch(restartAttempt: number): Promise<void> {
     this.#setHealth('starting', restartAttempt)
     this.#processGeneration += 1
+    const launchEnv = await this.#options.beforeLaunch?.({
+      processGeneration: this.#processGeneration,
+    })
     const child = spawn(this.#options.command, this.#options.args, {
       cwd: this.#options.cwd,
-      env: this.#options.env ?? process.env,
+      env: launchEnv ?? this.#options.env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     this.#process = child
@@ -580,6 +594,7 @@ export interface WorkspaceRuntimeClient {
 
 export interface WorkspaceRuntimeIdentity {
   tenantId: string
+  organizationId?: string
   workspaceId: string
   cwd: string
   codexHome?: string
@@ -614,6 +629,17 @@ export interface WorkspaceRuntimeRegistryOptions {
     error: unknown,
   ) => void
   onHealthChange?: (runtime: WorkspaceRuntime, health: ProcessHealth) => void
+  runtimeServicesFactory?: (
+    identity: WorkspaceRuntimeIdentity,
+  ) => WorkspaceRuntimeServices
+}
+
+export interface WorkspaceRuntimeServices {
+  start(): Promise<void>
+  prepareLaunch(input: {
+    processGeneration: number
+  }): Promise<NodeJS.ProcessEnv | void>
+  stop(): Promise<void>
 }
 
 function runtimeKey(
@@ -636,6 +662,7 @@ export class WorkspaceRuntimeRegistry {
   readonly #runtimes = new Map<string, WorkspaceRuntime>()
   readonly #initializing = new Map<string, Promise<WorkspaceRuntime>>()
   readonly #deliveryQueues = new Map<string, Promise<void>>()
+  readonly #services = new Map<string, WorkspaceRuntimeServices>()
   #stopping = false
 
   constructor(options: WorkspaceRuntimeRegistryOptions = {}) {
@@ -697,7 +724,11 @@ export class WorkspaceRuntimeRegistry {
     await Promise.allSettled(
       [...this.#runtimes.values()].map((runtime) => runtime.client.stop()),
     )
+    await Promise.allSettled(
+      [...this.#services.values()].map((services) => services.stop()),
+    )
     this.#runtimes.clear()
+    this.#services.clear()
     this.#deliveryQueues.clear()
   }
 
@@ -713,6 +744,11 @@ export class WorkspaceRuntimeRegistry {
         'runtimeInstanceId must be a non-empty string',
       )
     }
+    const services = this.#options.runtimeServicesFactory?.(identity)
+    if (services) {
+      await services.start()
+      this.#services.set(key, services)
+    }
     const client =
       this.#options.clientFactory?.(identity) ??
       new CodexAppServerClient({
@@ -720,6 +756,11 @@ export class WorkspaceRuntimeRegistry {
         env: identity.codexHome
           ? { ...process.env, CODEX_HOME: identity.codexHome }
           : process.env,
+        ...(services
+          ? {
+              beforeLaunch: (input) => services.prepareLaunch(input),
+            }
+          : {}),
       })
     let runtime: WorkspaceRuntime | undefined
     const ordinals = new Map<number, number>()
@@ -795,6 +836,8 @@ export class WorkspaceRuntimeRegistry {
       return runtime
     } catch (error) {
       await client.stop().catch(() => undefined)
+      await services?.stop().catch(() => undefined)
+      this.#services.delete(key)
       throw error
     }
   }

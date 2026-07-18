@@ -1,6 +1,10 @@
 import {
+  createHash,
+  createHmac,
   createPublicKey,
   createVerify,
+  randomBytes,
+  randomUUID,
   timingSafeEqual,
   type JsonWebKey,
 } from 'node:crypto'
@@ -31,6 +35,190 @@ export interface AuthenticationRequest {
 
 export interface AuthenticationAdapter {
   authenticate(request: AuthenticationRequest): Promise<AuthPrincipal>
+}
+
+export const CORPUS_WORKLOAD_AUDIENCE =
+  'urn:persistent-codex:workspace-corpus' as const
+export type CorpusWorkloadAction = 'source.search' | 'citation.read'
+
+interface WorkloadClaims {
+  version: 1
+  jti: string
+  subject: string
+  audience: typeof CORPUS_WORKLOAD_AUDIENCE
+  tenantId: string
+  organizationId: string
+  workspaceId: string
+  actions: CorpusWorkloadAction[]
+  proofKeyHash: string
+  issuedAt: number
+  expiresAt: number
+}
+
+export interface IssuedCorpusWorkloadCredential {
+  accessToken: string
+  proofKey: string
+  expiresAt: string
+  credentialId: string
+}
+
+const encode = (value: unknown) =>
+  Buffer.from(JSON.stringify(value)).toString('base64url')
+const proofKeyHash = (value: string) =>
+  createHash('sha256').update(value).digest('base64url')
+
+export class CorpusWorkloadCredentialAuthority {
+  readonly #signingKey: Buffer
+  readonly #audience: string
+  readonly #maxTtlMs: number
+  readonly #revoked = new Set<string>()
+  readonly #nonces = new Map<string, number>()
+
+  constructor(
+    options: {
+      signingKey?: Uint8Array
+      audience?: string
+      maxTtlMs?: number
+    } = {},
+  ) {
+    this.#signingKey = Buffer.from(options.signingKey ?? randomBytes(32))
+    if (this.#signingKey.byteLength < 32)
+      throw new AuthenticationError('WORKLOAD_SIGNING_KEY_TOO_SHORT')
+    this.#audience = options.audience ?? CORPUS_WORKLOAD_AUDIENCE
+    this.#maxTtlMs = options.maxTtlMs ?? 5 * 60_000
+  }
+
+  issue(input: {
+    tenantId: string
+    organizationId: string
+    workspaceId: string
+    ttlMs?: number
+    now?: Date
+  }): IssuedCorpusWorkloadCredential {
+    const now = input.now ?? new Date()
+    const ttlMs = Math.min(input.ttlMs ?? 60_000, this.#maxTtlMs)
+    if (ttlMs < 1_000) throw new AuthenticationError('WORKLOAD_TTL_INVALID')
+    const proofKey = randomBytes(32).toString('base64url')
+    const claims: WorkloadClaims = {
+      version: 1,
+      jti: randomUUID(),
+      subject: `workspace-corpus:${input.workspaceId}`,
+      audience: this.#audience as typeof CORPUS_WORKLOAD_AUDIENCE,
+      tenantId: input.tenantId,
+      organizationId: input.organizationId,
+      workspaceId: input.workspaceId,
+      actions: ['source.search', 'citation.read'],
+      proofKeyHash: proofKeyHash(proofKey),
+      issuedAt: now.getTime(),
+      expiresAt: now.getTime() + ttlMs,
+    }
+    const payload = encode(claims)
+    const signature = createHmac('sha256', this.#signingKey)
+      .update(payload)
+      .digest('base64url')
+    return {
+      accessToken: `pcw1.${payload}.${signature}`,
+      proofKey,
+      expiresAt: new Date(claims.expiresAt).toISOString(),
+      credentialId: claims.jti,
+    }
+  }
+
+  revoke(credentialId: string) {
+    this.#revoked.add(credentialId)
+  }
+
+  verify(input: {
+    authorization?: string
+    proof?: string
+    timestamp?: string
+    nonce?: string
+    action: CorpusWorkloadAction
+    tenantId: string
+    organizationId: string
+    workspaceId: string
+    now?: Date
+  }): AuthPrincipal {
+    const token = input.authorization?.match(/^Bearer (pcw1\.[^\s]+)$/)?.[1]
+    if (!token) throw new AuthenticationError('WORKLOAD_AUTH_REQUIRED')
+    const [, payload, signature] = token.split('.')
+    if (!payload || !signature)
+      throw new AuthenticationError('WORKLOAD_TOKEN_MALFORMED')
+    const expected = createHmac('sha256', this.#signingKey)
+      .update(payload)
+      .digest('base64url')
+    if (!constantTimeEqual(signature, expected))
+      throw new AuthenticationError('WORKLOAD_TOKEN_SIGNATURE_INVALID')
+    let claims: WorkloadClaims
+    try {
+      claims = JSON.parse(
+        Buffer.from(payload, 'base64url').toString('utf8'),
+      ) as WorkloadClaims
+    } catch {
+      throw new AuthenticationError('WORKLOAD_TOKEN_MALFORMED')
+    }
+    const now = input.now ?? new Date()
+    const timestamp = Number(input.timestamp)
+    if (
+      claims.version !== 1 ||
+      claims.audience !== this.#audience ||
+      claims.expiresAt <= now.getTime() ||
+      claims.issuedAt > now.getTime() + 5_000 ||
+      this.#revoked.has(claims.jti)
+    )
+      throw new AuthenticationError('WORKLOAD_TOKEN_REJECTED')
+    if (
+      claims.tenantId !== input.tenantId ||
+      claims.organizationId !== input.organizationId ||
+      claims.workspaceId !== input.workspaceId ||
+      !claims.actions.includes(input.action)
+    )
+      throw new AuthenticationError('WORKLOAD_SCOPE_REJECTED')
+    if (
+      !input.nonce ||
+      input.nonce.length > 128 ||
+      !Number.isFinite(timestamp) ||
+      Math.abs(now.getTime() - timestamp) > 30_000 ||
+      !input.proof
+    )
+      throw new AuthenticationError('WORKLOAD_PROOF_REQUIRED')
+    for (const [nonce, expiresAt] of this.#nonces)
+      if (expiresAt <= now.getTime()) this.#nonces.delete(nonce)
+    const replayKey = `${claims.jti}:${input.nonce}`
+    if (this.#nonces.has(replayKey))
+      throw new AuthenticationError('WORKLOAD_REPLAY_REJECTED')
+    const proofKey = input.proof.split('.')[0]
+    const proofSignature = input.proof.split('.')[1]
+    if (
+      !proofKey ||
+      !proofSignature ||
+      proofKeyHash(proofKey) !== claims.proofKeyHash
+    )
+      throw new AuthenticationError('WORKLOAD_PROOF_INVALID')
+    const proofMessage = [
+      token,
+      input.timestamp,
+      input.nonce,
+      input.action,
+    ].join('\n')
+    const expectedProof = createHmac('sha256', proofKey)
+      .update(proofMessage)
+      .digest('base64url')
+    if (!constantTimeEqual(proofSignature, expectedProof))
+      throw new AuthenticationError('WORKLOAD_PROOF_INVALID')
+    this.#nonces.set(replayKey, claims.expiresAt)
+    return authPrincipalSchema.parse({
+      version: 1,
+      kind: 'internal_service',
+      subject: claims.subject,
+      issuer: 'urn:persistent-codex:workload',
+      audience: [claims.audience],
+      authenticatedAt: new Date(claims.issuedAt).toISOString(),
+      expiresAt: new Date(claims.expiresAt).toISOString(),
+      assurance: { level: 'workload-proof-v1', mfa: false },
+      memberships: [],
+    })
+  }
 }
 
 export interface MembershipDirectory {
@@ -295,6 +483,7 @@ const ROLE_ACTIONS: Record<OrganizationMembership['role'], Set<string>> = {
     'source.delete',
     'source.reindex',
     'source.search',
+    'citation.read',
     'support.grant.read',
     'support.grant.approve',
     'break_glass.approve',
@@ -328,6 +517,7 @@ const ROLE_ACTIONS: Record<OrganizationMembership['role'], Set<string>> = {
     'source.delete',
     'source.reindex',
     'source.search',
+    'citation.read',
     'support.grant.create',
     'support.grant.read',
     'support.grant.revoke',
@@ -349,6 +539,7 @@ const ROLE_ACTIONS: Record<OrganizationMembership['role'], Set<string>> = {
     'provider.readiness.read',
     'source.read',
     'source.search',
+    'citation.read',
     'support.grant.create',
     'support.grant.read',
     'support.grant.revoke',

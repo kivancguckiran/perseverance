@@ -2,6 +2,7 @@ import type {
   CorpusCitationLookupResponse,
   CorpusSearchResponse,
 } from '@persistent-codex/control-plane-contracts'
+import { createHmac, randomUUID } from 'node:crypto'
 
 export const WORKSPACE_CORPUS_MCP_VERSION = 1 as const
 export const MCP_MAX_OUTPUT_BYTES = 64 * 1024
@@ -12,6 +13,7 @@ export interface CorpusWorkloadIdentity {
   organizationId: string
   workspaceId: string
   accessToken: string
+  proofKey: string
 }
 
 export interface WorkspaceCorpusRetrievalClient {
@@ -73,17 +75,32 @@ export class HttpWorkspaceCorpusRetrievalClient implements WorkspaceCorpusRetrie
     this.#fetcher = input.fetcher ?? fetch
   }
 
-  async #post(path: string, body: unknown) {
+  async #post(
+    path: string,
+    body: unknown,
+    action: 'source.search' | 'citation.read',
+  ) {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 2_000)
     try {
+      const timestamp = String(Date.now())
+      const nonce = randomUUID()
+      const proofSignature = createHmac('sha256', this.#identity.proofKey)
+        .update(
+          [this.#identity.accessToken, timestamp, nonce, action].join('\n'),
+        )
+        .digest('base64url')
       const response = await this.#fetcher(new URL(path, this.#endpoint), {
         method: 'POST',
         headers: {
           authorization: `Bearer ${this.#identity.accessToken}`,
           'content-type': 'application/json',
           'x-tenant-id': this.#identity.tenantId,
+          'x-organization-id': this.#identity.organizationId,
           'x-workspace-id': this.#identity.workspaceId,
+          'x-workload-timestamp': timestamp,
+          'x-workload-nonce': nonce,
+          'x-workload-proof': `${this.#identity.proofKey}.${proofSignature}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -111,6 +128,7 @@ export class HttpWorkspaceCorpusRetrievalClient implements WorkspaceCorpusRetrie
         rankingPolicyVersion: 'hybrid-rrf-v1',
         queryTimeoutMs: 1_500,
       },
+      'source.search',
     )) as CorpusSearchResponse
   }
 
@@ -128,6 +146,7 @@ export class HttpWorkspaceCorpusRetrievalClient implements WorkspaceCorpusRetrie
         workspaceId: this.#identity.workspaceId,
         ...input,
       },
+      'citation.read',
     )) as CorpusCitationLookupResponse
   }
 }

@@ -1,7 +1,13 @@
-import { generateKeyPairSync, sign, type JsonWebKey } from 'node:crypto'
+import {
+  createHmac,
+  generateKeyPairSync,
+  sign,
+  type JsonWebKey,
+} from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   OidcAuthenticationAdapter,
+  CorpusWorkloadCredentialAuthority,
   StaticMembershipDirectory,
   authorize,
 } from './index'
@@ -257,5 +263,81 @@ describe('authorization policy', () => {
         resource: { organizationId: 'org-a', resourceType: 'session' },
       }),
     ).toMatchObject({ allow: false, reasonCode: 'MEMBERSHIP_INACTIVE' })
+  })
+})
+
+describe('corpus workload credentials', () => {
+  it('binds audience, action and workspace, rejects replay/substitution, expiry and revoke', () => {
+    const authority = new CorpusWorkloadCredentialAuthority({
+      signingKey: Buffer.alloc(32, 7),
+    })
+    const now = new Date('2026-07-18T10:00:00.000Z')
+    const credential = authority.issue({
+      tenantId: 'tenant-a',
+      organizationId: 'tenant-a',
+      workspaceId: 'workspace-a',
+      ttlMs: 60_000,
+      now,
+    })
+    const request = (overrides: Record<string, unknown> = {}) => {
+      const timestamp = String(now.getTime())
+      const nonce = String(overrides.nonce ?? 'nonce-a')
+      const action = (overrides.action ?? 'source.search') as 'source.search'
+      const signature = createHmac('sha256', credential.proofKey)
+        .update([credential.accessToken, timestamp, nonce, action].join('\n'))
+        .digest('base64url')
+      return {
+        authorization: `Bearer ${credential.accessToken}`,
+        proof: `${credential.proofKey}.${signature}`,
+        timestamp,
+        nonce,
+        action,
+        tenantId: 'tenant-a',
+        organizationId: 'tenant-a',
+        workspaceId: 'workspace-a',
+        now,
+        ...overrides,
+      }
+    }
+    expect(authority.verify(request()).kind).toBe('internal_service')
+    expect(() => authority.verify(request())).toThrow(/Authentication failed/)
+    expect(() =>
+      authority.verify(
+        request({ nonce: 'nonce-b', workspaceId: 'workspace-b' }),
+      ),
+    ).toThrow(/Authentication failed/)
+    expect(() =>
+      authority.verify(
+        request({ nonce: 'nonce-tenant', tenantId: 'tenant-b' }),
+      ),
+    ).toThrow(/Authentication failed/)
+    expect(() =>
+      authority.verify({
+        ...request({ nonce: 'nonce-action', action: 'turn.start' }),
+        action: 'turn.start' as never,
+      }),
+    ).toThrow(/Authentication failed/)
+    const wrongAudience = new CorpusWorkloadCredentialAuthority({
+      signingKey: Buffer.alloc(32, 7),
+      audience: 'urn:persistent-codex:wrong-audience',
+    })
+    expect(() =>
+      wrongAudience.verify(request({ nonce: 'nonce-audience' })),
+    ).toThrow(/Authentication failed/)
+    expect(() =>
+      authority.verify({
+        ...request({ nonce: 'nonce-c' }),
+        proof: `substituted.${'x'.repeat(43)}`,
+      }),
+    ).toThrow(/Authentication failed/)
+    expect(() =>
+      authority.verify(
+        request({ nonce: 'nonce-d', now: new Date(now.getTime() + 61_000) }),
+      ),
+    ).toThrow(/Authentication failed/)
+    authority.revoke(credential.credentialId)
+    expect(() => authority.verify(request({ nonce: 'nonce-e' }))).toThrow(
+      /Authentication failed/,
+    )
   })
 })

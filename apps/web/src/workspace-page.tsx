@@ -1342,7 +1342,8 @@ export function describeTimelineEvent(
     event.type === 'command.completed' ||
     event.type === 'file.change.proposed' ||
     event.type === 'file.change.completed' ||
-    event.type === 'diff.updated'
+    event.type === 'diff.updated' ||
+    event.type === 'tool.completed'
   const tone =
     event.type === 'error.reported'
       ? 'error'
@@ -1473,7 +1474,16 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
         <div className="timeline-event-body">
           {presentation.expanded ? (
             <>
-              <pre>{presentation.summary}</pre>
+              <pre
+                aria-label={
+                  card.event.type === 'tool.completed' &&
+                  card.event.payload.tool === 'search_corpus'
+                    ? 'Corpus citation result'
+                    : undefined
+                }
+              >
+                {presentation.summary}
+              </pre>
               <details className="timeline-technical-details">
                 <summary>Teknik detaylar</summary>
                 <pre>{technicalDetailOf(card.event)}</pre>
@@ -1617,6 +1627,15 @@ export function describeConversationWork(work: ConversationWork): string {
 function ConversationWorkBlock({ work }: { work: ConversationWork }) {
   const [expanded, setExpanded] = useState(false)
   const visibleCards = work.cards.slice(-8)
+  const corpusCitation = [...visibleCards]
+    .reverse()
+    .find(
+      (card) =>
+        card.event.type === 'tool.completed' &&
+        card.event.payload.provider === 'workspace_corpus' &&
+        card.event.payload.tool === 'search_corpus' &&
+        card.event.payload.success,
+    )
   return (
     <details
       className={`chat-work ${work.running ? 'is-running' : ''}`}
@@ -1648,6 +1667,14 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
           </li>
         ))}
       </ol>
+      {corpusCitation?.event.type === 'tool.completed' ? (
+        <details className="corpus-citation-details">
+          <summary>Corpus citation ayrıntıları</summary>
+          <pre aria-label="Corpus citation result">
+            {JSON.stringify(corpusCitation.event.payload.result, null, 2)}
+          </pre>
+        </details>
+      ) : null}
       {work.cards.length > visibleCards.length ? (
         <p>{work.cards.length - visibleCards.length} eski işlem gizlendi.</p>
       ) : null}

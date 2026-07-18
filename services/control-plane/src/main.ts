@@ -210,7 +210,14 @@ const app = await buildControlPlane({
   authenticationAdapter,
   supportAccessRepository,
   ...(corpusRepository && corpusSnapshotStorage
-    ? { corpusRepository, corpusSnapshotStorage }
+    ? {
+        corpusRepository,
+        corpusSnapshotStorage,
+        corpusRuntime: {
+          endpoint:
+            process.env.CORPUS_INTERNAL_ENDPOINT ?? `http://127.0.0.1:${port}`,
+        },
+      }
     : { allowLocalCorpus: true }),
   securityReadiness: {
     runtimeBackend:

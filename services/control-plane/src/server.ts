@@ -12,9 +12,11 @@ import {
 } from '@persistent-codex/corpus-ingestion'
 import {
   AuthenticationError,
+  CorpusWorkloadCredentialAuthority,
   ExplicitDevAuthenticationAdapter,
   authorize,
   type AuthenticationAdapter,
+  type CorpusWorkloadAction,
   type MembershipDirectory,
 } from '@persistent-codex/authz'
 import {
@@ -54,15 +56,17 @@ import {
   type SupportAccessRepository,
   type SupportAccessScope,
 } from '@persistent-codex/support-access'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import {
   accessSync,
   constants,
   lstatSync,
+  createReadStream,
   realpathSync,
   readFileSync,
   statfsSync,
 } from 'node:fs'
+import { relative, resolve, sep } from 'node:path'
 import cors from '@fastify/cors'
 import websocket from '@fastify/websocket'
 import {
@@ -110,7 +114,6 @@ import type {
   ProviderId,
   ProviderModelCatalog,
 } from '@persistent-codex/provider-platform'
-import { createHash } from 'node:crypto'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import {
   SqliteEventStore,
@@ -123,7 +126,10 @@ import type {
   WorkspaceRuntimeClient,
   WorkspaceRuntimeIdentity,
 } from '@persistent-codex/workspace-agent'
-import { PersistentCodexHomeManager } from '@persistent-codex/workspace-agent'
+import {
+  PersistentCodexHomeManager,
+  WorkspaceCorpusRuntimeServices,
+} from '@persistent-codex/workspace-agent'
 import Fastify from 'fastify'
 import {
   isIdempotencyConflict,
@@ -169,6 +175,13 @@ export interface ControlPlaneOptions {
   corpusEmbeddingProvider?: EmbeddingProvider
   allowLocalCorpus?: boolean
   corpusAutoDrain?: boolean
+  corpusRuntime?: {
+    endpoint: string
+    mcpCommand?: string
+    mcpArgs?: string[]
+    mcpCwd?: string
+    scanIntervalMs?: number
+  }
   preflightChecks?: Array<{
     name:
       | 'codex'
@@ -205,6 +218,7 @@ export interface ControlPlaneOptions {
   cursorForceAllowed?: boolean
   titleGenerator?: SessionOrchestratorOptions['titleGenerator']
   authenticationAdapter?: AuthenticationAdapter
+  workloadCredentialAuthority?: CorpusWorkloadCredentialAuthority
   membershipDirectory?: MembershipDirectory
   allowExplicitDevAuthentication?: boolean
   supportAccessRepository?: SupportAccessRepository
@@ -505,7 +519,7 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
     {
       method: 'POST',
       route: '/v1/workspaces/:workspaceId/citations/resolve',
-      action: 'source.search',
+      action: 'citation.read',
       resourceType: 'corpus_citation',
     },
     {
@@ -933,6 +947,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       : {}),
     now,
   })
+  const durableCorpus = options.corpusRepository
+    ? (corpus as CorpusIngestionService)
+    : undefined
   const corpusDrains = new Map<string, Promise<void>>()
   let corpusWorkerTail = Promise.resolve()
   const scheduleCorpusDrain = (scope: SupportAccessScope) => {
@@ -941,7 +958,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       scope.organizationId,
       scope.workspaceId,
     ])
-    if (corpusDrains.has(key)) return
+    const existing = corpusDrains.get(key)
+    if (existing) return existing
     const workerId = `control-plane-${createHash('sha256')
       .update(key)
       .digest('hex')
@@ -961,6 +979,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       .finally(() => corpusDrains.delete(key))
     corpusDrains.set(key, drain)
     corpusWorkerTail = drain.catch(() => undefined)
+    return drain
   }
   if (options.corpusAutoDrain !== false)
     for (const scope of await corpus.recoverableScopes())
@@ -982,6 +1001,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     (options.allowExplicitDevAuthentication || process.env.NODE_ENV === 'test'
       ? new ExplicitDevAuthenticationAdapter()
       : undefined)
+  const workloadCredentials =
+    options.workloadCredentialAuthority ??
+    new CorpusWorkloadCredentialAuthority()
   const memberships: MembershipDirectory = options.membershipDirectory ?? {
     membershipsFor(subject, issuer) {
       return store.listOrganizationMemberships(subject, issuer)
@@ -1038,6 +1060,116 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     ...(options.runIdFactory ? { runIdFactory: options.runIdFactory } : {}),
     ...(options.runtimeInstanceIdFactory
       ? { runtimeInstanceIdFactory: options.runtimeInstanceIdFactory }
+      : {}),
+    ...(options.corpusRuntime && options.corpusRepository
+      ? {
+          runtimeServicesFactory: (identity: WorkspaceRuntimeIdentity) =>
+            new WorkspaceCorpusRuntimeServices({
+              identity: {
+                ...identity,
+                organizationId: identity.organizationId ?? identity.tenantId,
+              },
+              endpoint: options.corpusRuntime!.endpoint,
+              mcpCommand: options.corpusRuntime!.mcpCommand ?? process.execPath,
+              mcpArgs: options.corpusRuntime!.mcpArgs ?? [
+                '--import',
+                'tsx',
+                resolve(
+                  process.cwd(),
+                  'agents/workspace-agent/src/corpus-mcp-main.ts',
+                ),
+              ],
+              mcpCwd: options.corpusRuntime!.mcpCwd ?? process.cwd(),
+              ...(options.corpusRuntime!.scanIntervalMs
+                ? { scanIntervalMs: options.corpusRuntime!.scanIntervalMs }
+                : {}),
+              credentialPort: {
+                issue: (scope) => workloadCredentials.issue(scope),
+                revoke: (credentialId) =>
+                  workloadCredentials.revoke(credentialId),
+              },
+              watchSink: {
+                persistAndApply: async ({ scope, root, jobs }) => {
+                  await options.corpusRepository!.enqueueWatchJobs(
+                    scope,
+                    jobs.map((job) => ({
+                      watchJobId: `wjob_${randomUUID()}`,
+                      operation: job.operation,
+                      workspacePath: job.path,
+                      previousWorkspacePath: job.previousPath ?? null,
+                      contentHash: job.contentHash ?? null,
+                      idempotencyKey: job.idempotencyKey,
+                    })),
+                  )
+                  await options.corpusRepository!.recoverWatchJobs(scope)
+                  for (;;) {
+                    const claimed =
+                      await options.corpusRepository!.claimWatchJobs(scope, 64)
+                    if (claimed.length === 0) break
+                    for (const job of claimed) {
+                      try {
+                        if (job.operation === 'delete') {
+                          await durableCorpus!.deleteWorkspaceFile(
+                            scope,
+                            job.workspacePath,
+                          )
+                        } else if (job.operation === 'rename') {
+                          await durableCorpus!.renameWorkspaceFile(
+                            scope,
+                            job.previousWorkspacePath!,
+                            job.workspacePath,
+                          )
+                        } else {
+                          const absolute = resolve(root, job.workspacePath)
+                          const canonical = realpathSync(absolute)
+                          const rel = relative(realpathSync(root), canonical)
+                          if (
+                            rel === '..' ||
+                            rel.startsWith(`..${sep}`) ||
+                            lstatSync(absolute).isSymbolicLink()
+                          )
+                            throw new CorpusError(
+                              'WORKSPACE_PATH_ESCAPE',
+                              'Workspace corpus path escaped its root',
+                            )
+                          await durableCorpus!.upsertWorkspaceFile({
+                            scope,
+                            workspacePath: job.workspacePath,
+                            chunks: createReadStream(canonical),
+                          })
+                          await scheduleCorpusDrain(scope)
+                        }
+                        await options.corpusRepository!.completeWatchJob(
+                          scope,
+                          job.watchJobId,
+                          'completed',
+                        )
+                      } catch (error) {
+                        if (
+                          error instanceof CorpusError &&
+                          error.code === 'SOURCE_NOT_FOUND' &&
+                          job.operation === 'delete'
+                        ) {
+                          await options.corpusRepository!.completeWatchJob(
+                            scope,
+                            job.watchJobId,
+                            'completed',
+                          )
+                          continue
+                        }
+                        await options.corpusRepository!.completeWatchJob(
+                          scope,
+                          job.watchJobId,
+                          'failed',
+                        )
+                        throw error
+                      }
+                    }
+                  }
+                },
+              },
+            }),
+        }
       : {}),
     ...(options.approvalPolicy
       ? { approvalPolicy: options.approvalPolicy }
@@ -1188,18 +1320,48 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     )
       throw new AuthenticationError('AUTHZ_ROUTE_UNCOVERED')
     if (!coverage) return
-    if (!authentication)
-      throw new AuthenticationError('AUTH_CONFIGURATION_REQUIRED')
     const authorization = headerValue(request.headers.authorization)
-    const principal = await authentication.authenticate({
-      ...(authorization ? { authorization } : {}),
-      headers: request.headers,
-      now: now(),
-    })
+    const workloadRequest = authorization?.startsWith('Bearer pcw1.') === true
+    if (!workloadRequest && !authentication)
+      throw new AuthenticationError('AUTH_CONFIGURATION_REQUIRED')
+    const endUserPrincipal = workloadRequest
+      ? undefined
+      : await authentication!.authenticate({
+          ...(authorization ? { authorization } : {}),
+          headers: request.headers,
+          now: now(),
+        })
     const organizationId = headerValue(request.headers['x-tenant-id'])
     const workspaceId = headerValue(request.headers['x-workspace-id'])
     if (!organizationId || !workspaceId)
       throw new AuthenticationError('RESOURCE_SCOPE_MISSING')
+    const principal = workloadRequest
+      ? workloadCredentials.verify({
+          authorization,
+          ...(headerValue(request.headers['x-workload-proof'])
+            ? {
+                proof: headerValue(request.headers['x-workload-proof'])!,
+              }
+            : {}),
+          ...(headerValue(request.headers['x-workload-timestamp'])
+            ? {
+                timestamp: headerValue(
+                  request.headers['x-workload-timestamp'],
+                )!,
+              }
+            : {}),
+          ...(headerValue(request.headers['x-workload-nonce'])
+            ? {
+                nonce: headerValue(request.headers['x-workload-nonce'])!,
+              }
+            : {}),
+          action: coverage.action as CorpusWorkloadAction,
+          tenantId: organizationId,
+          organizationId,
+          workspaceId,
+          now: now(),
+        })
+      : endUserPrincipal!
     const resolvedMemberships =
       principal.memberships.length > 0
         ? principal.memberships
@@ -1216,17 +1378,19 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         ?.sessionId === 'string'
         ? (request.params as { sessionId: string }).sessionId
         : undefined
-    const decision = authorize({
-      principal,
-      action,
-      memberships: resolvedMemberships,
-      resource: {
-        organizationId,
-        workspaceId,
-        ...(sessionId ? { sessionId } : {}),
-        resourceType: coverage.resourceType,
-      },
-    })
+    const decision = workloadRequest
+      ? { version: 1 as const, allow: true, reasonCode: 'WORKLOAD_ALLOWED' }
+      : authorize({
+          principal,
+          action,
+          memberships: resolvedMemberships,
+          resource: {
+            organizationId,
+            workspaceId,
+            ...(sessionId ? { sessionId } : {}),
+            resourceType: coverage.resourceType,
+          },
+        })
     store.appendAudit({
       tenantId: organizationId,
       workspaceId,

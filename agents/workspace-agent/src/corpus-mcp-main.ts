@@ -19,6 +19,7 @@ const server = new WorkspaceCorpusMcpServer(
       organizationId: required('CORPUS_WORKLOAD_ORGANIZATION_ID'),
       workspaceId: required('CORPUS_WORKLOAD_WORKSPACE_ID'),
       accessToken: required('CORPUS_WORKLOAD_ACCESS_TOKEN'),
+      proofKey: required('CORPUS_WORKLOAD_PROOF_KEY'),
     },
   }),
 )

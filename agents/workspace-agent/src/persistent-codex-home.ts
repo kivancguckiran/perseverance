@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   readlinkSync,
+  readFileSync,
   realpathSync,
   symlinkSync,
   unlinkSync,
@@ -86,6 +87,14 @@ export class PersistentCodexHomeManager {
         )
       if (existsSync(target)) {
         const targetStat = lstatSync(target)
+        if (
+          filename === 'config.toml' &&
+          targetStat.isFile() &&
+          readFileSync(target, 'utf8').includes(
+            '# persistent-codex managed workspace corpus MCP v1',
+          )
+        )
+          continue
         if (
           !targetStat.isSymbolicLink() ||
           realpathSync(target) !== canonicalSource ||

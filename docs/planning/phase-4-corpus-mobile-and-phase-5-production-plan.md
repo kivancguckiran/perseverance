@@ -159,25 +159,45 @@ Durum: **Uygulandı / kabul bekliyor**. WP23 aktive edilmedi; aktif kabul yüzey
   sorgusunda önce filtrelenir. Cache principal/scope/epoch namespace'lidir. MCP fixed
   workload identity kullanır; yalnız read-only `search_corpus`/`get_citation` sunar ve
   corpus'u `untrusted_context` olarak işaretler.
+- Runtime provisioning: normal session bootstrap `WorkspaceRuntimeRegistry` üzerinden
+  required workspace corpus MCP'yi managed Codex-home config katmanına ekler. Kullanıcı
+  provisioning config'i değişmez; token/proof değeri config'e yazılmaz. App-server
+  restart generation'ında credential rotate/revoke edilir; MCP unavailable ise session
+  açık hata ile fail-closed olur.
+- Workload identity: kısa ömürlü signed claim + request proof key; fixed audience,
+  tenant/organization/workspace ve yalnız `source.search`/`citation.read`. Timestamp,
+  nonce ve action-bound proof replay, expiry, revoke, scope/audience/action mismatch ve
+  token substitution'ı reddeder.
 - Watcher: debounce, bounded backlog, deterministic ordered ignore policy,
   create/update/rename/delete; update aynı source altında immutable revision,
-  supersede/delete tombstone ve cache invalidation üretir.
+  supersede/delete tombstone ve cache invalidation üretir. Runtime startup full scan,
+  gerçek filesystem signal + bounded reconciliation, canonical-root/symlink kontrolü
+  ve durable `corpus_watch_jobs` claim/recovery/complete hattına bağlıdır.
 - `pnpm wp22:test`: retrieval golden/policy, malicious content, MCP unknown fallback,
   watcher debounce/ignore/backpressure ve API search/citation/delete testleri.
 - `pnpm wp22:postgres`: gerçek `pgvector/pgvector:pg17` üzerinde migration, forced RLS,
   cross-tenant/source ACL, lexical+vector+cache+MCP, workspace lifecycle, PDF delete ve
   rollback state smoke'u. Geçici container/volume cleanup ayrıca doğrulanır.
 - `WP22_CODEX_BIN=<pinned-0.144.2> pnpm wp22:agent-e2e`: gerçek pinli app-server turn,
-  workspace-local MCP tool start/complete, citation'lı final timeline ve raw reasoning
-  bulunmadığı kontrolü.
-- `pnpm wp21:browser`: aynı PostgreSQL corpus adapter'ıyla 1280x720 ve 390x844;
-  page error, horizontal overflow, cross-tenant görünürlük ve content/credential leak
-  kontrolü. WP22 browser komutu WP21 responsive source yüzeyini geriye uyumlu kullanır.
+  normal ürün session bootstrap, managed MCP provisioning, PostgreSQL watcher index,
+  tool start/complete, citation'lı final timeline, malicious instruction ve raw
+  reasoning bulunmadığı kontrolü.
+- `WP22_CODEX_BIN=<pinned-0.144.2> pnpm wp22:browser`: gerçek PostgreSQL/pgvector +
+  Codex turn üzerinde watcher create/update/rename/delete, cross-tenant/unauthorized
+  zero-result, reconnect citation/tool görünümü, keyboard/screen-reader label ve
+  1280x720, 768x1024, 390x844 overflow/page-error/credential leak kontrolleri.
+- `WP22_CODEX_BIN=<pinned-0.144.2> pnpm wp22:accept`: WP22 test, PostgreSQL, agent E2E
+  ve browser gate'lerini tek cleanup-safe kabul zincirinde çalıştırır.
 - `pnpm verify`: format, typecheck, bütün unit/contract testleri, build ve SSR HTTP gate'i.
 - Provider ayrımı: deterministic fake-test embedding mekanik vector/ACL ve golden
   sıralama fixture'ıdır; usage ledger'a billable kanıt yazmaz ve production semantic
   quality kanıtı olarak sunulmaz. Gerçek Codex provider yalnız agent tool/citation E2E
   için kullanılır.
+- Encryption ayrımı: agent/browser E2E gerçek PostgreSQL/pgvector kullanır; snapshot
+  KMS explicit local test fixture'dır ve production KMS kanıtı sayılmaz.
+
+Production runtime wiring düzeltme commit'i:
+`fix: integrate WP22 retrieval into workspace runtime`.
 
 Bağımsız kabul task'ı bu evidence'i tekrar doğrulayıp sonucu kaydetmeden WP23
 `Aktif` yapılamaz.
