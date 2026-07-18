@@ -3,6 +3,7 @@ import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import {
   CorpusIngestionService,
   CorpusError,
+  HybridCorpusRetrievalService,
   LocalCorpusRegistry,
   singleChunk,
   type CorpusRepository,
@@ -41,6 +42,10 @@ import {
   sourceDetailResponseSchema,
   sourceListResponseSchema,
   sourceUploadMetadataSchema,
+  corpusSearchRequestSchema,
+  corpusSearchResponseSchema,
+  corpusCitationLookupRequestSchema,
+  corpusCitationLookupResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
 import {
   InMemorySupportAccessRepository,
@@ -492,6 +497,18 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       resourceType: 'source',
     },
     {
+      method: 'POST',
+      route: '/v1/workspaces/:workspaceId/search',
+      action: 'source.search',
+      resourceType: 'corpus_search',
+    },
+    {
+      method: 'POST',
+      route: '/v1/workspaces/:workspaceId/citations/resolve',
+      action: 'source.search',
+      resourceType: 'corpus_citation',
+    },
+    {
       method: 'DELETE',
       route: '/v1/sessions/:sessionId/attachments/:attachmentId',
       action: 'attachment.delete',
@@ -909,6 +926,13 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           now,
         },
       )
+  const corpusRetrieval = new HybridCorpusRetrievalService({
+    repository: options.corpusRepository ?? (corpus as LocalCorpusRegistry),
+    ...(options.corpusEmbeddingProvider
+      ? { embeddingProvider: options.corpusEmbeddingProvider }
+      : {}),
+    now,
+  })
   const corpusDrains = new Map<string, Promise<void>>()
   let corpusWorkerTail = Promise.resolve()
   const scheduleCorpusDrain = (scope: SupportAccessScope) => {
@@ -1673,6 +1697,61 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         if (error instanceof CorpusError)
           return reply
             .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/search',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      if (!scope || scope.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'Workspace scope is required',
+        })
+      try {
+        const body = corpusSearchRequestSchema.parse(request.body)
+        const context = authContexts.get(request)!
+        const result = await corpusRetrieval.search(
+          { ...scope, principalId: opaquePrincipalId(context.principal) },
+          body,
+        )
+        return corpusSearchResponseSchema.parse(result)
+      } catch (error) {
+        if (error instanceof CorpusError)
+          return reply
+            .code(400)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.post<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/citations/resolve',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      if (!scope || scope.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'Workspace scope is required',
+        })
+      try {
+        const body = corpusCitationLookupRequestSchema.parse(request.body)
+        const context = authContexts.get(request)!
+        return corpusCitationLookupResponseSchema.parse(
+          await corpusRetrieval.getCitation(
+            { ...scope, principalId: opaquePrincipalId(context.principal) },
+            body,
+          ),
+        )
+      } catch (error) {
+        if (error instanceof CorpusError)
+          return reply
+            .code(error.code === 'CITATION_NOT_FOUND' ? 404 : 400)
             .send({ code: error.code, message: error.message })
         throw error
       }

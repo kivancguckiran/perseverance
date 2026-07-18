@@ -28,6 +28,26 @@ export {
   type AlphaConfig,
   type PreflightCheck,
 } from './alpha-preflight'
+export {
+  HttpWorkspaceCorpusRetrievalClient,
+  McpRequestError,
+  WorkspaceCorpusMcpServer,
+  MCP_MAX_OUTPUT_BYTES,
+  MCP_MAX_OUTPUT_TOKENS,
+  WORKSPACE_CORPUS_MCP_VERSION,
+  type CorpusWorkloadIdentity,
+  type WorkspaceCorpusRetrievalClient,
+} from './corpus-mcp'
+export {
+  DeterministicIgnorePolicy,
+  WorkspaceCorpusWatcher,
+  WorkspaceWatcherError,
+  WORKSPACE_CORPUS_WATCHER_VERSION,
+  loadWorkspaceIgnorePolicy,
+  type WorkspaceFileEvent,
+  type WorkspaceFileOperation,
+  type WorkspaceWatchJob,
+} from './workspace-corpus-watcher'
 
 export type JsonRpcId = number | string
 

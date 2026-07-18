@@ -31,6 +31,9 @@ importers:
       '@persistent-codex/codex-protocol-generated':
         specifier: workspace:*
         version: link:../../packages/codex-protocol-generated
+      '@persistent-codex/control-plane-contracts':
+        specifier: workspace:*
+        version: link:../../packages/control-plane-contracts
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events

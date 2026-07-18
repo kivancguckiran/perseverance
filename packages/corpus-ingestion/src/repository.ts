@@ -13,10 +13,25 @@ import {
   type CorpusScope,
   type EmbeddingUsageRecord,
 } from './index'
+import type {
+  CorpusRetrievalRepository,
+  RetrievalCandidate,
+  RetrievalIdentity,
+} from './retrieval'
 
-export const CORPUS_REPOSITORY_VERSION = 1 as const
+export const CORPUS_REPOSITORY_VERSION = 2 as const
 
-export interface CorpusRepository {
+export interface CorpusChunkWrite {
+  chunk: CorpusChunk
+  content: string
+}
+
+export interface IndexDocumentWrite {
+  document: IndexDocument
+  embedding: number[] | null
+}
+
+export interface CorpusRepository extends CorpusRetrievalRepository {
   readonly version: typeof CORPUS_REPOSITORY_VERSION
   readonly adapter: 'postgresql'
   recoverableScopes(): Promise<CorpusScope[]>
@@ -32,6 +47,24 @@ export interface CorpusRepository {
     job: ExtractionJob
     created: boolean
   }>
+  registerRevision(input: {
+    scope: CorpusScope
+    sourceId: string
+    revision: SourceRevision
+    job: ExtractionJob
+    audit: IngestionAudit
+  }): Promise<{ source: Source; revision: SourceRevision; job: ExtractionJob }>
+  sourceByWorkspacePath(
+    scope: CorpusScope,
+    workspacePath: string,
+  ): Promise<{ source: Source; revision: SourceRevision } | null>
+  renameWorkspaceSource(input: {
+    scope: CorpusScope
+    sourceId: string
+    fromPath: string
+    toPath: string
+    displayName: string
+  }): Promise<Source>
   listSources(scope: CorpusScope): Promise<Source[]>
   sourceDetail(
     scope: CorpusScope,
@@ -59,8 +92,8 @@ export interface CorpusRepository {
     scope: CorpusScope
     jobId: string
     workerId: string
-    chunks: CorpusChunk[]
-    indexDocuments: IndexDocument[]
+    chunks: CorpusChunkWrite[]
+    indexDocuments: IndexDocumentWrite[]
     usage: EmbeddingUsageRecord | null
   }): Promise<ExtractionJob>
   failJob(input: {
@@ -332,8 +365,258 @@ export class PostgresCorpusRepository implements CorpusRepository {
           j.updatedAt,
         ],
       )
+      if (r.provenance.kind === 'workspace_file' && r.provenance.workspacePath)
+        await client.query(
+          `INSERT INTO persistent_codex.workspace_source_paths
+           (tenant_id,organization_id,workspace_id,workspace_path,source_id,content_hash)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [
+            input.scope.tenantId,
+            input.scope.organizationId,
+            input.scope.workspaceId,
+            r.provenance.workspacePath,
+            r.sourceId,
+            r.contentHash,
+          ],
+        )
       await this.#insertAudit(client, input.audit)
+      await this.#bumpCacheEpoch(client, input.scope)
       return { source: s, revision: r, job: j, created: true }
+    })
+  }
+
+  async registerRevision(input: {
+    scope: CorpusScope
+    sourceId: string
+    revision: SourceRevision
+    job: ExtractionJob
+    audit: IngestionAudit
+  }) {
+    return this.#transaction(input.scope, async (client) => {
+      const locked = await client.query(
+        `SELECT * FROM persistent_codex.sources
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND source_id=$4 AND status<>'deleted' FOR UPDATE`,
+        [
+          input.scope.tenantId,
+          input.scope.organizationId,
+          input.scope.workspaceId,
+          input.sourceId,
+        ],
+      )
+      if (!locked.rowCount)
+        throw new CorpusError('SOURCE_NOT_FOUND', 'Source was not found')
+      const current = source(locked.rows[0] as Row)
+      const r = input.revision
+      const j = input.job
+      const duplicate = await client.query(
+        `SELECT * FROM persistent_codex.source_revisions
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND source_id=$4 AND content_hash=$5`,
+        [
+          r.tenantId,
+          r.organizationId,
+          r.workspaceId,
+          r.sourceId,
+          r.contentHash,
+        ],
+      )
+      if (duplicate.rowCount) {
+        const existing = revision(duplicate.rows[0] as Row)
+        const existingJob = await client.query(
+          `SELECT * FROM persistent_codex.extraction_jobs
+           WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+             AND revision_id=$4 ORDER BY updated_at DESC LIMIT 1`,
+          [r.tenantId, r.organizationId, r.workspaceId, existing.revisionId],
+        )
+        return {
+          source: current,
+          revision: existing,
+          job: job(existingJob.rows[0] as Row),
+        }
+      }
+      if (current.currentRevisionId) {
+        await client.query(
+          `DELETE FROM persistent_codex.index_documents
+           WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND revision_id=$4`,
+          [
+            r.tenantId,
+            r.organizationId,
+            r.workspaceId,
+            current.currentRevisionId,
+          ],
+        )
+        await client.query(
+          `DELETE FROM persistent_codex.corpus_chunks
+           WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND revision_id=$4`,
+          [
+            r.tenantId,
+            r.organizationId,
+            r.workspaceId,
+            current.currentRevisionId,
+          ],
+        )
+        await client.query(
+          `UPDATE persistent_codex.source_revisions SET status='superseded'
+           WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND revision_id=$4`,
+          [
+            r.tenantId,
+            r.organizationId,
+            r.workspaceId,
+            current.currentRevisionId,
+          ],
+        )
+        await client.query(
+          `INSERT INTO persistent_codex.corpus_tombstones
+           (tenant_id,organization_id,workspace_id,source_id,revision_id,reason)
+           VALUES ($1,$2,$3,$4,$5,'revision_superseded')`,
+          [
+            r.tenantId,
+            r.organizationId,
+            r.workspaceId,
+            r.sourceId,
+            current.currentRevisionId,
+          ],
+        )
+      }
+      await client.query(
+        `INSERT INTO persistent_codex.source_revisions
+         (tenant_id,organization_id,workspace_id,source_id,revision_id,content_hash,byte_length,media_type,parser_version,language,provenance,raw_snapshot_metadata,storage_key,status,created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+        [
+          r.tenantId,
+          r.organizationId,
+          r.workspaceId,
+          r.sourceId,
+          r.revisionId,
+          r.contentHash,
+          r.byteLength,
+          r.mediaType,
+          r.parserVersion,
+          r.language,
+          JSON.stringify(r.provenance),
+          JSON.stringify({
+            immutable: true,
+            encrypted: true,
+            createdAt: r.rawSnapshot.createdAt,
+          }),
+          r.rawSnapshot.storageKey,
+          r.status,
+          r.createdAt,
+        ],
+      )
+      await client.query(
+        `INSERT INTO persistent_codex.extraction_jobs
+         (tenant_id,organization_id,workspace_id,job_id,source_id,revision_id,status,attempt,max_attempts,usage_completeness,updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          j.tenantId,
+          j.organizationId,
+          j.workspaceId,
+          j.jobId,
+          j.sourceId,
+          j.revisionId,
+          j.status,
+          j.attempt,
+          j.maxAttempts,
+          j.usageCompleteness,
+          j.updatedAt,
+        ],
+      )
+      const updated = await client.query(
+        `UPDATE persistent_codex.sources
+         SET current_revision_id=$5,status='pending',updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND source_id=$4
+         RETURNING *`,
+        [r.tenantId, r.organizationId, r.workspaceId, r.sourceId, r.revisionId],
+      )
+      if (r.provenance.kind === 'workspace_file' && r.provenance.workspacePath)
+        await client.query(
+          `UPDATE persistent_codex.workspace_source_paths
+           SET content_hash=$5,updated_at=now()
+           WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND workspace_path=$4`,
+          [
+            r.tenantId,
+            r.organizationId,
+            r.workspaceId,
+            r.provenance.workspacePath,
+            r.contentHash,
+          ],
+        )
+      await this.#insertAudit(client, input.audit)
+      await this.#bumpCacheEpoch(client, input.scope)
+      return { source: source(updated.rows[0] as Row), revision: r, job: j }
+    })
+  }
+
+  async sourceByWorkspacePath(scope: CorpusScope, workspacePath: string) {
+    return this.#transaction(scope, async (client) => {
+      const rows = await client.query(
+        `SELECT to_jsonb(s.*) source_row,to_jsonb(r.*) revision_row
+         FROM persistent_codex.workspace_source_paths p
+         JOIN persistent_codex.sources s USING (tenant_id,organization_id,workspace_id,source_id)
+         JOIN persistent_codex.source_revisions r
+           ON r.tenant_id=s.tenant_id AND r.organization_id=s.organization_id
+          AND r.workspace_id=s.workspace_id AND r.source_id=s.source_id
+          AND r.revision_id=s.current_revision_id
+         WHERE p.tenant_id=$1 AND p.organization_id=$2 AND p.workspace_id=$3
+           AND p.workspace_path=$4 AND s.status<>'deleted'`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          workspacePath,
+        ],
+      )
+      if (!rows.rowCount) return null
+      return {
+        source: source(rows.rows[0]!.source_row as Row),
+        revision: revision(rows.rows[0]!.revision_row as Row),
+      }
+    })
+  }
+
+  async renameWorkspaceSource(input: {
+    scope: CorpusScope
+    sourceId: string
+    fromPath: string
+    toPath: string
+    displayName: string
+  }) {
+    return this.#transaction(input.scope, async (client) => {
+      const path = await client.query(
+        `UPDATE persistent_codex.workspace_source_paths
+         SET workspace_path=$6,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND source_id=$4 AND workspace_path=$5`,
+        [
+          input.scope.tenantId,
+          input.scope.organizationId,
+          input.scope.workspaceId,
+          input.sourceId,
+          input.fromPath,
+          input.toPath,
+        ],
+      )
+      if (!path.rowCount)
+        throw new CorpusError(
+          'SOURCE_NOT_FOUND',
+          'Workspace source was not found',
+        )
+      const updated = await client.query(
+        `UPDATE persistent_codex.sources SET display_name=$5,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND source_id=$4
+         RETURNING *`,
+        [
+          input.scope.tenantId,
+          input.scope.organizationId,
+          input.scope.workspaceId,
+          input.sourceId,
+          input.displayName,
+        ],
+      )
+      await this.#bumpCacheEpoch(client, input.scope)
+      return source(updated.rows[0] as Row)
     })
   }
 
@@ -470,8 +753,8 @@ export class PostgresCorpusRepository implements CorpusRepository {
     scope: CorpusScope
     jobId: string
     workerId: string
-    chunks: CorpusChunk[]
-    indexDocuments: IndexDocument[]
+    chunks: CorpusChunkWrite[]
+    indexDocuments: IndexDocumentWrite[]
     usage: EmbeddingUsageRecord | null
   }) {
     return this.#transaction(input.scope, async (client) => {
@@ -516,12 +799,14 @@ export class PostgresCorpusRepository implements CorpusRepository {
           current.revisionId,
         ],
       )
-      for (const chunk of input.chunks)
+      for (const entry of input.chunks) {
+        const chunk = entry.chunk
         await client.query(
           `INSERT INTO persistent_codex.corpus_chunks
-           (tenant_id,organization_id,workspace_id,chunk_id,source_id,revision_id,ordinal,content_hash,locator,chunking_policy,metadata,created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-           ON CONFLICT (tenant_id,organization_id,workspace_id,revision_id,ordinal) DO NOTHING`,
+           (tenant_id,organization_id,workspace_id,chunk_id,source_id,revision_id,ordinal,content_hash,locator,chunking_policy,metadata,created_at,content_text)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           ON CONFLICT (tenant_id,organization_id,workspace_id,revision_id,ordinal)
+           DO UPDATE SET content_text=EXCLUDED.content_text`,
           [
             chunk.tenantId,
             chunk.organizationId,
@@ -535,14 +820,19 @@ export class PostgresCorpusRepository implements CorpusRepository {
             JSON.stringify(chunk.chunkingPolicy),
             JSON.stringify(chunk.metadata),
             chunk.createdAt,
+            entry.content,
           ],
         )
-      for (const doc of input.indexDocuments)
+      }
+      for (const entry of input.indexDocuments) {
+        const doc = entry.document
         await client.query(
           `INSERT INTO persistent_codex.index_documents
-           (tenant_id,organization_id,workspace_id,index_document_id,chunk_id,source_id,revision_id,content_hash,embedding_version,embedding_token_count,status,derived_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-           ON CONFLICT (tenant_id,organization_id,workspace_id,chunk_id,embedding_version) DO NOTHING`,
+           (tenant_id,organization_id,workspace_id,index_document_id,chunk_id,source_id,revision_id,content_hash,embedding_version,embedding_token_count,status,derived_at,embedding,index_version,ranking_policy_version)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::vector,$14,$15)
+           ON CONFLICT (tenant_id,organization_id,workspace_id,chunk_id,embedding_version)
+           DO UPDATE SET embedding=EXCLUDED.embedding,index_version=EXCLUDED.index_version,
+             ranking_policy_version=EXCLUDED.ranking_policy_version,status=EXCLUDED.status,derived_at=EXCLUDED.derived_at`,
           [
             doc.tenantId,
             doc.organizationId,
@@ -556,8 +846,12 @@ export class PostgresCorpusRepository implements CorpusRepository {
             doc.embeddingTokenCount,
             doc.status,
             doc.derivedAt,
+            entry.embedding ? `[${entry.embedding.join(',')}]` : null,
+            'corpus-index-v1',
+            'hybrid-rrf-v1',
           ],
         )
+      }
       if (input.usage)
         await client.query(
           `INSERT INTO persistent_codex.usage_ledger
@@ -620,6 +914,7 @@ export class PostgresCorpusRepository implements CorpusRepository {
         reasonCode: 'INDEX_DERIVED',
         occurredAt: new Date().toISOString(),
       })
+      await this.#bumpCacheEpoch(client, input.scope)
       return job(completed.rows[0] as Row)
     })
   }
@@ -751,6 +1046,19 @@ export class PostgresCorpusRepository implements CorpusRepository {
             cleanup.storage_key,
           ],
         )
+      const currentRevisionId = source(rows.rows[0] as Row).currentRevisionId
+      await client.query(
+        `INSERT INTO persistent_codex.corpus_tombstones
+         (tenant_id,organization_id,workspace_id,source_id,revision_id,reason)
+         VALUES ($1,$2,$3,$4,$5,'source_deleted')`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          sourceId,
+          currentRevisionId,
+        ],
+      )
       await client.query(
         `DELETE FROM persistent_codex.index_documents WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND source_id=$4`,
         [scope.tenantId, scope.organizationId, scope.workspaceId, sourceId],
@@ -776,13 +1084,14 @@ export class PostgresCorpusRepository implements CorpusRepository {
         ...scope,
         auditId: `iaud_${randomUUID()}`,
         sourceId,
-        revisionId: source(rows.rows[0] as Row).currentRevisionId,
+        revisionId: currentRevisionId,
         jobId: null,
         action: 'source.deleted',
         outcome: 'success',
         reasonCode: 'SOURCE_TOMBSTONED',
         occurredAt: new Date().toISOString(),
       })
+      await this.#bumpCacheEpoch(client, scope)
       return source(result.rows[0] as Row)
     })
   }
@@ -893,6 +1202,316 @@ export class PostgresCorpusRepository implements CorpusRepository {
         [scope.tenantId, scope.organizationId, scope.workspaceId, cleanupId],
       )
     })
+  }
+
+  async corpusCacheEpoch(scope: CorpusScope) {
+    return this.#transaction(scope, async (client) => {
+      await client.query(
+        `INSERT INTO persistent_codex.corpus_cache_epochs
+         (tenant_id,organization_id,workspace_id,epoch)
+         VALUES ($1,$2,$3,1) ON CONFLICT DO NOTHING`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId],
+      )
+      const result = await client.query(
+        `SELECT epoch FROM persistent_codex.corpus_cache_epochs
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId],
+      )
+      return Number(result.rows[0]!.epoch)
+    })
+  }
+
+  async setSourceAcl(input: {
+    identity: RetrievalIdentity
+    sourceId: string
+    visibility: 'workspace' | 'principals'
+    allowedPrincipalIds: string[]
+  }) {
+    await this.#transaction(input.identity, async (client) => {
+      const updated = await client.query(
+        `UPDATE persistent_codex.sources
+         SET visibility=$5,acl_version=acl_version+1,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND source_id=$4 AND status<>'deleted'`,
+        [
+          input.identity.tenantId,
+          input.identity.organizationId,
+          input.identity.workspaceId,
+          input.sourceId,
+          input.visibility,
+        ],
+      )
+      if (!updated.rowCount)
+        throw new CorpusError('SOURCE_NOT_FOUND', 'Source was not found')
+      await client.query(
+        `DELETE FROM persistent_codex.source_acl_principals
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND source_id=$4`,
+        [
+          input.identity.tenantId,
+          input.identity.organizationId,
+          input.identity.workspaceId,
+          input.sourceId,
+        ],
+      )
+      for (const principalId of [...new Set(input.allowedPrincipalIds)].sort())
+        await client.query(
+          `INSERT INTO persistent_codex.source_acl_principals
+           (tenant_id,organization_id,workspace_id,source_id,principal_id)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [
+            input.identity.tenantId,
+            input.identity.organizationId,
+            input.identity.workspaceId,
+            input.sourceId,
+            principalId,
+          ],
+        )
+      await this.#bumpCacheEpoch(client, input.identity)
+    })
+  }
+
+  async retrievalCandidates(input: {
+    identity: RetrievalIdentity
+    query: string
+    vector: number[] | null
+    candidateLimit: number
+    timeoutMs: number
+  }) {
+    return this.#transaction(input.identity, async (client) => {
+      await client.query(`SELECT set_config('statement_timeout',$1,true)`, [
+        String(input.timeoutMs),
+      ])
+      const scope = input.identity
+      const acl = `(
+        s.visibility='workspace' OR (
+          s.visibility='principals' AND EXISTS (
+            SELECT 1 FROM persistent_codex.source_acl_principals acl
+            WHERE acl.tenant_id=s.tenant_id AND acl.organization_id=s.organization_id
+              AND acl.workspace_id=s.workspace_id AND acl.source_id=s.source_id
+              AND acl.principal_id=$4
+          )
+        )
+      )`
+      const lexical = await client.query(
+        `SELECT s.tenant_id,s.organization_id,s.workspace_id,s.source_id,
+                s.display_name,r.revision_id,r.content_hash source_content_hash,
+                c.chunk_id,c.content_hash chunk_content_hash,c.content_text,c.locator,
+                d.embedding_version,
+                row_number() OVER (
+                  ORDER BY ts_rank_cd(c.content_tsv,websearch_to_tsquery('simple',$5)) DESC,
+                           s.source_id,c.chunk_id
+                )::integer lexical_rank,
+                ts_rank_cd(c.content_tsv,websearch_to_tsquery('simple',$5)) lexical_score
+         FROM persistent_codex.corpus_chunks c
+         JOIN persistent_codex.sources s USING (tenant_id,organization_id,workspace_id,source_id)
+         JOIN persistent_codex.source_revisions r
+           ON r.tenant_id=c.tenant_id AND r.organization_id=c.organization_id
+          AND r.workspace_id=c.workspace_id AND r.source_id=c.source_id
+          AND r.revision_id=c.revision_id
+         JOIN persistent_codex.index_documents d
+           ON d.tenant_id=c.tenant_id AND d.organization_id=c.organization_id
+          AND d.workspace_id=c.workspace_id AND d.chunk_id=c.chunk_id
+         WHERE c.tenant_id=$1 AND c.organization_id=$2 AND c.workspace_id=$3
+           AND s.status='indexed' AND r.status='indexed' AND d.status='indexed'
+           AND s.current_revision_id=r.revision_id AND c.content_text IS NOT NULL
+           AND c.content_tsv @@ websearch_to_tsquery('simple',$5)
+           AND ${acl}
+         ORDER BY lexical_score DESC,s.source_id,c.chunk_id LIMIT $6`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          scope.principalId,
+          input.query,
+          input.candidateLimit,
+        ],
+      )
+      const vector = input.vector
+        ? await client.query(
+            `SELECT s.tenant_id,s.organization_id,s.workspace_id,s.source_id,
+                    s.display_name,r.revision_id,r.content_hash source_content_hash,
+                    c.chunk_id,c.content_hash chunk_content_hash,c.content_text,c.locator,
+                    d.embedding_version,
+                    row_number() OVER (ORDER BY d.embedding <=> $5::vector,s.source_id,c.chunk_id)::integer vector_rank,
+                    greatest(0,1-(d.embedding <=> $5::vector)) vector_score
+             FROM persistent_codex.index_documents d
+             JOIN persistent_codex.corpus_chunks c USING (tenant_id,organization_id,workspace_id,chunk_id,source_id,revision_id)
+             JOIN persistent_codex.sources s USING (tenant_id,organization_id,workspace_id,source_id)
+             JOIN persistent_codex.source_revisions r
+               ON r.tenant_id=d.tenant_id AND r.organization_id=d.organization_id
+              AND r.workspace_id=d.workspace_id AND r.source_id=d.source_id
+              AND r.revision_id=d.revision_id
+             WHERE d.tenant_id=$1 AND d.organization_id=$2 AND d.workspace_id=$3
+               AND s.status='indexed' AND r.status='indexed' AND d.status='indexed'
+               AND s.current_revision_id=r.revision_id AND c.content_text IS NOT NULL
+               AND d.embedding IS NOT NULL AND ${acl}
+             ORDER BY d.embedding <=> $5::vector,s.source_id,c.chunk_id LIMIT $6`,
+            [
+              scope.tenantId,
+              scope.organizationId,
+              scope.workspaceId,
+              scope.principalId,
+              `[${input.vector.join(',')}]`,
+              input.candidateLimit,
+            ],
+          )
+        : { rows: [] }
+      const merged = new Map<string, RetrievalCandidate>()
+      const read = (
+        row: Row,
+        kind: 'lexical' | 'vector',
+      ): RetrievalCandidate => ({
+        tenantId: String(row.tenant_id),
+        organizationId: String(row.organization_id),
+        workspaceId: String(row.workspace_id),
+        sourceId: String(row.source_id),
+        revisionId: String(row.revision_id),
+        chunkId: String(row.chunk_id),
+        sourceDisplayName: String(row.display_name),
+        sourceContentHash: String(row.source_content_hash),
+        chunkContentHash: String(row.chunk_content_hash),
+        content: String(row.content_text),
+        locator: row.locator as RetrievalCandidate['locator'],
+        embeddingVersion: String(row.embedding_version),
+        lexicalRank: kind === 'lexical' ? Number(row.lexical_rank) : null,
+        lexicalScore: kind === 'lexical' ? Number(row.lexical_score) : 0,
+        vectorRank: kind === 'vector' ? Number(row.vector_rank) : null,
+        vectorScore: kind === 'vector' ? Number(row.vector_score) : 0,
+      })
+      for (const row of lexical.rows) {
+        const value = read(row as Row, 'lexical')
+        merged.set(value.chunkId, value)
+      }
+      for (const row of vector.rows) {
+        const value = read(row as Row, 'vector')
+        const current = merged.get(value.chunkId)
+        merged.set(
+          value.chunkId,
+          current
+            ? {
+                ...current,
+                vectorRank: value.vectorRank,
+                vectorScore: value.vectorScore,
+              }
+            : value,
+        )
+      }
+      return [...merged.values()]
+    })
+  }
+
+  async citation(input: {
+    identity: RetrievalIdentity
+    sourceId: string
+    revisionId: string
+    chunkId: string
+    timeoutMs: number
+  }) {
+    return this.#transaction(input.identity, async (client) => {
+      await client.query(`SELECT set_config('statement_timeout',$1,true)`, [
+        String(input.timeoutMs),
+      ])
+      const rows = await client.query(
+        `SELECT s.tenant_id,s.organization_id,s.workspace_id,s.source_id,
+                s.display_name,r.revision_id,r.content_hash source_content_hash,
+                c.chunk_id,c.content_hash chunk_content_hash,c.content_text,c.locator,
+                d.embedding_version
+         FROM persistent_codex.corpus_chunks c
+         JOIN persistent_codex.sources s USING (tenant_id,organization_id,workspace_id,source_id)
+         JOIN persistent_codex.source_revisions r
+           ON r.tenant_id=c.tenant_id AND r.organization_id=c.organization_id
+          AND r.workspace_id=c.workspace_id AND r.source_id=c.source_id AND r.revision_id=c.revision_id
+         JOIN persistent_codex.index_documents d
+           ON d.tenant_id=c.tenant_id AND d.organization_id=c.organization_id
+          AND d.workspace_id=c.workspace_id AND d.chunk_id=c.chunk_id
+         WHERE c.tenant_id=$1 AND c.organization_id=$2 AND c.workspace_id=$3
+           AND c.source_id=$4 AND c.revision_id=$5 AND c.chunk_id=$6
+           AND s.status='indexed' AND r.status='indexed' AND d.status='indexed'
+           AND s.current_revision_id=r.revision_id AND c.content_text IS NOT NULL
+           AND (s.visibility='workspace' OR (s.visibility='principals' AND EXISTS (
+             SELECT 1 FROM persistent_codex.source_acl_principals acl
+             WHERE acl.tenant_id=s.tenant_id AND acl.organization_id=s.organization_id
+               AND acl.workspace_id=s.workspace_id AND acl.source_id=s.source_id
+               AND acl.principal_id=$7
+           ))) LIMIT 1`,
+        [
+          input.identity.tenantId,
+          input.identity.organizationId,
+          input.identity.workspaceId,
+          input.sourceId,
+          input.revisionId,
+          input.chunkId,
+          input.identity.principalId,
+        ],
+      )
+      if (!rows.rowCount) return null
+      const row = rows.rows[0] as Row
+      return {
+        tenantId: String(row.tenant_id),
+        organizationId: String(row.organization_id),
+        workspaceId: String(row.workspace_id),
+        sourceId: String(row.source_id),
+        revisionId: String(row.revision_id),
+        chunkId: String(row.chunk_id),
+        sourceDisplayName: String(row.display_name),
+        sourceContentHash: String(row.source_content_hash),
+        chunkContentHash: String(row.chunk_content_hash),
+        content: String(row.content_text),
+        locator: row.locator as RetrievalCandidate['locator'],
+        embeddingVersion: String(row.embedding_version),
+        lexicalRank: null,
+        lexicalScore: 0,
+        vectorRank: null,
+        vectorScore: 0,
+      }
+    })
+  }
+
+  async recordRetrievalEmbeddingUsage(input: {
+    identity: RetrievalIdentity
+    quantity: number
+    completeness: 'complete' | 'partial'
+    dedupeKey: string
+  }) {
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) return
+    await this.#transaction(input.identity, async (client) => {
+      await client.query(
+        `INSERT INTO persistent_codex.sessions
+         (organization_id,workspace_id,session_id,status)
+         VALUES ($1,$2,$3,'active') ON CONFLICT DO NOTHING`,
+        [
+          input.identity.organizationId,
+          input.identity.workspaceId,
+          `corpus_usage_${input.identity.workspaceId}`,
+        ],
+      )
+      await client.query(
+        `INSERT INTO persistent_codex.usage_ledger
+         (organization_id,workspace_id,session_id,quantity,tenant_id,meter,dedupe_key,completeness)
+         VALUES ($1,$2,$3,$4,$5,'retrieval_embedding_token',$6,$7)
+         ON CONFLICT DO NOTHING`,
+        [
+          input.identity.organizationId,
+          input.identity.workspaceId,
+          `corpus_usage_${input.identity.workspaceId}`,
+          input.quantity,
+          input.identity.tenantId,
+          input.dedupeKey,
+          input.completeness,
+        ],
+      )
+    })
+  }
+
+  async #bumpCacheEpoch(client: PoolClient, scope: CorpusScope) {
+    await client.query(
+      `INSERT INTO persistent_codex.corpus_cache_epochs
+       (tenant_id,organization_id,workspace_id,epoch)
+       VALUES ($1,$2,$3,1)
+       ON CONFLICT (tenant_id,organization_id,workspace_id)
+       DO UPDATE SET epoch=persistent_codex.corpus_cache_epochs.epoch+1,updated_at=now()`,
+      [scope.tenantId, scope.organizationId, scope.workspaceId],
+    )
   }
 
   async #insertAudit(client: PoolClient, audit: IngestionAudit) {

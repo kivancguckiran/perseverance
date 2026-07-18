@@ -87,6 +87,7 @@ export const authorizationActionSchema = z.enum([
   'source.read',
   'source.delete',
   'source.reindex',
+  'source.search',
   'artifact.metadata.read',
   'artifact.read',
   'artifact.download',
@@ -115,6 +116,7 @@ export const corpusLifecycleStatusSchema = z.enum([
   'indexed',
   'failed',
   'deleted',
+  'superseded',
 ])
 const corpusScopeSchema = z.object({
   tenantId: identifierSchema,
@@ -132,6 +134,15 @@ export const sourceSchema = corpusScopeSchema.extend({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   deletedAt: z.iso.datetime().nullable(),
+})
+export const sourceVisibilitySchema = z.enum(['workspace', 'principals'])
+export const sourceAclSchema = corpusScopeSchema.extend({
+  version: z.literal(CORPUS_CONTRACT_VERSION),
+  sourceId: identifierSchema,
+  visibility: sourceVisibilitySchema,
+  allowedPrincipalIds: z.array(identifierSchema).max(1_000),
+  aclVersion: z.number().int().positive(),
+  updatedAt: z.iso.datetime(),
 })
 export const sourceRevisionSchema = corpusScopeSchema.extend({
   version: z.literal(CORPUS_CONTRACT_VERSION),
@@ -264,6 +275,65 @@ export const sourceDetailResponseSchema = z.object({
   source: sourceSchema,
   revisions: z.array(sourceRevisionSchema),
   jobs: z.array(extractionJobSchema),
+})
+export const CORPUS_SEARCH_CONTRACT_VERSION = 1 as const
+export const corpusRankingPolicyVersionSchema = z.literal('hybrid-rrf-v1')
+export const corpusSearchRequestSchema = corpusScopeSchema.extend({
+  schemaVersion: z.literal(CORPUS_SEARCH_CONTRACT_VERSION),
+  query: z.string().trim().min(1).max(4_096),
+  topK: z.number().int().min(1).max(50).default(10),
+  tokenBudget: z.number().int().min(64).max(8_192).default(2_048),
+  cursor: z.string().min(16).max(2_048).nullable().default(null),
+  rankingPolicyVersion: corpusRankingPolicyVersionSchema,
+  queryTimeoutMs: z.number().int().min(50).max(5_000).default(1_500),
+})
+export const corpusScoreSchema = z.object({
+  lexical: z.number().finite().nonnegative(),
+  vector: z.number().finite().nonnegative(),
+  reciprocalRankFusion: z.number().finite().nonnegative(),
+  final: z.number().finite().nonnegative(),
+})
+export const corpusCitationSchema = z.object({
+  citationVersion: z.literal(1),
+  sourceId: identifierSchema,
+  revisionId: identifierSchema,
+  chunkId: identifierSchema,
+  sourceDisplayName: z.string().trim().min(1).max(255),
+  sourceContentHash: contentHashSchema,
+  chunkContentHash: contentHashSchema,
+  locator: corpusLocatorSchema,
+})
+export const corpusSearchResultSchema = z.object({
+  sourceId: identifierSchema,
+  revisionId: identifierSchema,
+  chunkId: identifierSchema,
+  content: z.string().min(1).max(16_384),
+  trust: z.literal('untrusted_context'),
+  score: corpusScoreSchema,
+  citation: corpusCitationSchema,
+  estimatedTokens: z.number().int().positive(),
+})
+export const corpusSearchResponseSchema = corpusScopeSchema.extend({
+  schemaVersion: z.literal(CORPUS_SEARCH_CONTRACT_VERSION),
+  rankingPolicyVersion: corpusRankingPolicyVersionSchema,
+  indexVersion: identifierSchema,
+  embeddingVersion: identifierSchema,
+  results: z.array(corpusSearchResultSchema).max(50),
+  nextCursor: z.string().min(16).max(2_048).nullable(),
+  exhausted: z.boolean(),
+  truncatedByTokenBudget: z.boolean(),
+})
+export const corpusCitationLookupRequestSchema = corpusScopeSchema.extend({
+  schemaVersion: z.literal(CORPUS_SEARCH_CONTRACT_VERSION),
+  sourceId: identifierSchema,
+  revisionId: identifierSchema,
+  chunkId: identifierSchema,
+})
+export const corpusCitationLookupResponseSchema = z.object({
+  schemaVersion: z.literal(CORPUS_SEARCH_CONTRACT_VERSION),
+  trust: z.literal('untrusted_context'),
+  content: z.string().min(1).max(16_384),
+  citation: corpusCitationSchema,
 })
 export const authorizationDecisionSchema = z.object({
   version: z.literal(1),
@@ -1082,6 +1152,7 @@ export type AuthorizationAction = z.infer<typeof authorizationActionSchema>
 export type AuthorizationDecision = z.infer<typeof authorizationDecisionSchema>
 export type CorpusLifecycleStatus = z.infer<typeof corpusLifecycleStatusSchema>
 export type Source = z.infer<typeof sourceSchema>
+export type SourceAcl = z.infer<typeof sourceAclSchema>
 export type SourceRevision = z.infer<typeof sourceRevisionSchema>
 export type ExtractionJob = z.infer<typeof extractionJobSchema>
 export type CorpusLocator = z.infer<typeof corpusLocatorSchema>
@@ -1092,6 +1163,19 @@ export type CreateSourceResponse = z.infer<typeof createSourceResponseSchema>
 export type SourceUploadMetadata = z.infer<typeof sourceUploadMetadataSchema>
 export type SourceListResponse = z.infer<typeof sourceListResponseSchema>
 export type SourceDetailResponse = z.infer<typeof sourceDetailResponseSchema>
+export type CorpusRankingPolicyVersion = z.infer<
+  typeof corpusRankingPolicyVersionSchema
+>
+export type CorpusSearchRequest = z.infer<typeof corpusSearchRequestSchema>
+export type CorpusSearchResult = z.infer<typeof corpusSearchResultSchema>
+export type CorpusSearchResponse = z.infer<typeof corpusSearchResponseSchema>
+export type CorpusCitation = z.infer<typeof corpusCitationSchema>
+export type CorpusCitationLookupRequest = z.infer<
+  typeof corpusCitationLookupRequestSchema
+>
+export type CorpusCitationLookupResponse = z.infer<
+  typeof corpusCitationLookupResponseSchema
+>
 export type Approval = z.infer<typeof approvalSchema>
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 export type ApprovalDecisionRequest = z.infer<

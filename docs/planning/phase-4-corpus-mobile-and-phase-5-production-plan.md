@@ -21,17 +21,17 @@ production rollout seviyesine taşır.
 
 ## 2. İş paketi özeti
 
-| Paket | Faz | Durum      | Hedef                                                                    |
-| ----- | --- | ---------- | ------------------------------------------------------------------------ |
-| WP21  | 4   | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
-| WP22  | 4   | Aktif      | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
-| WP23  | 4   | Planlandı  | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Planlandı  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
-| WP25  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP26  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP27  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP28  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP29  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| Paket | Faz | Durum                      | Hedef                                                                    |
+| ----- | --- | -------------------------- | ------------------------------------------------------------------------ |
+| WP21  | 4   | Tamamlandı                 | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
+| WP22  | 4   | Uygulandı / kabul bekliyor | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
+| WP23  | 4   | Planlandı                  | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
+| WP24  | 4   | Planlandı                  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
+| WP25  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP26  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP27  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP28  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP29  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; Faz 4
 tamamlanmadan WP25; WP28 tamamlanmadan nihai WP29 aktive edilmez.
@@ -143,6 +143,44 @@ silme/reindex semantiği deterministik bir retrieval hizmetine dönüştürmek.
 #### Teslimat commit'i
 
 `feat: add hybrid corpus retrieval and workspace MCP`
+
+#### Uygulama ve kabul bekleyen doğrulama kaydı
+
+Durum: **Uygulandı / kabul bekliyor**. WP23 aktive edilmedi; aktif kabul yüzeyi WP22'dir.
+
+- Contract/repository: search/citation schema v1, repository v2, ranking policy
+  `hybrid-rrf-v1`, `corpus-index-v1`, bounded cursor/top-k/token/timeout ve immutable
+  source/revision/chunk citation.
+- Migration: `0022_hybrid_corpus_retrieval.sql`; pgvector(384), FTS, source ACL,
+  workspace path binding, tombstone/cache epoch, watcher/reindex ve explicit
+  expand/backfill/active/rolling-back/rolled-back state'leri forced RLS ve composite
+  scope foreign key'leriyle eklendi.
+- Retrieval/MCP: lexical ve vector adayları ACL filtresinden sonra değil, her aday
+  sorgusunda önce filtrelenir. Cache principal/scope/epoch namespace'lidir. MCP fixed
+  workload identity kullanır; yalnız read-only `search_corpus`/`get_citation` sunar ve
+  corpus'u `untrusted_context` olarak işaretler.
+- Watcher: debounce, bounded backlog, deterministic ordered ignore policy,
+  create/update/rename/delete; update aynı source altında immutable revision,
+  supersede/delete tombstone ve cache invalidation üretir.
+- `pnpm wp22:test`: retrieval golden/policy, malicious content, MCP unknown fallback,
+  watcher debounce/ignore/backpressure ve API search/citation/delete testleri.
+- `pnpm wp22:postgres`: gerçek `pgvector/pgvector:pg17` üzerinde migration, forced RLS,
+  cross-tenant/source ACL, lexical+vector+cache+MCP, workspace lifecycle, PDF delete ve
+  rollback state smoke'u. Geçici container/volume cleanup ayrıca doğrulanır.
+- `WP22_CODEX_BIN=<pinned-0.144.2> pnpm wp22:agent-e2e`: gerçek pinli app-server turn,
+  workspace-local MCP tool start/complete, citation'lı final timeline ve raw reasoning
+  bulunmadığı kontrolü.
+- `pnpm wp21:browser`: aynı PostgreSQL corpus adapter'ıyla 1280x720 ve 390x844;
+  page error, horizontal overflow, cross-tenant görünürlük ve content/credential leak
+  kontrolü. WP22 browser komutu WP21 responsive source yüzeyini geriye uyumlu kullanır.
+- `pnpm verify`: format, typecheck, bütün unit/contract testleri, build ve SSR HTTP gate'i.
+- Provider ayrımı: deterministic fake-test embedding mekanik vector/ACL ve golden
+  sıralama fixture'ıdır; usage ledger'a billable kanıt yazmaz ve production semantic
+  quality kanıtı olarak sunulmaz. Gerçek Codex provider yalnız agent tool/citation E2E
+  için kullanılır.
+
+Bağımsız kabul task'ı bu evidence'i tekrar doğrulayıp sonucu kaydetmeden WP23
+`Aktif` yapılamaz.
 
 ### WP23 — Mobil/PWA approval, push ve çoklu cihaz sürekliliği
 

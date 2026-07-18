@@ -34,12 +34,14 @@ import type {
   SourceRevision,
 } from '@persistent-codex/control-plane-contracts'
 import { extractPdfInSandbox, PDF_PARSER_VERSION } from './pdf-parser'
+import type { RetrievalCandidate, RetrievalIdentity } from './retrieval'
 
 export * from './storage'
 export * from './pdf-parser'
 export * from './embedding'
 export * from './repository'
 export * from './service'
+export * from './retrieval'
 
 export const DEFAULT_CORPUS_LIMITS = {
   maxBytes: 16 * 1024 * 1024,
@@ -91,6 +93,21 @@ interface RegistryState {
   indexDocuments: IndexDocument[]
   usage: EmbeddingUsageRecord[]
   audit: IngestionAudit[]
+  sourceAcls: Array<{
+    scope: CorpusScope
+    sourceId: string
+    visibility: 'workspace' | 'principals'
+    allowedPrincipalIds: string[]
+  }>
+  cacheEpochs: Record<string, number>
+}
+
+interface EphemeralRetrievalDocument {
+  scope: CorpusScope
+  sourceId: string
+  revisionId: string
+  chunkId: string
+  content: string
 }
 
 export class CorpusError extends Error {
@@ -112,6 +129,8 @@ function emptyState(): RegistryState {
     indexDocuments: [],
     usage: [],
     audit: [],
+    sourceAcls: [],
+    cacheEpochs: {},
   }
 }
 
@@ -305,6 +324,7 @@ export class LocalCorpusRegistry {
   readonly #statePath: string
   readonly #limits: CorpusLimits
   readonly #now: () => Date
+  #retrievalDocuments: EphemeralRetrievalDocument[] = []
 
   constructor(
     root: string,
@@ -350,7 +370,25 @@ export class LocalCorpusRegistry {
         'CORPUS_SYMLINK_REJECTED',
         'Corpus registry symlink is not allowed',
       )
-    return JSON.parse(readFileSync(this.#statePath, 'utf8')) as RegistryState
+    const state = JSON.parse(
+      readFileSync(this.#statePath, 'utf8'),
+    ) as RegistryState
+    state.sourceAcls ??= []
+    state.cacheEpochs ??= {}
+    return state
+  }
+
+  #scopeKey(scope: CorpusScope) {
+    return JSON.stringify([
+      scope.tenantId,
+      scope.organizationId,
+      scope.workspaceId,
+    ])
+  }
+
+  #bumpEpoch(state: RegistryState, scope: CorpusScope) {
+    const key = this.#scopeKey(scope)
+    state.cacheEpochs[key] = (state.cacheEpochs[key] ?? 0) + 1
   }
 
   #save(state: RegistryState) {
@@ -728,6 +766,13 @@ export class LocalCorpusRegistry {
             document.revisionId === revision.revisionId
           ),
       )
+      this.#retrievalDocuments = this.#retrievalDocuments.filter(
+        (document) =>
+          !(
+            scoped(document.scope, scope) &&
+            document.revisionId === revision.revisionId
+          ),
+      )
       extracted.forEach((entry, ordinal) => {
         const chunkHash = sha256(entry.text)
         const chunkId = `chk_${createHash('sha256')
@@ -767,6 +812,13 @@ export class LocalCorpusRegistry {
           status: 'indexed',
           derivedAt: this.#now().toISOString(),
         })
+        this.#retrievalDocuments.push({
+          scope: { ...scope },
+          sourceId: source.sourceId,
+          revisionId: revision.revisionId,
+          chunkId,
+          content: entry.text,
+        })
       })
       liveJob.status = 'indexed'
       liveJob.leaseOwner = null
@@ -786,6 +838,7 @@ export class LocalCorpusRegistry {
         'success',
         'INDEX_DERIVED',
       )
+      this.#bumpEpoch(state, scope)
       this.#save(state)
       return jsonClone(liveJob)
     } catch (error) {
@@ -863,6 +916,10 @@ export class LocalCorpusRegistry {
       (document) =>
         !(scoped(document, scope) && document.sourceId === sourceId),
     )
+    this.#retrievalDocuments = this.#retrievalDocuments.filter(
+      (document) =>
+        !(scoped(document.scope, scope) && document.sourceId === sourceId),
+    )
     this.#audit(
       state,
       scope,
@@ -873,6 +930,7 @@ export class LocalCorpusRegistry {
       'success',
       'SOURCE_TOMBSTONED',
     )
+    this.#bumpEpoch(state, scope)
     this.#save(state)
     return jsonClone(source)
   }
@@ -933,6 +991,9 @@ export class LocalCorpusRegistry {
     state.chunks = state.chunks.filter((chunk) => !scoped(chunk, scope))
     state.indexDocuments = state.indexDocuments.filter(
       (document) => !scoped(document, scope),
+    )
+    this.#retrievalDocuments = this.#retrievalDocuments.filter(
+      (document) => !scoped(document.scope, scope),
     )
     const timestamp = this.#now().toISOString()
     const jobs: ExtractionJob[] = []
@@ -1001,6 +1062,188 @@ export class LocalCorpusRegistry {
       usage: state.usage.filter((entry) => scoped(entry, scope)),
       audits: state.audit.filter((entry) => scoped(entry, scope)),
     })
+  }
+
+  async corpusCacheEpoch(scope: CorpusScope) {
+    const state = this.#load()
+    return state.cacheEpochs[this.#scopeKey(scope)] ?? 1
+  }
+
+  async setSourceAcl(input: {
+    identity: RetrievalIdentity
+    sourceId: string
+    visibility: 'workspace' | 'principals'
+    allowedPrincipalIds: string[]
+  }) {
+    const state = this.#load()
+    const source = state.sources.find(
+      (candidate) =>
+        scoped(candidate, input.identity) &&
+        candidate.sourceId === input.sourceId &&
+        candidate.status !== 'deleted',
+    )
+    if (!source)
+      throw new CorpusError('SOURCE_NOT_FOUND', 'Source was not found')
+    state.sourceAcls = state.sourceAcls.filter(
+      (acl) =>
+        !(scoped(acl.scope, input.identity) && acl.sourceId === input.sourceId),
+    )
+    state.sourceAcls.push({
+      scope: { ...input.identity },
+      sourceId: input.sourceId,
+      visibility: input.visibility,
+      allowedPrincipalIds: [...new Set(input.allowedPrincipalIds)].sort(),
+    })
+    this.#bumpEpoch(state, input.identity)
+    this.#save(state)
+  }
+
+  async retrievalCandidates(input: {
+    identity: RetrievalIdentity
+    query: string
+    vector: number[] | null
+    candidateLimit: number
+    timeoutMs: number
+  }): Promise<RetrievalCandidate[]> {
+    const state = this.#load()
+    const queryTerms =
+      input.query.toLocaleLowerCase('en-US').match(/[\p{L}\p{N}_-]+/gu) ?? []
+    const candidates = this.#retrievalDocuments
+      .filter((document) => scoped(document.scope, input.identity))
+      .flatMap((document) => {
+        const source = state.sources.find(
+          (candidate) =>
+            scoped(candidate, input.identity) &&
+            candidate.sourceId === document.sourceId &&
+            candidate.status === 'indexed' &&
+            candidate.currentRevisionId === document.revisionId,
+        )
+        const revision = state.revisions.find(
+          (candidate) =>
+            scoped(candidate, input.identity) &&
+            candidate.revisionId === document.revisionId &&
+            candidate.status === 'indexed',
+        )
+        const chunk = state.chunks.find(
+          (candidate) =>
+            scoped(candidate, input.identity) &&
+            candidate.chunkId === document.chunkId,
+        )
+        if (!source || !revision || !chunk) return []
+        const acl = state.sourceAcls.find(
+          (candidate) =>
+            scoped(candidate.scope, input.identity) &&
+            candidate.sourceId === source.sourceId,
+        )
+        if (
+          acl?.visibility === 'principals' &&
+          !acl.allowedPrincipalIds.includes(input.identity.principalId)
+        )
+          return []
+        const content = document.content.toLocaleLowerCase('en-US')
+        const matches = queryTerms.filter((term) =>
+          content.includes(term),
+        ).length
+        if (matches === 0) return []
+        return [
+          {
+            ...input.identity,
+            sourceId: source.sourceId,
+            revisionId: revision.revisionId,
+            chunkId: chunk.chunkId,
+            sourceDisplayName: source.displayName,
+            sourceContentHash: revision.contentHash,
+            chunkContentHash: chunk.contentHash,
+            content: document.content,
+            locator: chunk.locator,
+            embeddingVersion: 'unembedded-placeholder-v1',
+            lexicalRank: 0,
+            lexicalScore: matches / Math.max(1, queryTerms.length),
+            vectorRank: null,
+            vectorScore: 0,
+          },
+        ]
+      })
+      .sort(
+        (left, right) =>
+          right.lexicalScore - left.lexicalScore ||
+          left.sourceId.localeCompare(right.sourceId) ||
+          left.chunkId.localeCompare(right.chunkId),
+      )
+      .slice(0, input.candidateLimit)
+    return candidates.map((candidate, index) => ({
+      ...candidate,
+      lexicalRank: index + 1,
+    }))
+  }
+
+  async citation(input: {
+    identity: RetrievalIdentity
+    sourceId: string
+    revisionId: string
+    chunkId: string
+    timeoutMs: number
+  }): Promise<RetrievalCandidate | null> {
+    const state = this.#load()
+    const document = this.#retrievalDocuments.find(
+      (candidate) =>
+        scoped(candidate.scope, input.identity) &&
+        candidate.sourceId === input.sourceId &&
+        candidate.revisionId === input.revisionId &&
+        candidate.chunkId === input.chunkId,
+    )
+    const source = state.sources.find(
+      (candidate) =>
+        scoped(candidate, input.identity) &&
+        candidate.sourceId === input.sourceId &&
+        candidate.status === 'indexed' &&
+        candidate.currentRevisionId === input.revisionId,
+    )
+    const revision = state.revisions.find(
+      (candidate) =>
+        scoped(candidate, input.identity) &&
+        candidate.revisionId === input.revisionId &&
+        candidate.status === 'indexed',
+    )
+    const chunk = state.chunks.find(
+      (candidate) =>
+        scoped(candidate, input.identity) &&
+        candidate.chunkId === input.chunkId,
+    )
+    const acl = state.sourceAcls.find(
+      (candidate) =>
+        scoped(candidate.scope, input.identity) &&
+        candidate.sourceId === input.sourceId,
+    )
+    if (
+      !document ||
+      !source ||
+      !revision ||
+      !chunk ||
+      (acl?.visibility === 'principals' &&
+        !acl.allowedPrincipalIds.includes(input.identity.principalId))
+    )
+      return null
+    return {
+      ...input.identity,
+      sourceId: source.sourceId,
+      revisionId: revision.revisionId,
+      chunkId: chunk.chunkId,
+      sourceDisplayName: source.displayName,
+      sourceContentHash: revision.contentHash,
+      chunkContentHash: chunk.contentHash,
+      content: document.content,
+      locator: chunk.locator,
+      embeddingVersion: 'unembedded-placeholder-v1',
+      lexicalRank: null,
+      lexicalScore: 0,
+      vectorRank: null,
+      vectorScore: 0,
+    }
+  }
+
+  async recordRetrievalEmbeddingUsage() {
+    // Local/test adapters never create billable usage evidence.
   }
 }
 
