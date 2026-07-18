@@ -74,6 +74,8 @@ interface StoredInvitation extends FolderInvitation {
 
 interface TaskReservation {
   key: string
+  folderId: string
+  principalId: string
   taskId: string
   upstreamWorkId: string
   billingSettlementId: string | null
@@ -105,7 +107,7 @@ export const folderRoleAllows = (
   return role === 'owner' || role === 'editor'
 }
 
-export class InMemorySharedFolderRepository {
+class InMemorySharedFolderCore {
   readonly #folders = new Map<string, SharedFolder>()
   readonly #memberships = new Map<string, FolderMembership>()
   readonly #invitations = new Map<string, StoredInvitation>()
@@ -597,6 +599,34 @@ export class InMemorySharedFolderRepository {
     return clone(binding)
   }
 
+  authorizeWorkloadResource(
+    scope: FolderScope,
+    resourceType: FolderResourceType,
+    resourceId: string,
+  ) {
+    const binding = this.#bindings.get(
+      bindingKey(scope, resourceType, resourceId),
+    )
+    if (!binding) throw new SharedFolderError('RESOURCE_NOT_FOUND')
+    const reservation = [...this.#tasks.values()]
+      .reverse()
+      .find(
+        (task) =>
+          task.folderId === binding.folderId &&
+          this.#activeMembership(
+            { ...scope, principalId: task.principalId },
+            binding.folderId,
+          ),
+      )
+    if (!reservation) throw new SharedFolderError('FOLDER_ACCESS_DENIED')
+    return clone(binding)
+  }
+
+  hasSharedFolders(scope: FolderScope) {
+    const prefix = `${scopeKey(scope)}:`
+    return [...this.#folders.keys()].some((key) => key.startsWith(prefix))
+  }
+
   recordExport(
     identity: FolderIdentity,
     folderId: string,
@@ -636,6 +666,8 @@ export class InMemorySharedFolderRepository {
     if (current) return { reservation: clone(current), created: false }
     const reservation: TaskReservation = {
       key,
+      folderId: input.folderId,
+      principalId: input.principalId,
       taskId: `tsk_${randomUUID()}`,
       upstreamWorkId: `up_${randomUUID()}`,
       billingSettlementId: null,
@@ -646,7 +678,7 @@ export class InMemorySharedFolderRepository {
   }
 
   settleTask(
-    input: FolderScope & { idempotencyKey: string; settlementKey: string },
+    input: FolderIdentity & { idempotencyKey: string; settlementKey: string },
   ) {
     const task = this.#tasks.get(`${scopeKey(input)}:${input.idempotencyKey}`)
     if (!task) throw new SharedFolderError('TASK_NOT_FOUND')
@@ -786,4 +818,211 @@ export class InMemorySharedFolderRepository {
   }
 }
 
-export type SharedFolderRepository = InMemorySharedFolderRepository
+type Core = InMemorySharedFolderCore
+type Capability = Parameters<typeof folderRoleAllows>[1]
+
+export interface SharedFolderRepository {
+  createFolder(
+    input: Parameters<Core['createFolder']>[0],
+  ): Promise<ReturnType<Core['createFolder']>>
+  listFolders(
+    identity: FolderIdentity,
+  ): Promise<ReturnType<Core['listFolders']>>
+  getFolder(
+    identity: FolderIdentity,
+    folderId: string,
+    capability?: Capability,
+  ): Promise<SharedFolder>
+  role(identity: FolderIdentity, folderId: string): Promise<FolderRole | null>
+  listMembers(
+    identity: FolderIdentity,
+    folderId: string,
+  ): Promise<FolderMembership[]>
+  createInvitation(
+    input: Parameters<Core['createInvitation']>[0],
+  ): Promise<ReturnType<Core['createInvitation']>>
+  listInvitations(
+    identity: FolderIdentity,
+    folderId: string,
+    now?: Date,
+  ): Promise<FolderInvitation[]>
+  acceptInvitation(
+    input: Parameters<Core['acceptInvitation']>[0],
+  ): Promise<ReturnType<Core['acceptInvitation']>>
+  revokeInvitation(
+    input: Parameters<Core['revokeInvitation']>[0],
+  ): Promise<FolderInvitation>
+  changeRole(
+    input: Parameters<Core['changeRole']>[0],
+  ): Promise<FolderMembership>
+  revokeMembership(
+    input: Parameters<Core['revokeMembership']>[0],
+  ): Promise<FolderMembership>
+  transferOwnership(
+    input: Parameters<Core['transferOwnership']>[0],
+  ): Promise<ReturnType<Core['transferOwnership']>>
+  bindResource(
+    input: Parameters<Core['bindResource']>[0],
+  ): Promise<FolderResourceBinding>
+  hasSharedFolders(scope: FolderScope): Promise<boolean>
+  moveResource(
+    input: Parameters<Core['moveResource']>[0],
+  ): Promise<FolderResourceBinding>
+  authorizeResource(
+    identity: FolderIdentity,
+    resourceType: FolderResourceType,
+    resourceId: string,
+    capability: Capability,
+  ): Promise<FolderResourceBinding>
+  authorizeWorkloadResource(
+    scope: FolderScope,
+    resourceType: FolderResourceType,
+    resourceId: string,
+  ): Promise<FolderResourceBinding>
+  recordExport(
+    identity: FolderIdentity,
+    folderId: string,
+    correlationId?: string,
+  ): Promise<void>
+  audit(
+    identity: FolderIdentity,
+    folderId: string,
+  ): Promise<FolderAuditRecord[]>
+  reserveTask(
+    input: Parameters<Core['reserveTask']>[0],
+  ): Promise<ReturnType<Core['reserveTask']>>
+  settleTask(
+    input: Parameters<Core['settleTask']>[0],
+  ): Promise<ReturnType<Core['settleTask']>>
+  reserveApprovalResolution(
+    input: FolderIdentity & {
+      folderId: string
+      approvalId: string
+      expectedVersion: number
+      resolutionKey: string
+      decision: string
+    },
+  ): Promise<{ resolutionId: string; created: boolean }>
+  onAccessChanged(
+    listener: (event: FolderAccessChanged) => void,
+  ): Promise<() => void>
+  close(): Promise<void>
+}
+
+export class InMemorySharedFolderRepository implements SharedFolderRepository {
+  readonly adapter = 'memory' as const
+  readonly version = 1 as const
+  readonly #core = new InMemorySharedFolderCore()
+
+  async createFolder(input: Parameters<Core['createFolder']>[0]) {
+    return this.#core.createFolder(input)
+  }
+  async listFolders(identity: FolderIdentity) {
+    return this.#core.listFolders(identity)
+  }
+  async getFolder(
+    identity: FolderIdentity,
+    folderId: string,
+    capability: Capability = 'read',
+  ) {
+    return this.#core.getFolder(identity, folderId, capability)
+  }
+  async role(identity: FolderIdentity, folderId: string) {
+    return this.#core.role(identity, folderId)
+  }
+  async listMembers(identity: FolderIdentity, folderId: string) {
+    return this.#core.listMembers(identity, folderId)
+  }
+  async createInvitation(input: Parameters<Core['createInvitation']>[0]) {
+    return this.#core.createInvitation(input)
+  }
+  async listInvitations(
+    identity: FolderIdentity,
+    folderId: string,
+    now?: Date,
+  ) {
+    return this.#core.listInvitations(identity, folderId, now)
+  }
+  async acceptInvitation(input: Parameters<Core['acceptInvitation']>[0]) {
+    return this.#core.acceptInvitation(input)
+  }
+  async revokeInvitation(input: Parameters<Core['revokeInvitation']>[0]) {
+    return this.#core.revokeInvitation(input)
+  }
+  async changeRole(input: Parameters<Core['changeRole']>[0]) {
+    return this.#core.changeRole(input)
+  }
+  async revokeMembership(input: Parameters<Core['revokeMembership']>[0]) {
+    return this.#core.revokeMembership(input)
+  }
+  async transferOwnership(input: Parameters<Core['transferOwnership']>[0]) {
+    return this.#core.transferOwnership(input)
+  }
+  async bindResource(input: Parameters<Core['bindResource']>[0]) {
+    return this.#core.bindResource(input)
+  }
+  async moveResource(input: Parameters<Core['moveResource']>[0]) {
+    return this.#core.moveResource(input)
+  }
+  async authorizeResource(
+    identity: FolderIdentity,
+    resourceType: FolderResourceType,
+    resourceId: string,
+    capability: Capability,
+  ) {
+    return this.#core.authorizeResource(
+      identity,
+      resourceType,
+      resourceId,
+      capability,
+    )
+  }
+  async authorizeWorkloadResource(
+    scope: FolderScope,
+    resourceType: FolderResourceType,
+    resourceId: string,
+  ) {
+    return this.#core.authorizeWorkloadResource(scope, resourceType, resourceId)
+  }
+  async hasSharedFolders(scope: FolderScope) {
+    return this.#core.hasSharedFolders(scope)
+  }
+  async recordExport(
+    identity: FolderIdentity,
+    folderId: string,
+    correlationId?: string,
+  ) {
+    this.#core.recordExport(identity, folderId, correlationId)
+  }
+  async audit(identity: FolderIdentity, folderId: string) {
+    return this.#core.audit(identity, folderId)
+  }
+  async reserveTask(input: Parameters<Core['reserveTask']>[0]) {
+    return this.#core.reserveTask(input)
+  }
+  async settleTask(input: Parameters<Core['settleTask']>[0]) {
+    return this.#core.settleTask(input)
+  }
+  async reserveApprovalResolution(input: {
+    tenantId: string
+    organizationId: string
+    workspaceId: string
+    principalId: string
+    folderId: string
+    approvalId: string
+    expectedVersion: number
+    resolutionKey: string
+    decision: string
+  }) {
+    this.#core.getFolder(input, input.folderId, 'approval')
+    return this.#core.reserveApprovalResolution(
+      input.approvalId,
+      input.expectedVersion,
+      input.resolutionKey,
+    )
+  }
+  async onAccessChanged(listener: (event: FolderAccessChanged) => void) {
+    return this.#core.onAccessChanged(listener)
+  }
+  async close() {}
+}

@@ -273,6 +273,7 @@ try {
     pushRepository,
     allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
+    allowInMemorySharedFolders: true,
     ...(wp24Billing
       ? {
           commercialPolicy: {

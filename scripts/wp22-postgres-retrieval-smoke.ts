@@ -160,6 +160,7 @@ try {
     allowExplicitDevAuthentication: true,
     allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
+    allowInMemorySharedFolders: true,
     corpusRepository: appRepository,
     corpusSnapshotStorage: storage,
     corpusEmbeddingProvider: new FakeEmbeddingProvider(),

@@ -176,6 +176,7 @@ try {
     allowExplicitDevAuthentication: true,
     allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
+    allowInMemorySharedFolders: true,
     corpusRepository: createPostgresCorpusRepository({ connectionString }),
     corpusSnapshotStorage: storage,
     corpusAutoDrain: false,

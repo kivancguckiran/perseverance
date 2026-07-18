@@ -259,6 +259,7 @@ try {
       approvalPolicy: 'untrusted',
       allowExplicitDevAuthentication: true,
       allowInMemorySupportAccess: true,
+      allowInMemorySharedFolders: true,
       allowLocalCorpus: true,
       corpusRepository: harness.repository(),
       corpusSnapshotStorage: harness.storage(),
@@ -470,6 +471,11 @@ try {
     const final = [...replay.events]
       .reverse()
       .find((event) => event.type === 'agent.message.completed')
+    const turnCompleted = replay.events.some(
+      (event) =>
+        event.type === 'turn.completed' &&
+        event.codexTurnId === retrievalTurn.codexTurnId,
+    )
     const toolText = JSON.stringify(
       completedTool?.type === 'tool.completed'
         ? completedTool.payload.result
@@ -478,7 +484,8 @@ try {
     const chunkId = toolText.match(/chk_[a-f0-9]+/)?.[0]
     const finalText =
       final?.type === 'agent.message.completed' ? final.payload.text : ''
-    return chunkId &&
+    return turnCompleted &&
+      chunkId &&
       finalText.includes(sourceId) &&
       finalText.includes(revisionId) &&
       finalText.includes(chunkId)

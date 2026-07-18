@@ -91,6 +91,19 @@ const runtimeAuth =
           __PERSISTENT_AUTH__?: { accessToken?: string; subject?: string }
         }
       ).__PERSISTENT_AUTH__
+const runtimeAccessToken = () => {
+  if (runtimeAuth?.accessToken) return runtimeAuth.accessToken
+  if (typeof window === 'undefined') return undefined
+  try {
+    return (
+      JSON.parse(
+        window.sessionStorage.getItem('persistent.auth') ?? 'null',
+      ) as { accessToken?: string } | null
+    )?.accessToken
+  } catch {
+    return undefined
+  }
+}
 const principalId = runtimeAuth?.subject ?? 'dev-user'
 const historyDesktopMediaQuery = '(min-width: 1100px)'
 const scopeHeaders = {
@@ -2284,6 +2297,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [error, setError] = useState<string>()
   const [prompt, setPrompt] = useState('')
   const [realtimeState, setRealtimeState] = useState('kapalı')
+  const [inviteTokenFromLocation, setInviteTokenFromLocation] = useState<
+    string | null
+  >(null)
   const [approvals, setApprovals] = useState<Map<string, Approval>>(new Map())
   const [approvalPending, setApprovalPending] = useState<string>()
   const [approvalErrors, setApprovalErrors] = useState<Map<string, string>>(
@@ -2299,6 +2315,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [sharingPending, setSharingPending] = useState(false)
   const [invitationToken, setInvitationToken] = useState<string>()
   const [folderAccessLost, setFolderAccessLost] = useState(false)
+
+  useEffect(() => {
+    setInviteTokenFromLocation(
+      new URLSearchParams(window.location.search).get('invite'),
+    )
+  }, [])
   const [folderActionPending, setFolderActionPending] = useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
@@ -2514,8 +2536,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             workspaceId,
             sessionId: session.sessionId,
             afterSequence: lastSequence.current,
-            ...(runtimeAuth?.accessToken
-              ? { accessToken: runtimeAuth.accessToken }
+            ...(runtimeAccessToken()
+              ? { accessToken: runtimeAccessToken()! }
               : {}),
           }),
         )
@@ -2888,7 +2910,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   }
 
   async function acceptShareInvitation() {
-    const token = locationScope?.get('invite')
+    const token = inviteTokenFromLocation
     if (!token || sharingPending) return
     setSharingPending(true)
     try {
@@ -3282,7 +3304,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           klasör listesine dönülüyor.
         </p>
       ) : null}
-      {locationScope?.has('invite') ? (
+      {inviteTokenFromLocation ? (
         <div
           className="invite-accept-banner"
           role="region"

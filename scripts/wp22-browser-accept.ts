@@ -78,6 +78,7 @@ try {
     allowExplicitDevAuthentication: true,
     allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
+    allowInMemorySharedFolders: true,
     workspaceCwd: workspace,
     codexHomeRoot: join(harness.root, 'codex-homes'),
     codexProvisioningSource:

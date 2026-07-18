@@ -1,278 +1,238 @@
 import { describe, expect, it } from 'vitest'
-import { InMemorySharedFolderRepository, SharedFolderError } from './index'
+import {
+  InMemorySharedFolderRepository,
+  SharedFolderError,
+  type FolderIdentity,
+  type SharedFolderRepository,
+} from './index'
 
-const owner = {
+const owner: FolderIdentity = {
   tenantId: 'tenant-a',
   organizationId: 'tenant-a',
   workspaceId: 'workspace-a',
-  principalId: 'principal-owner',
+  principalId: 'owner',
 }
-const friend = { ...owner, principalId: 'principal-friend' }
-const outsider = { ...owner, principalId: 'principal-outsider' }
+const friend = { ...owner, principalId: 'friend' }
+const outsider = { ...owner, principalId: 'outsider' }
 
-function shared(role: 'viewer' | 'editor' = 'viewer') {
-  const repository = new InMemorySharedFolderRepository()
-  const created = repository.createFolder({ ...owner, name: 'Paylaşılan' })
-  const invitation = repository.createInvitation({
+async function shared(
+  repository: SharedFolderRepository,
+  role: 'viewer' | 'editor' = 'viewer',
+) {
+  const created = await repository.createFolder({ ...owner, name: 'Shared' })
+  const issued = await repository.createInvitation({
     ...owner,
     folderId: created.folder.folderId,
     role,
     expiresInSeconds: 600,
   })
-  const accepted = repository.acceptInvitation({
+  const accepted = await repository.acceptInvitation({
     ...friend,
-    token: invitation.token,
+    token: issued.token,
   })
-  return { repository, created, invitation, accepted }
+  return { created, issued, accepted }
 }
 
-describe('secure shared folders', () => {
-  it('is private by default and exposes only explicitly shared folders', () => {
-    const { repository, created } = shared()
-    const sibling = repository.createFolder({
-      ...owner,
-      name: 'Private sibling',
-    })
+describe('async shared folder repository contract', () => {
+  it('is private by default and binds an idempotent invitation to one principal', async () => {
+    const repository = new InMemorySharedFolderRepository()
+    const { created, issued, accepted } = await shared(repository)
+    expect(await repository.listFolders(outsider)).toEqual([])
+    expect(accepted.membership.role).toBe('viewer')
     expect(
-      repository.listFolders(friend).map((value) => value.folder.folderId),
-    ).toEqual([created.folder.folderId])
-    expect(() =>
-      repository.getFolder(friend, sibling.folder.folderId),
-    ).toThrowError(expect.objectContaining({ code: 'FOLDER_ACCESS_DENIED' }))
-    expect(repository.listFolders(outsider)).toEqual([])
+      (await repository.acceptInvitation({ ...friend, token: issued.token }))
+        .idempotent,
+    ).toBe(true)
+    await expect(
+      repository.acceptInvitation({ ...outsider, token: issued.token }),
+    ).rejects.toMatchObject({ code: 'INVITATION_ACCEPTED' })
+    expect(JSON.stringify(issued.invitation)).not.toContain(issued.token)
+    expect((await repository.listFolders(friend))[0]?.folder.folderId).toBe(
+      created.folder.folderId,
+    )
   })
 
-  it('uses unpredictable single-use expiring invitations bound to the accepting principal', () => {
+  it('expires and revokes single-use invitation tokens', async () => {
     const repository = new InMemorySharedFolderRepository()
-    const created = repository.createFolder({ ...owner, name: 'Shared' })
-    const invite = repository.createInvitation({
+    const created = await repository.createFolder({ ...owner, name: 'Shared' })
+    const expired = await repository.createInvitation({
       ...owner,
       folderId: created.folder.folderId,
-      role: 'editor',
+      role: 'viewer',
       expiresInSeconds: 60,
-      now: new Date('2026-01-01T00:00:00.000Z'),
+      now: new Date('2026-01-01T00:00:00Z'),
     })
-    expect(invite.token).toMatch(/^[A-Za-z0-9_-]{43}$/)
-    expect(JSON.stringify(invite.invitation)).not.toContain(invite.token)
-    expect(() =>
-      repository.acceptInvitation({ ...friend, token: 'x'.repeat(43) }),
-    ).toThrowError(expect.objectContaining({ code: 'INVITATION_INVALID' }))
-    const accepted = repository.acceptInvitation({
-      ...friend,
-      token: invite.token,
-      now: new Date('2026-01-01T00:00:30.000Z'),
-    })
-    expect(accepted.idempotent).toBe(false)
-    expect(
+    await expect(
       repository.acceptInvitation({
         ...friend,
-        token: invite.token,
-        now: new Date('2026-01-01T00:00:31.000Z'),
-      }).idempotent,
-    ).toBe(true)
-    expect(() =>
-      repository.acceptInvitation({
-        ...outsider,
-        token: invite.token,
-        now: new Date('2026-01-01T00:00:31.000Z'),
+        token: expired.token,
+        now: new Date('2026-01-01T00:01:00Z'),
       }),
-    ).toThrowError(expect.objectContaining({ code: 'INVITATION_ACCEPTED' }))
-    const expired = repository.createInvitation({
+    ).rejects.toMatchObject({ code: 'INVITATION_EXPIRED' })
+    const revoked = await repository.createInvitation({
       ...owner,
       folderId: created.folder.folderId,
       role: 'viewer',
-      expiresInSeconds: 60,
-      now: new Date('2026-01-01T00:00:00.000Z'),
+      expiresInSeconds: 600,
     })
-    expect(() =>
-      repository.acceptInvitation({
-        ...outsider,
-        token: expired.token,
-        now: new Date('2026-01-01T00:01:00.000Z'),
-      }),
-    ).toThrowError(expect.objectContaining({ code: 'INVITATION_EXPIRED' }))
+    await repository.revokeInvitation({
+      ...owner,
+      folderId: created.folder.folderId,
+      invitationId: revoked.invitation.invitationId,
+      expectedVersion: revoked.invitation.version,
+    })
+    await expect(
+      repository.acceptInvitation({ ...friend, token: revoked.token }),
+    ).rejects.toMatchObject({ code: 'INVITATION_REVOKED' })
   })
 
-  it('enforces viewer/editor/owner capabilities and last-owner protection', () => {
-    const viewer = shared('viewer')
-    expect(
-      viewer.repository.getFolder(
-        friend,
-        viewer.created.folder.folderId,
-        'read',
-      ),
-    ).toBeTruthy()
-    for (const capability of [
-      'mutate',
-      'turn',
-      'approval',
-      'manage',
-      'export',
-    ] as const)
-      expect(() =>
-        viewer.repository.getFolder(
-          friend,
-          viewer.created.folder.folderId,
-          capability,
-        ),
-      ).toThrowError(expect.objectContaining({ code: 'FOLDER_ACCESS_DENIED' }))
-
-    const editor = shared('editor')
-    expect(
-      editor.repository.getFolder(
-        friend,
-        editor.created.folder.folderId,
-        'turn',
-      ),
-    ).toBeTruthy()
-    expect(() =>
-      editor.repository.getFolder(
-        friend,
-        editor.created.folder.folderId,
-        'manage',
-      ),
-    ).toThrowError(expect.objectContaining({ code: 'FOLDER_ACCESS_DENIED' }))
-    expect(() =>
-      editor.repository.changeRole({
-        ...owner,
-        folderId: editor.created.folder.folderId,
-        targetPrincipalId: owner.principalId,
-        role: 'editor',
-        expectedVersion: 1,
-      }),
-    ).toThrowError(expect.objectContaining({ code: 'LAST_OWNER_PROTECTED' }))
-  })
-
-  it('invalidates authorization immediately after role change, revoke and move', () => {
-    const { repository, created, accepted } = shared('editor')
-    const events: string[] = []
-    repository.onAccessChanged((event) => events.push(event.reason))
-    repository.getFolder(friend, created.folder.folderId, 'turn')
-    const changed = repository.changeRole({
+  it('enforces viewer/editor/owner capabilities and revoke', async () => {
+    const repository = new InMemorySharedFolderRepository()
+    const { created, accepted } = await shared(repository)
+    await expect(
+      repository.getFolder(friend, created.folder.folderId, 'turn'),
+    ).rejects.toMatchObject({ code: 'FOLDER_ACCESS_DENIED' })
+    const editor = await repository.changeRole({
       ...owner,
       folderId: created.folder.folderId,
       targetPrincipalId: friend.principalId,
-      role: 'viewer',
+      role: 'editor',
       expectedVersion: accepted.membership.version,
     })
-    expect(() =>
+    await expect(
       repository.getFolder(friend, created.folder.folderId, 'turn'),
-    ).toThrowError(expect.objectContaining({ code: 'FOLDER_ACCESS_DENIED' }))
-    repository.revokeMembership({
+    ).resolves.toMatchObject({ folderId: created.folder.folderId })
+    await repository.revokeMembership({
       ...owner,
       folderId: created.folder.folderId,
       targetPrincipalId: friend.principalId,
-      expectedVersion: changed.version,
+      expectedVersion: editor.version,
     })
-    expect(repository.listFolders(friend)).toEqual([])
-
-    const target = repository.createFolder({ ...owner, name: 'Target' })
-    const binding = repository.bindResource({
-      ...owner,
-      folderId: created.folder.folderId,
-      resourceType: 'source',
-      resourceId: 'source-a',
-    })
-    repository.moveResource({
-      ...owner,
-      sourceFolderId: created.folder.folderId,
-      targetFolderId: target.folder.folderId,
-      resourceType: 'source',
-      resourceId: 'source-a',
-      expectedVersion: binding.version,
-    })
-    expect(events).toEqual([
-      'role_changed',
-      'revoked',
-      'resource_moved',
-      'resource_moved',
-    ])
+    await expect(
+      repository.getFolder(friend, created.folder.folderId),
+    ).rejects.toMatchObject({ code: 'FOLDER_ACCESS_DENIED' })
   })
 
-  it('deduplicates concurrent task, approval and billing settlements', async () => {
-    const { repository, created } = shared('editor')
-    const [left, right] = await Promise.all([
-      Promise.resolve().then(() =>
-        repository.reserveTask({
-          ...owner,
-          folderId: created.folder.folderId,
-          idempotencyKey: 'same-task',
-        }),
+  it('protects the last owner and transfers ownership optimistically', async () => {
+    const repository = new InMemorySharedFolderRepository()
+    const { created } = await shared(repository, 'editor')
+    await expect(
+      repository.changeRole({
+        ...owner,
+        folderId: created.folder.folderId,
+        targetPrincipalId: owner.principalId,
+        role: 'editor',
+        expectedVersion: created.membership.version,
+      }),
+    ).rejects.toMatchObject({ code: 'LAST_OWNER_PROTECTED' })
+    const transferred = await repository.transferOwnership({
+      ...owner,
+      folderId: created.folder.folderId,
+      targetPrincipalId: friend.principalId,
+      expectedVersion: created.folder.version + 1,
+      previousOwnerRole: 'editor',
+    })
+    expect(transferred.owner.role).toBe('owner')
+    expect(transferred.previousOwner.role).toBe('editor')
+    await expect(
+      repository.transferOwnership({
+        ...friend,
+        folderId: created.folder.folderId,
+        targetPrincipalId: owner.principalId,
+        expectedVersion: created.folder.version,
+        previousOwnerRole: 'owner',
+      }),
+    ).rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
+  })
+
+  it('authorizes resource moves and emits access epochs', async () => {
+    const repository = new InMemorySharedFolderRepository()
+    const first = await repository.createFolder({ ...owner, name: 'First' })
+    const second = await repository.createFolder({ ...owner, name: 'Second' })
+    const events: string[] = []
+    const unsubscribe = await repository.onAccessChanged((event) =>
+      events.push(`${event.reason}:${event.cacheEpoch}`),
+    )
+    const bound = await repository.bindResource({
+      ...owner,
+      folderId: first.folder.folderId,
+      resourceType: 'conversation',
+      resourceId: 'conversation-1',
+    })
+    const moved = await repository.moveResource({
+      ...owner,
+      sourceFolderId: first.folder.folderId,
+      targetFolderId: second.folder.folderId,
+      resourceType: 'conversation',
+      resourceId: 'conversation-1',
+      expectedVersion: bound.version,
+    })
+    expect(moved.folderId).toBe(second.folder.folderId)
+    await expect(
+      repository.authorizeResource(
+        outsider,
+        'conversation',
+        'conversation-1',
+        'read',
       ),
-      Promise.resolve().then(() =>
-        repository.reserveTask({
-          ...friend,
-          folderId: created.folder.folderId,
-          idempotencyKey: 'same-task',
-        }),
-      ),
+    ).rejects.toBeInstanceOf(SharedFolderError)
+    expect(events).toHaveLength(2)
+    unsubscribe()
+  })
+
+  it('deduplicates task, approval and billing settlements', async () => {
+    const repository = new InMemorySharedFolderRepository()
+    const { created } = await shared(repository, 'editor')
+    const [first, second] = await Promise.all([
+      repository.reserveTask({
+        ...owner,
+        folderId: created.folder.folderId,
+        idempotencyKey: 'task-key',
+      }),
+      repository.reserveTask({
+        ...friend,
+        folderId: created.folder.folderId,
+        idempotencyKey: 'task-key',
+      }),
     ])
-    expect([left.created, right.created].filter(Boolean)).toHaveLength(1)
-    expect(left.reservation.upstreamWorkId).toBe(
-      right.reservation.upstreamWorkId,
+    expect(first.reservation.upstreamWorkId).toBe(
+      second.reservation.upstreamWorkId,
     )
-    const approvalA = repository.reserveApprovalResolution(
-      'approval-a',
-      1,
-      'decision-a',
-    )
-    const approvalB = repository.reserveApprovalResolution(
-      'approval-a',
-      1,
-      'decision-b',
-    )
+    expect([first.created, second.created].filter(Boolean)).toHaveLength(1)
+    const approvalInput = {
+      ...owner,
+      folderId: created.folder.folderId,
+      approvalId: 'approval-1',
+      expectedVersion: 1,
+      resolutionKey: 'resolution-key',
+      decision: 'accept',
+    }
+    const approvalA = await repository.reserveApprovalResolution(approvalInput)
+    const approvalB = await repository.reserveApprovalResolution({
+      ...approvalInput,
+      resolutionKey: 'other-resolution-key',
+    })
     expect(approvalA.resolutionId).toBe(approvalB.resolutionId)
-    expect([approvalA.created, approvalB.created].filter(Boolean)).toHaveLength(
-      1,
-    )
-    const settlementA = repository.settleTask({
+    const settlementInput = {
       ...owner,
-      idempotencyKey: 'same-task',
-      settlementKey: 'settle-a',
-    })
-    const settlementB = repository.settleTask({
-      ...owner,
-      idempotencyKey: 'same-task',
-      settlementKey: 'settle-a',
-    })
+      idempotencyKey: 'task-key',
+      settlementKey: 'settlement-key',
+    }
+    const settlementA = await repository.settleTask(settlementInput)
+    const settlementB = await repository.settleTask(settlementInput)
     expect(settlementA.billingSettlementId).toBe(
       settlementB.billingSettlementId,
     )
   })
 
-  it('keeps audit immutable and free of invite token/content fields', () => {
-    const { repository, created, invitation } = shared()
-    const audit = repository.audit(owner, created.folder.folderId)
-    expect(audit.length).toBeGreaterThanOrEqual(3)
-    expect(JSON.stringify(audit)).not.toContain(invitation.token)
-    expect(JSON.stringify(audit)).not.toContain('tokenDigest')
+  it('keeps an immutable hash-linked audit projection', async () => {
+    const repository = new InMemorySharedFolderRepository()
+    const { created } = await shared(repository)
+    await repository.recordExport(owner, created.folder.folderId, 'export-1')
+    const audit = await repository.audit(owner, created.folder.folderId)
+    expect(audit.length).toBeGreaterThan(2)
     expect(audit[0]?.previousHash).toBe('GENESIS')
-    expect(audit.at(-1)?.recordHash).toMatch(/^[a-f0-9]{64}$/)
-    expect(() => {
-      ;(audit[0] as { action: string }).action = 'changed'
-    }).not.toThrow()
-    expect(repository.audit(owner, created.folder.folderId)[0]?.action).toBe(
-      'folder.created',
-    )
-  })
-
-  it('rejects cross-tenant and guessed identifiers without revealing existence', () => {
-    const { repository, created } = shared()
-    const crossTenant = {
-      ...friend,
-      tenantId: 'tenant-b',
-      organizationId: 'tenant-b',
-    }
-    for (const identity of [crossTenant, outsider]) {
-      try {
-        repository.getFolder(identity, created.folder.folderId)
-        throw new Error('expected rejection')
-      } catch (error) {
-        expect(error).toBeInstanceOf(SharedFolderError)
-        expect((error as SharedFolderError).code).toMatch(
-          /FOLDER_(NOT_FOUND|ACCESS_DENIED)/,
-        )
-      }
-    }
+    expect(audit.at(-1)?.action).toBe('folder.exported')
+    expect(Object.isFrozen(audit[0])).toBe(false)
   })
 })

@@ -18,6 +18,7 @@ const root = mkdtempSync(join(tmpdir(), 'wp23-postgres-'))
 const container = `persistent-wp23-${randomUUID()}`
 const volume = `${container}-data`
 const image = process.env.WP23_POSTGRES_IMAGE ?? 'postgres:17-alpine'
+const claimableNow = () => new Date(Date.now() + 1_000)
 
 function docker(args: string[], input?: string) {
   const result = spawnSync('docker', args, { encoding: 'utf8', input })
@@ -180,7 +181,7 @@ try {
   )
   const emulator = new PushProviderEmulator()
   assert.equal(
-    (await repository.drain(emulator, new Date())).at(0)?.outcome,
+    (await repository.drain(emulator, claimableNow())).at(0)?.outcome,
     'delivered',
   )
   assert.equal(
@@ -232,7 +233,7 @@ try {
     },
   )
   assert.equal(
-    (await repository.drain(emulator, new Date())).at(0)?.outcome,
+    (await repository.drain(emulator, claimableNow())).at(0)?.outcome,
     'retry',
   )
   await repository.upsert(scopeA, {
@@ -252,7 +253,7 @@ try {
     },
   )
   assert.equal(
-    (await repository.drain(emulator, new Date())).at(0)?.outcome,
+    (await repository.drain(emulator, claimableNow())).at(0)?.outcome,
     'invalid_endpoint',
   )
   assert.equal((await repository.list(scopeA))[0]?.status, 'invalid')

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createPostgresSharedFolderRepository } from '../packages/shared-folders/src/postgres.ts'
+import { SharedFolderError } from '../packages/shared-folders/src/index.ts'
 
 const container = `persistent-wp25-${randomUUID()}`
 const volume = `${container}-data`
@@ -24,6 +25,7 @@ const owner = {
   principalId: 'principal_owner',
 }
 const friend = { ...owner, principalId: 'principal_friend' }
+const secondFriend = { ...owner, principalId: 'principal_second_friend' }
 
 try {
   docker(['volume', 'create', volume])
@@ -105,6 +107,8 @@ try {
       GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA persistent_codex TO folder_runtime;
       GRANT EXECUTE ON FUNCTION persistent_codex.folder_role(text,text,text,text,text) TO folder_runtime;
       GRANT EXECUTE ON FUNCTION persistent_codex.accept_folder_invitation(bytea,text,timestamptz) TO folder_runtime;
+      GRANT EXECUTE ON FUNCTION persistent_codex.authorize_folder_workload_resource(text,text,text,text,text) TO folder_runtime;
+      GRANT EXECUTE ON FUNCTION persistent_codex.shared_folder_scope_exists(text,text,text) TO folder_runtime;
       INSERT INTO persistent_codex.organizations VALUES ('org_a','A','active'),('org_b','B','active');
       INSERT INTO persistent_codex.workspaces (organization_id,workspace_id,name)
         VALUES ('org_a','wsp_a','A'),('org_b','wsp_b','B');
@@ -112,8 +116,8 @@ try {
   )
   const port = docker(['port', container, '5432/tcp']).split(':').at(-1)!
   const connectionString = `postgresql://folder_runtime:runtime@127.0.0.1:${port}/postgres`
-  const repository = createPostgresSharedFolderRepository(connectionString)
-  const pool = repository.pool
+  let repository = createPostgresSharedFolderRepository(connectionString)
+  let pool = repository.pool
 
   const created = await repository.createFolder({ ...owner, name: 'Shared' })
   const privateSibling = await repository.createFolder({
@@ -146,6 +150,187 @@ try {
     [created.folder.folderId],
   )
   assert.notEqual(created.folder.folderId, privateSibling.folder.folderId)
+  assert.equal(
+    (await repository.getFolder(friend, created.folder.folderId)).folderId,
+    created.folder.folderId,
+  )
+  assert.equal(
+    (await repository.listMembers(owner, created.folder.folderId)).length,
+    2,
+  )
+  assert.equal(
+    (await repository.listInvitations(owner, created.folder.folderId)).length,
+    1,
+  )
+  await assert.rejects(
+    repository.getFolder(friend, privateSibling.folder.folderId),
+    (error: unknown) => error instanceof SharedFolderError,
+  )
+
+  const revokedInvite = await repository.createInvitation({
+    ...owner,
+    folderId: created.folder.folderId,
+    role: 'viewer',
+    expiresInSeconds: 600,
+  })
+  await repository.revokeInvitation({
+    ...owner,
+    folderId: created.folder.folderId,
+    invitationId: revokedInvite.invitation.invitationId,
+    expectedVersion: revokedInvite.invitation.version,
+  })
+  await assert.rejects(
+    repository.acceptInvitation({
+      ...secondFriend,
+      token: revokedInvite.token,
+    }),
+    (error: unknown) =>
+      error instanceof SharedFolderError && error.code === 'INVITATION_REVOKED',
+  )
+
+  const expiredInvite = await repository.createInvitation({
+    ...owner,
+    folderId: created.folder.folderId,
+    role: 'viewer',
+    expiresInSeconds: 600,
+  })
+  docker(
+    [
+      'exec',
+      '-i',
+      container,
+      'psql',
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-U',
+      'postgres',
+    ],
+    `UPDATE persistent_codex.folder_invitations
+     SET created_at=now()-interval '2 minutes',expires_at=now()-interval '1 second'
+     WHERE invitation_id='${expiredInvite.invitation.invitationId}';`,
+  )
+  await assert.rejects(
+    repository.acceptInvitation({
+      ...secondFriend,
+      token: expiredInvite.token,
+    }),
+    (error: unknown) =>
+      error instanceof SharedFolderError && error.code === 'INVITATION_EXPIRED',
+  )
+  assert.equal(
+    (await repository.listInvitations(owner, created.folder.folderId)).find(
+      (value) => value.invitationId === expiredInvite.invitation.invitationId,
+    )?.status,
+    'expired',
+  )
+
+  const notificationRepository =
+    createPostgresSharedFolderRepository(connectionString)
+  const invalidations: string[] = []
+  const unsubscribe = await notificationRepository.onAccessChanged((event) =>
+    invalidations.push(event.reason),
+  )
+  const promoted = await repository.changeRole({
+    ...owner,
+    folderId: created.folder.folderId,
+    targetPrincipalId: friend.principalId,
+    role: 'editor',
+    expectedVersion: accepted.membership.version,
+  })
+  const binding = await repository.bindResource({
+    ...owner,
+    folderId: created.folder.folderId,
+    resourceType: 'conversation',
+    resourceId: 'conversation_wp25_postgres',
+  })
+  assert.equal(
+    (
+      await repository.authorizeResource(
+        friend,
+        'conversation',
+        'conversation_wp25_postgres',
+        'read',
+      )
+    ).folderId,
+    created.folder.folderId,
+  )
+  const moved = await repository.moveResource({
+    ...owner,
+    sourceFolderId: created.folder.folderId,
+    targetFolderId: privateSibling.folder.folderId,
+    resourceType: 'conversation',
+    resourceId: 'conversation_wp25_postgres',
+    expectedVersion: binding.version,
+  })
+  await assert.rejects(
+    repository.moveResource({
+      ...owner,
+      sourceFolderId: created.folder.folderId,
+      targetFolderId: privateSibling.folder.folderId,
+      resourceType: 'conversation',
+      resourceId: 'conversation_wp25_postgres',
+      expectedVersion: binding.version,
+    }),
+    (error: unknown) => error instanceof SharedFolderError,
+  )
+  assert.equal(moved.folderId, privateSibling.folder.folderId)
+
+  const ownershipInvite = await repository.createInvitation({
+    ...owner,
+    folderId: created.folder.folderId,
+    role: 'editor',
+    expiresInSeconds: 600,
+  })
+  const ownershipMember = await repository.acceptInvitation({
+    ...secondFriend,
+    token: ownershipInvite.token,
+  })
+  const beforeTransfer = await repository.getFolder(
+    owner,
+    created.folder.folderId,
+  )
+  const transferResults = await Promise.allSettled([
+    repository.transferOwnership({
+      ...owner,
+      folderId: created.folder.folderId,
+      targetPrincipalId: friend.principalId,
+      expectedVersion: beforeTransfer.version,
+      previousOwnerRole: 'editor',
+    }),
+    repository.transferOwnership({
+      ...owner,
+      folderId: created.folder.folderId,
+      targetPrincipalId: secondFriend.principalId,
+      expectedVersion: beforeTransfer.version,
+      previousOwnerRole: 'editor',
+    }),
+  ])
+  assert.equal(
+    transferResults.filter((value) => value.status === 'fulfilled').length,
+    1,
+  )
+  assert.equal(
+    transferResults.filter((value) => value.status === 'rejected').length,
+    1,
+  )
+  assert.equal(ownershipMember.membership.role, 'editor')
+
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert(invalidations.includes('role_changed'))
+  assert(invalidations.includes('resource_moved'))
+  assert(invalidations.includes('ownership_transferred'))
+  unsubscribe()
+  await notificationRepository.close()
+
+  await repository.close()
+  repository = createPostgresSharedFolderRepository(connectionString)
+  pool = repository.pool
+  assert(
+    (await repository.listFolders(friend)).some(
+      (entry) => entry.folder.folderId === created.folder.folderId,
+    ),
+  )
+  const restartPersistence = 'pass'
 
   const adversarial = await pool.connect()
   try {
@@ -190,7 +375,7 @@ try {
      WHERE n.nspname='persistent_codex' AND c.relname LIKE 'folder%'
        AND c.relrowsecurity AND c.relforcerowsecurity`,
   )
-  assert.equal(Number(forced), 8)
+  assert.equal(Number(forced), 9)
   const tokenColumns = adminSql(
     `SELECT count(*) FROM information_schema.columns
      WHERE table_schema='persistent_codex' AND table_name='folder_invitations'
@@ -198,45 +383,63 @@ try {
   )
   assert.equal(Number(tokenColumns), 0)
 
-  const raceClient = await pool.connect()
-  try {
-    await raceClient.query('BEGIN')
-    await raceClient.query(
-      `SELECT set_config('app.tenant_id','org_a',true),
-              set_config('app.organization_id','org_a',true),
-              set_config('app.workspace_id','wsp_a',true),
-              set_config('app.principal_id','principal_owner',true)`,
-    )
-    const taskId = `tsk_${randomUUID()}`
-    const first = await raceClient.query(
-      `INSERT INTO persistent_codex.folder_task_reservations
-        (tenant_id,organization_id,workspace_id,folder_id,principal_id,task_id,
-         idempotency_key,upstream_work_id,status)
-       VALUES ('org_a','org_a','wsp_a',$1,'principal_owner',$2,'race-key',$3,'reserved')
-       ON CONFLICT (tenant_id,organization_id,workspace_id,idempotency_key)
-       DO NOTHING RETURNING upstream_work_id`,
-      [created.folder.folderId, taskId, `up_${randomUUID()}`],
-    )
-    const second = await raceClient.query(
-      `INSERT INTO persistent_codex.folder_task_reservations
-        (tenant_id,organization_id,workspace_id,folder_id,principal_id,task_id,
-         idempotency_key,upstream_work_id,status)
-       VALUES ('org_a','org_a','wsp_a',$1,'principal_owner',$2,'race-key',$3,'reserved')
-       ON CONFLICT (tenant_id,organization_id,workspace_id,idempotency_key)
-       DO NOTHING RETURNING upstream_work_id`,
-      [created.folder.folderId, `tsk_${randomUUID()}`, `up_${randomUUID()}`],
-    )
-    assert.equal(first.rowCount, 1)
-    assert.equal(second.rowCount, 0)
-    await raceClient.query('COMMIT')
-  } finally {
-    raceClient.release()
+  const currentOwner = transferResults.find(
+    (
+      value,
+    ): value is PromiseFulfilledResult<
+      Awaited<ReturnType<typeof repository.transferOwnership>>
+    > => value.status === 'fulfilled',
+  )!.value.owner.principalId
+  const executionIdentity = { ...owner, principalId: currentOwner }
+  const [taskA, taskB] = await Promise.all([
+    repository.reserveTask({
+      ...executionIdentity,
+      folderId: created.folder.folderId,
+      idempotencyKey: 'race-key',
+    }),
+    repository.reserveTask({
+      ...executionIdentity,
+      folderId: created.folder.folderId,
+      idempotencyKey: 'race-key',
+    }),
+  ])
+  assert.equal(
+    taskA.reservation.upstreamWorkId,
+    taskB.reservation.upstreamWorkId,
+  )
+  assert.equal([taskA.created, taskB.created].filter(Boolean).length, 1)
+  const approvalInput = {
+    ...executionIdentity,
+    folderId: created.folder.folderId,
+    approvalId: 'approval_wp25_postgres',
+    expectedVersion: 1,
+    resolutionKey: 'resolution-a',
+    decision: 'accept',
   }
+  const [approvalA, approvalB] = await Promise.all([
+    repository.reserveApprovalResolution(approvalInput),
+    repository.reserveApprovalResolution({
+      ...approvalInput,
+      resolutionKey: 'resolution-b',
+    }),
+  ])
+  assert.equal(approvalA.resolutionId, approvalB.resolutionId)
+  assert.equal([approvalA.created, approvalB.created].filter(Boolean).length, 1)
+  const settlementInput = {
+    ...executionIdentity,
+    idempotencyKey: 'race-key',
+    settlementKey: 'settlement-wp25',
+  }
+  const [settlementA, settlementB] = await Promise.all([
+    repository.settleTask(settlementInput),
+    repository.settleTask(settlementInput),
+  ])
+  assert.equal(settlementA.billingSettlementId, settlementB.billingSettlementId)
 
   console.log(
     JSON.stringify({
       gate: 'wp25:postgres',
-      forcedRlsTables: 8,
+      forcedRlsTables: 9,
       tenantIsolation: 'pass',
       principalIsolation: 'pass',
       folderId: created.folder.folderId,
@@ -245,6 +448,12 @@ try {
       ownerPrincipalId: owner.principalId,
       friendPrincipalId: friend.principalId,
       taskRace: 'single-upstream',
+      approvalId: approvalInput.approvalId,
+      approvalResolutionId: approvalA.resolutionId,
+      billingSettlementId: settlementA.billingSettlementId,
+      restartPersistence,
+      invalidations,
+      resourceId: moved.resourceId,
       cleanup: { container, volume, status: 'scheduled' },
     }),
   )
