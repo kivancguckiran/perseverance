@@ -1,227 +1,33 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
-import { z } from 'zod'
 import { Pool, type PoolClient } from 'pg'
+import {
+  BILLING_CONTRACT_VERSION,
+  admissionDecisionSchema,
+  admissionRequestSchema,
+  billingWebhookPayloadSchema,
+  billingWebhookSubscriptionDataSchema,
+  billingScopeSchema,
+  billingWebhookEventSchema,
+  budgetSchema,
+  commercialPlanSchema,
+  entitlementSchema,
+  quotaPolicySchema,
+  subscriptionStateSchema,
+  type AdmissionDecision,
+  type AdmissionRequest,
+  type BillingScope,
+  type BillingWebhookEvent,
+  type BillingWebhookPayload,
+  type BillingWebhookSubscriptionData,
+  type Budget,
+  type CommercialPolicySnapshot,
+  type CommercialPlan,
+  type Entitlement,
+  type QuotaPolicy,
+  type SubscriptionState,
+} from './contracts.js'
 
-export const BILLING_CONTRACT_VERSION = 1 as const
-const id = z.string().trim().min(1).max(255)
-const scope = z.object({
-  tenantId: id,
-  organizationId: id,
-  workspaceId: id,
-})
-
-export const commercialPlanSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  planId: id,
-  planVersion: z.number().int().positive(),
-  displayName: id,
-  currency: z.string().regex(/^[A-Z]{3}$/),
-  effectiveAt: z.iso.datetime(),
-  retiredAt: z.iso.datetime().nullable(),
-  billingMode: z.enum(['platform_managed', 'byok', 'hybrid']),
-  taxBehavior: z.enum([
-    'provider_determined',
-    'exclusive',
-    'inclusive',
-    'unknown',
-  ]),
-})
-
-export const entitlementKeySchema = z.enum([
-  'turn.start',
-  'source.upload',
-  'source.index',
-  'source.retrieval',
-  'workspace.concurrency',
-])
-export const entitlementSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  entitlementId: id,
-  planId: id,
-  planVersion: z.number().int().positive(),
-  key: entitlementKeySchema,
-  enabled: z.boolean(),
-  effectiveAt: z.iso.datetime(),
-  expiresAt: z.iso.datetime().nullable(),
-  sourceWebhookEventId: id.nullable(),
-})
-
-export const subscriptionStateSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  subscriptionId: id,
-  billingCustomerId: id,
-  planId: id,
-  planVersion: z.number().int().positive(),
-  state: z.enum([
-    'trialing',
-    'active',
-    'past_due',
-    'paused',
-    'cancelled',
-    'unknown',
-  ]),
-  provider: id,
-  providerSequence: z.number().int().nonnegative(),
-  effectiveAt: z.iso.datetime(),
-  updatedAt: z.iso.datetime(),
-  sourceWebhookEventId: id.nullable(),
-})
-
-export const budgetSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  budgetId: id,
-  period: z.enum(['day', 'month']),
-  currency: z.string().regex(/^[A-Z]{3}$/),
-  softLimitMicros: z.number().int().nonnegative().nullable(),
-  hardLimitMicros: z.number().int().positive().nullable(),
-  effectiveAt: z.iso.datetime(),
-  expiresAt: z.iso.datetime().nullable(),
-})
-
-export const quotaMeterSchema = z.enum([
-  'tenant_concurrent_turn',
-  'session_concurrent_turn',
-  'provider_spend_micros',
-  'corpus_source',
-  'corpus_byte',
-  'corpus_chunk',
-  'storage_byte',
-])
-export const quotaPolicySchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  quotaId: id,
-  policyVersion: z.number().int().positive(),
-  meter: quotaMeterSchema,
-  softLimit: z.number().int().nonnegative().nullable(),
-  hardLimit: z.number().int().positive().nullable(),
-  inFlightPolicy: z.enum(['continue', 'interrupt']),
-  effectiveAt: z.iso.datetime(),
-  expiresAt: z.iso.datetime().nullable(),
-})
-
-export const billingCustomerSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  billingCustomerId: id,
-  provider: id,
-  providerCustomerReference: id,
-  createdAt: z.iso.datetime(),
-})
-
-export const webhookProcessingStateSchema = z.enum([
-  'received',
-  'processing',
-  'processed',
-  'unknown',
-  'retry',
-  'dead_letter',
-])
-export const billingWebhookEventSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  webhookEventId: id,
-  provider: id,
-  signatureVersion: id,
-  eventType: id,
-  providerSequence: z.number().int().nonnegative(),
-  payloadDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  receivedAt: z.iso.datetime(),
-  effectiveAt: z.iso.datetime(),
-  processingState: webhookProcessingStateSchema,
-  attempt: z.number().int().nonnegative(),
-  lastErrorCode: id.nullable(),
-})
-
-export const invoiceReconciliationSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  reconciliationId: id,
-  invoiceId: id,
-  provider: id,
-  currency: z.string().regex(/^[A-Z]{3}$/),
-  ledgerWatermark: id,
-  measuredAmountMicros: z.number().int().nonnegative(),
-  providerAmountMicros: z.number().int().nonnegative(),
-  differenceMicros: z.number().int(),
-  state: z.enum(['pending', 'matched', 'variance', 'incomplete']),
-  reconciledAt: z.iso.datetime().nullable(),
-})
-
-export const usageMeterSchema = z.enum([
-  'provider_input_token',
-  'provider_cached_input_token',
-  'provider_output_token',
-  'provider_reasoning_token',
-  'provider_reported_cost_micros',
-  'compute_millisecond',
-  'storage_byte_millisecond',
-  'egress_byte',
-  'index_embedding_token',
-  'retrieval_embedding_token',
-])
-export const commercialUsageStatusSchema = z.enum([
-  'measured',
-  'estimated',
-  'reconciled',
-  'incomplete',
-])
-export const commercialUsageEntrySchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  ledgerEntryId: id,
-  sessionId: id.nullable(),
-  turnId: id.nullable(),
-  sourceId: id.nullable(),
-  meter: usageMeterSchema,
-  quantity: z.number().int().nonnegative(),
-  status: commercialUsageStatusSchema,
-  priceCatalogVersion: id.nullable(),
-  currency: z
-    .string()
-    .regex(/^[A-Z]{3}$/)
-    .nullable(),
-  estimatedCostMicros: z.number().int().nonnegative().nullable(),
-  officialCostMicros: z.number().int().nonnegative().nullable(),
-  dedupeKey: id,
-  occurredAt: z.iso.datetime(),
-})
-
-export const admissionRequestSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  operation: entitlementKeySchema,
-  measurements: z.partialRecord(
-    quotaMeterSchema,
-    z.number().int().nonnegative(),
-  ),
-  measurementWatermark: id,
-  evaluatedAt: z.iso.datetime(),
-})
-export const admissionDecisionSchema = scope.extend({
-  schemaVersion: z.literal(BILLING_CONTRACT_VERSION),
-  decisionId: id,
-  operation: entitlementKeySchema,
-  outcome: z.enum(['allow', 'warn', 'deny']),
-  reason: id,
-  policyVersion: z.number().int().positive(),
-  measurementWatermark: id,
-  evaluatedAt: z.iso.datetime(),
-  inFlightPolicy: z.enum(['continue', 'interrupt']),
-})
-
-export type CommercialPlan = z.infer<typeof commercialPlanSchema>
-export type Entitlement = z.infer<typeof entitlementSchema>
-export type SubscriptionState = z.infer<typeof subscriptionStateSchema>
-export type Budget = z.infer<typeof budgetSchema>
-export type QuotaPolicy = z.infer<typeof quotaPolicySchema>
-export type BillingCustomer = z.infer<typeof billingCustomerSchema>
-export type BillingWebhookEvent = z.infer<typeof billingWebhookEventSchema>
-export type InvoiceReconciliation = z.infer<typeof invoiceReconciliationSchema>
-export type CommercialUsageEntry = z.infer<typeof commercialUsageEntrySchema>
-export type AdmissionRequest = z.infer<typeof admissionRequestSchema>
-export type AdmissionDecision = z.infer<typeof admissionDecisionSchema>
-
-export interface CommercialPolicySnapshot {
-  plan: CommercialPlan
-  entitlements: Entitlement[]
-  budgets: Budget[]
-  quotas: QuotaPolicy[]
-}
+export * from './contracts.js'
 
 const operationMeters: Record<
   AdmissionRequest['operation'],
@@ -314,13 +120,15 @@ export class BillingWebhookError extends Error {
     | 'TIMESTAMP_INVALID'
     | 'REPLAY_REJECTED'
     | 'PAYLOAD_INVALID'
+    | 'EVENT_CONFLICT'
   constructor(
     code:
       | 'PAYLOAD_TOO_LARGE'
       | 'SIGNATURE_INVALID'
       | 'TIMESTAMP_INVALID'
       | 'REPLAY_REJECTED'
-      | 'PAYLOAD_INVALID',
+      | 'PAYLOAD_INVALID'
+      | 'EVENT_CONFLICT',
     message: string = code,
   ) {
     super(message)
@@ -421,17 +229,65 @@ export class DeterministicBillingEmulator implements BillingProviderPort {
   }
 }
 
+export type NormalizedBillingWebhookCommand =
+  | {
+      kind: 'subscription.updated'
+      data: BillingWebhookSubscriptionData
+    }
+  | { kind: 'unknown' }
+
+export function normalizeBillingWebhookPayload(input: unknown): {
+  envelope: BillingWebhookPayload
+  command: NormalizedBillingWebhookCommand
+} {
+  const envelope = billingWebhookPayloadSchema.parse(input)
+  if (envelope.eventType !== 'subscription.updated')
+    return { envelope, command: { kind: 'unknown' } }
+  return {
+    envelope,
+    command: {
+      kind: 'subscription.updated',
+      data: billingWebhookSubscriptionDataSchema.parse(envelope.data),
+    },
+  }
+}
+
+export interface DevelopmentCommercialSeed {
+  plan: Omit<CommercialPlan, keyof BillingScope>
+  entitlements: Array<Omit<Entitlement, keyof BillingScope>>
+  budgets: Array<Omit<Budget, keyof BillingScope>>
+  quotas: Array<Omit<QuotaPolicy, keyof BillingScope>>
+}
+
+export interface DurableAdmissionInput extends BillingScope {
+  operation: AdmissionRequest['operation']
+  requestKey: string
+  sessionId?: string
+  requestedBytes?: number
+  evaluatedAt?: Date
+}
+
 export class BillingPostgresRepository {
   private readonly pool: Pool
-  constructor(pool: Pool) {
+  readonly productionBillingVerified: boolean
+  readonly #developmentSeed: DevelopmentCommercialSeed | undefined
+  constructor(
+    pool: Pool,
+    options: {
+      productionBillingVerified?: boolean
+      developmentSeed?: DevelopmentCommercialSeed
+    } = {},
+  ) {
     this.pool = pool
+    this.productionBillingVerified = options.productionBillingVerified === true
+    this.#developmentSeed = options.developmentSeed
   }
 
   async withScope<T>(
-    scopeInput: z.infer<typeof scope>,
+    scopeInput: BillingScope,
     fn: (client: PoolClient) => Promise<T>,
   ) {
-    const value = scope.parse(scopeInput)
+    const value = billingScopeSchema.parse(scopeInput)
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
@@ -450,7 +306,10 @@ export class BillingPostgresRepository {
     }
   }
 
-  async recordWebhook(eventInput: BillingWebhookEvent) {
+  async recordWebhook(
+    eventInput: BillingWebhookEvent,
+    command: NormalizedBillingWebhookCommand = { kind: 'unknown' },
+  ) {
     const event = billingWebhookEventSchema.parse(eventInput)
     return this.withScope(event, async (client) => {
       const result = await client.query<{
@@ -460,8 +319,8 @@ export class BillingPostgresRepository {
         duplicate: boolean
       }>(
         `INSERT INTO persistent_codex.billing_webhook_events
-          (tenant_id,organization_id,workspace_id,webhook_event_id,provider,signature_version,event_type,provider_sequence,payload_digest,received_at,effective_at,processing_state,attempt)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          (tenant_id,organization_id,workspace_id,webhook_event_id,provider,signature_version,event_type,provider_sequence,payload_digest,received_at,effective_at,processing_state,attempt,normalized_command)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb)
          ON CONFLICT (tenant_id,organization_id,workspace_id,provider,webhook_event_id)
          DO UPDATE SET received_at=LEAST(persistent_codex.billing_webhook_events.received_at,EXCLUDED.received_at)
          RETURNING processing_state,payload_digest,effective_at,(xmax <> 0) AS duplicate`,
@@ -479,12 +338,13 @@ export class BillingPostgresRepository {
           event.effectiveAt,
           event.processingState,
           event.attempt,
+          JSON.stringify(command),
         ],
       )
       const row = result.rows[0]!
       if (row.payload_digest !== event.payloadDigest)
         throw new BillingWebhookError(
-          'PAYLOAD_INVALID',
+          'EVENT_CONFLICT',
           'Webhook event ID was reused with a different digest',
         )
       return {
@@ -536,7 +396,7 @@ export class BillingPostgresRepository {
   }
 
   async markWebhookProcessing(
-    scopeInput: z.infer<typeof scope>,
+    scopeInput: BillingScope,
     webhookEventId: string,
     updatedAt: Date,
   ) {
@@ -552,7 +412,7 @@ export class BillingPostgresRepository {
   }
 
   async countBillingCustomers(
-    scopeInput: z.infer<typeof scope>,
+    scopeInput: BillingScope,
     organizationId?: string,
   ) {
     return this.withScope(scopeInput, async (client) =>
@@ -568,11 +428,753 @@ export class BillingPostgresRepository {
     )
   }
 
+  async seedDevelopmentScope(scopeInput: BillingScope) {
+    if (!this.#developmentSeed)
+      throw new Error('DEVELOPMENT_BILLING_SEED_NOT_CONFIGURED')
+    const scope = billingScopeSchema.parse(scopeInput)
+    const seed = this.#developmentSeed
+    await this.withScope(scope, async (client) => {
+      await client.query(
+        `INSERT INTO persistent_codex.organizations(organization_id,name,status)
+         VALUES ($1,'Local billing organization','active') ON CONFLICT DO NOTHING`,
+        [scope.organizationId],
+      )
+      await client.query(
+        `INSERT INTO persistent_codex.workspaces(tenant_id,organization_id,workspace_id,name)
+         VALUES ($1,$2,$3,'Local billing workspace') ON CONFLICT DO NOTHING`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId],
+      )
+      const plan = commercialPlanSchema.parse({ ...seed.plan, ...scope })
+      await client.query(
+        `INSERT INTO persistent_codex.commercial_plans
+          (tenant_id,organization_id,workspace_id,plan_id,plan_version,display_name,currency,billing_mode,tax_behavior,effective_at,retired_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          plan.planId,
+          plan.planVersion,
+          plan.displayName,
+          plan.currency,
+          plan.billingMode,
+          plan.taxBehavior,
+          plan.effectiveAt,
+          plan.retiredAt,
+        ],
+      )
+      for (const input of seed.entitlements) {
+        const value = entitlementSchema.parse({ ...input, ...scope })
+        await client.query(
+          `INSERT INTO persistent_codex.entitlements
+            (tenant_id,organization_id,workspace_id,entitlement_id,plan_id,plan_version,entitlement_key,enabled,effective_at,expires_at,source_webhook_event_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+          [
+            scope.tenantId,
+            scope.organizationId,
+            scope.workspaceId,
+            value.entitlementId,
+            value.planId,
+            value.planVersion,
+            value.key,
+            value.enabled,
+            value.effectiveAt,
+            value.expiresAt,
+            value.sourceWebhookEventId,
+          ],
+        )
+      }
+      for (const input of seed.budgets) {
+        const value = budgetSchema.parse({ ...input, ...scope })
+        await client.query(
+          `INSERT INTO persistent_codex.budgets
+            (tenant_id,organization_id,workspace_id,budget_id,period,currency,soft_limit_micros,hard_limit_micros,effective_at,expires_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`,
+          [
+            scope.tenantId,
+            scope.organizationId,
+            scope.workspaceId,
+            value.budgetId,
+            value.period,
+            value.currency,
+            value.softLimitMicros,
+            value.hardLimitMicros,
+            value.effectiveAt,
+            value.expiresAt,
+          ],
+        )
+      }
+      for (const input of seed.quotas) {
+        const value = quotaPolicySchema.parse({ ...input, ...scope })
+        await client.query(
+          `INSERT INTO persistent_codex.quota_policies
+            (tenant_id,organization_id,workspace_id,quota_id,policy_version,meter,soft_limit,hard_limit,in_flight_policy,effective_at,expires_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+          [
+            scope.tenantId,
+            scope.organizationId,
+            scope.workspaceId,
+            value.quotaId,
+            value.policyVersion,
+            value.meter,
+            value.softLimit,
+            value.hardLimit,
+            value.inFlightPolicy,
+            value.effectiveAt,
+            value.expiresAt,
+          ],
+        )
+      }
+    })
+  }
+
+  async snapshot(scopeInput: BillingScope): Promise<CommercialPolicySnapshot> {
+    const scope = billingScopeSchema.parse(scopeInput)
+    const load = () =>
+      this.withScope(scope, async (client) => {
+        const planRow = (
+          await client.query<Record<string, unknown>>(
+            `SELECT * FROM persistent_codex.commercial_plans
+             WHERE effective_at<=now() AND (retired_at IS NULL OR retired_at>now())
+             ORDER BY plan_version DESC,effective_at DESC LIMIT 1`,
+          )
+        ).rows[0]
+        if (!planRow) return null
+        const plan = commercialPlanSchema.parse({
+          schemaVersion: 1,
+          ...scope,
+          planId: planRow.plan_id,
+          planVersion: Number(planRow.plan_version),
+          displayName: planRow.display_name,
+          currency: planRow.currency,
+          billingMode: planRow.billing_mode,
+          taxBehavior: planRow.tax_behavior,
+          effectiveAt: (planRow.effective_at as Date).toISOString(),
+          retiredAt: planRow.retired_at
+            ? (planRow.retired_at as Date).toISOString()
+            : null,
+        })
+        const entitlementRows = (
+          await client.query<Record<string, unknown>>(
+            `SELECT * FROM persistent_codex.entitlements
+             WHERE plan_id=$1 AND plan_version=$2 AND effective_at<=now()
+               AND (expires_at IS NULL OR expires_at>now()) ORDER BY entitlement_key`,
+            [plan.planId, plan.planVersion],
+          )
+        ).rows
+        const budgetRows = (
+          await client.query<Record<string, unknown>>(
+            `SELECT * FROM persistent_codex.budgets WHERE effective_at<=now()
+             AND (expires_at IS NULL OR expires_at>now()) ORDER BY budget_id`,
+          )
+        ).rows
+        const quotaRows = (
+          await client.query<Record<string, unknown>>(
+            `SELECT DISTINCT ON (quota_id) * FROM persistent_codex.quota_policies
+             WHERE effective_at<=now() AND (expires_at IS NULL OR expires_at>now())
+             ORDER BY quota_id,policy_version DESC`,
+          )
+        ).rows
+        return {
+          plan,
+          entitlements: entitlementRows.map((row) =>
+            entitlementSchema.parse({
+              schemaVersion: 1,
+              ...scope,
+              entitlementId: row.entitlement_id,
+              planId: row.plan_id,
+              planVersion: Number(row.plan_version),
+              key: row.entitlement_key,
+              enabled: row.enabled,
+              effectiveAt: (row.effective_at as Date).toISOString(),
+              expiresAt: row.expires_at
+                ? (row.expires_at as Date).toISOString()
+                : null,
+              sourceWebhookEventId: row.source_webhook_event_id,
+            }),
+          ),
+          budgets: budgetRows.map((row) =>
+            budgetSchema.parse({
+              schemaVersion: 1,
+              ...scope,
+              budgetId: row.budget_id,
+              period: row.period,
+              currency: row.currency,
+              softLimitMicros:
+                row.soft_limit_micros === null
+                  ? null
+                  : Number(row.soft_limit_micros),
+              hardLimitMicros:
+                row.hard_limit_micros === null
+                  ? null
+                  : Number(row.hard_limit_micros),
+              effectiveAt: (row.effective_at as Date).toISOString(),
+              expiresAt: row.expires_at
+                ? (row.expires_at as Date).toISOString()
+                : null,
+            }),
+          ),
+          quotas: quotaRows.map((row) =>
+            quotaPolicySchema.parse({
+              schemaVersion: 1,
+              ...scope,
+              quotaId: row.quota_id,
+              policyVersion: Number(row.policy_version),
+              meter: row.meter,
+              softLimit:
+                row.soft_limit === null ? null : Number(row.soft_limit),
+              hardLimit:
+                row.hard_limit === null ? null : Number(row.hard_limit),
+              inFlightPolicy: row.in_flight_policy,
+              effectiveAt: (row.effective_at as Date).toISOString(),
+              expiresAt: row.expires_at
+                ? (row.expires_at as Date).toISOString()
+                : null,
+            }),
+          ),
+        }
+      })
+    let value = await load()
+    if (!value && this.#developmentSeed) {
+      await this.seedDevelopmentScope(scope)
+      value = await load()
+    }
+    if (!value) throw new Error('BILLING_POLICY_MISSING')
+    return value
+  }
+
+  async measurements(input: {
+    tenantId: string
+    organizationId: string
+    workspaceId: string
+    sessionId?: string
+    operation: AdmissionRequest['operation']
+    requestedBytes?: number
+  }) {
+    const scope = billingScopeSchema.parse(input)
+    return this.withScope(scope, async (client) => {
+      const row = (
+        await client.query<Record<string, unknown>>(
+          `SELECT
+             (SELECT count(*) FROM persistent_codex.commercial_admission_leases
+               WHERE operation='turn.start' AND released_at IS NULL) AS tenant_turns,
+             (SELECT count(*) FROM persistent_codex.commercial_admission_leases
+               WHERE operation='turn.start' AND released_at IS NULL AND session_id=$1) AS session_turns,
+             (SELECT coalesce(sum(coalesce(official_cost_micros,estimated_cost_micros,0)),0)
+               FROM persistent_codex.usage_ledger) AS provider_spend,
+             (SELECT count(*) FROM persistent_codex.sources WHERE status<>'deleted') AS corpus_sources,
+             (SELECT coalesce(sum(r.byte_length),0) FROM persistent_codex.source_revisions r
+               JOIN persistent_codex.sources s USING(tenant_id,organization_id,workspace_id,source_id)
+               WHERE s.status<>'deleted' AND r.revision_id=s.current_revision_id) AS corpus_bytes,
+             (SELECT count(*) FROM persistent_codex.corpus_chunks c
+               JOIN persistent_codex.sources s USING(tenant_id,organization_id,workspace_id,source_id)
+               WHERE s.status<>'deleted') AS corpus_chunks,
+             (SELECT coalesce(max(ledger_id),0) FROM persistent_codex.usage_ledger) AS ledger_mark,
+             (SELECT coalesce(max(updated_at),'epoch'::timestamptz) FROM persistent_codex.sources) AS corpus_mark,
+             (SELECT coalesce(max(created_at),'epoch'::timestamptz) FROM persistent_codex.commercial_admission_leases) AS lease_mark`,
+          [input.sessionId ?? null],
+        )
+      ).rows[0]!
+      const corpusBytes = Number(row.corpus_bytes)
+      const values: AdmissionRequest['measurements'] = {
+        tenant_concurrent_turn: Number(row.tenant_turns),
+        session_concurrent_turn: Number(row.session_turns),
+        provider_spend_micros: Number(row.provider_spend),
+        corpus_source: Number(row.corpus_sources),
+        corpus_byte:
+          corpusBytes +
+          (input.operation === 'source.upload'
+            ? (input.requestedBytes ?? 0)
+            : 0),
+        corpus_chunk: Number(row.corpus_chunks),
+        storage_byte: corpusBytes,
+      }
+      const measuredAt = new Date().toISOString()
+      return {
+        values,
+        watermark: `bwm_${createHash('sha256')
+          .update(
+            JSON.stringify([
+              values,
+              row.ledger_mark,
+              row.corpus_mark,
+              row.lease_mark,
+            ]),
+          )
+          .digest('hex')
+          .slice(0, 32)}`,
+        measuredAt,
+      }
+    })
+  }
+
+  async recordDecision(decisionInput: AdmissionDecision) {
+    const decision = admissionDecisionSchema.parse(decisionInput)
+    return this.withScope(decision, async (client) => {
+      const result = await client.query(
+        `INSERT INTO persistent_codex.quota_decisions
+          (tenant_id,organization_id,workspace_id,decision_id,operation,outcome,reason_code,policy_version,measurement_watermark,in_flight_policy,evaluated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT DO NOTHING`,
+        [
+          decision.tenantId,
+          decision.organizationId,
+          decision.workspaceId,
+          decision.decisionId,
+          decision.operation,
+          decision.outcome,
+          decision.reason,
+          decision.policyVersion,
+          decision.measurementWatermark,
+          decision.inFlightPolicy,
+          decision.evaluatedAt,
+        ],
+      )
+      void result
+    })
+  }
+
+  async admit(input: DurableAdmissionInput): Promise<AdmissionDecision> {
+    const scope = billingScopeSchema.parse(input)
+    const evaluatedAt = input.evaluatedAt ?? new Date()
+    const snapshot = await this.snapshot(scope)
+    return this.withScope(scope, async (client) => {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+        [
+          JSON.stringify([
+            scope.tenantId,
+            scope.organizationId,
+            scope.workspaceId,
+          ]),
+        ],
+      )
+      const existing = (
+        await client.query<Record<string, unknown>>(
+          `SELECT q.* FROM persistent_codex.commercial_admission_leases l
+           JOIN persistent_codex.quota_decisions q USING(tenant_id,organization_id,workspace_id,decision_id)
+           WHERE l.request_key=$1`,
+          [input.requestKey],
+        )
+      ).rows[0]
+      if (existing)
+        return admissionDecisionSchema.parse({
+          schemaVersion: 1,
+          ...scope,
+          decisionId: existing.decision_id,
+          operation: existing.operation,
+          outcome: existing.outcome,
+          reason: existing.reason_code,
+          policyVersion: Number(existing.policy_version),
+          measurementWatermark: existing.measurement_watermark,
+          evaluatedAt: (existing.evaluated_at as Date).toISOString(),
+          inFlightPolicy: existing.in_flight_policy,
+        })
+      const row = (
+        await client.query<Record<string, unknown>>(
+          `SELECT
+             (SELECT count(*) FROM persistent_codex.commercial_admission_leases
+               WHERE operation='turn.start' AND released_at IS NULL) AS tenant_turns,
+             (SELECT count(*) FROM persistent_codex.commercial_admission_leases
+               WHERE operation='turn.start' AND released_at IS NULL AND session_id=$1) AS session_turns,
+             (SELECT coalesce(sum(coalesce(official_cost_micros,estimated_cost_micros,0)),0)
+               FROM persistent_codex.usage_ledger) AS provider_spend,
+             (SELECT count(*) FROM persistent_codex.sources WHERE status<>'deleted') AS corpus_sources,
+             (SELECT coalesce(sum(r.byte_length),0) FROM persistent_codex.source_revisions r
+               JOIN persistent_codex.sources s USING(tenant_id,organization_id,workspace_id,source_id)
+               WHERE s.status<>'deleted' AND r.revision_id=s.current_revision_id) AS corpus_bytes,
+             (SELECT count(*) FROM persistent_codex.corpus_chunks c
+               JOIN persistent_codex.sources s USING(tenant_id,organization_id,workspace_id,source_id)
+               WHERE s.status<>'deleted') AS corpus_chunks,
+             (SELECT coalesce(max(ledger_id),0) FROM persistent_codex.usage_ledger) AS ledger_mark,
+             (SELECT coalesce(max(updated_at),'epoch'::timestamptz) FROM persistent_codex.sources) AS corpus_mark,
+             (SELECT count(*) FROM persistent_codex.commercial_admission_leases WHERE released_at IS NULL) AS active_mark`,
+          [input.sessionId ?? null],
+        )
+      ).rows[0]!
+      const corpusBytes = Number(row.corpus_bytes)
+      const values: AdmissionRequest['measurements'] = {
+        tenant_concurrent_turn: Number(row.tenant_turns),
+        session_concurrent_turn: Number(row.session_turns),
+        provider_spend_micros: Number(row.provider_spend),
+        corpus_source: Number(row.corpus_sources),
+        corpus_byte:
+          corpusBytes +
+          (input.operation === 'source.upload'
+            ? (input.requestedBytes ?? 0)
+            : 0),
+        corpus_chunk: Number(row.corpus_chunks),
+        storage_byte: corpusBytes,
+      }
+      const watermark = `bwm_${createHash('sha256')
+        .update(
+          JSON.stringify([
+            values,
+            row.ledger_mark,
+            row.corpus_mark,
+            row.active_mark,
+            input.requestKey,
+          ]),
+        )
+        .digest('hex')
+        .slice(0, 32)}`
+      const decision = evaluateAdmission(
+        {
+          schemaVersion: 1,
+          ...scope,
+          operation: input.operation,
+          measurements: values,
+          measurementWatermark: watermark,
+          evaluatedAt: evaluatedAt.toISOString(),
+        },
+        snapshot,
+      )
+      await client.query(
+        `INSERT INTO persistent_codex.quota_decisions
+          (tenant_id,organization_id,workspace_id,decision_id,operation,outcome,reason_code,policy_version,measurement_watermark,in_flight_policy,evaluated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          decision.decisionId,
+          decision.operation,
+          decision.outcome,
+          decision.reason,
+          decision.policyVersion,
+          decision.measurementWatermark,
+          decision.inFlightPolicy,
+          decision.evaluatedAt,
+        ],
+      )
+      await client.query(
+        `INSERT INTO persistent_codex.commercial_admission_leases
+          (tenant_id,organization_id,workspace_id,request_key,decision_id,operation,session_id,reserved_count,reserved_bytes,created_at,released_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          input.requestKey,
+          decision.decisionId,
+          decision.operation,
+          input.sessionId ?? null,
+          input.operation === 'turn.start' ? 1 : 0,
+          input.operation === 'source.upload' ? (input.requestedBytes ?? 0) : 0,
+          decision.evaluatedAt,
+          decision.outcome === 'deny' ? decision.evaluatedAt : null,
+        ],
+      )
+      return decision
+    })
+  }
+
+  async bindDecision(
+    scopeInput: BillingScope,
+    decisionId: string,
+    resourceId: string,
+  ) {
+    return this.withScope(scopeInput, async (client) =>
+      client.query(
+        `UPDATE persistent_codex.commercial_admission_leases
+         SET resource_id=coalesce(resource_id,$2)
+         WHERE decision_id=$1 AND (resource_id IS NULL OR resource_id=$2)`,
+        [decisionId, resourceId],
+      ),
+    )
+  }
+
+  async completeOperation(scopeInput: BillingScope, resourceId: string) {
+    return this.withScope(scopeInput, async (client) =>
+      client.query(
+        `UPDATE persistent_codex.commercial_admission_leases
+         SET released_at=coalesce(released_at,now())
+         WHERE resource_id=$1`,
+        [resourceId],
+      ),
+    )
+  }
+
+  async cancelDecision(scopeInput: BillingScope, decisionId: string) {
+    return this.withScope(scopeInput, async (client) =>
+      client.query(
+        `UPDATE persistent_codex.commercial_admission_leases
+         SET released_at=coalesce(released_at,now()) WHERE decision_id=$1`,
+        [decisionId],
+      ),
+    )
+  }
+
+  async latestDecision(scopeInput: BillingScope) {
+    const scope = billingScopeSchema.parse(scopeInput)
+    return this.withScope(scope, async (client) => {
+      const row = (
+        await client.query<Record<string, unknown>>(
+          `SELECT * FROM persistent_codex.quota_decisions
+           ORDER BY evaluated_at DESC,decision_id DESC LIMIT 1`,
+        )
+      ).rows[0]
+      return row
+        ? admissionDecisionSchema.parse({
+            schemaVersion: 1,
+            ...scope,
+            decisionId: row.decision_id,
+            operation: row.operation,
+            outcome: row.outcome,
+            reason: row.reason_code,
+            policyVersion: Number(row.policy_version),
+            measurementWatermark: row.measurement_watermark,
+            evaluatedAt: (row.evaluated_at as Date).toISOString(),
+            inFlightPolicy: row.in_flight_policy,
+          })
+        : null
+    })
+  }
+
+  async subscription(scopeInput: BillingScope) {
+    const scope = billingScopeSchema.parse(scopeInput)
+    return this.withScope(scope, async (client) => {
+      const row = (
+        await client.query<Record<string, unknown>>(
+          `SELECT * FROM persistent_codex.billing_subscriptions
+           ORDER BY provider_sequence DESC,effective_at DESC LIMIT 1`,
+        )
+      ).rows[0]
+      return row
+        ? subscriptionStateSchema.parse({
+            schemaVersion: 1,
+            ...scope,
+            subscriptionId: row.subscription_id,
+            billingCustomerId: row.billing_customer_id,
+            planId: row.plan_id,
+            planVersion: Number(row.plan_version),
+            state: row.state,
+            provider: row.provider,
+            providerSequence: Number(row.provider_sequence),
+            effectiveAt: (row.effective_at as Date).toISOString(),
+            updatedAt: (row.updated_at as Date).toISOString(),
+            sourceWebhookEventId: row.source_webhook_event_id,
+          })
+        : null
+    })
+  }
+
+  async lastReconciledAt(scopeInput: BillingScope) {
+    return this.withScope(scopeInput, async (client) => {
+      const row = (
+        await client.query<{ reconciled_at: Date | null }>(
+          `SELECT reconciled_at FROM persistent_codex.invoice_reconciliations
+           WHERE reconciled_at IS NOT NULL ORDER BY reconciled_at DESC LIMIT 1`,
+        )
+      ).rows[0]
+      return row?.reconciled_at?.toISOString() ?? null
+    })
+  }
+
+  async drainWebhooks(now = new Date(), limit = 25, maxAttempts = 5) {
+    await this.recoverStale(now)
+    const claims = (
+      await this.pool.query<Record<string, unknown>>(
+        `SELECT * FROM persistent_codex.billing_claim_webhooks($1,$2)`,
+        [now.toISOString(), limit],
+      )
+    ).rows
+    const results: Array<{ eventId: string; state: string }> = []
+    for (const claim of claims) {
+      const scope = billingScopeSchema.parse({
+        tenantId: claim.tenant_id,
+        organizationId: claim.organization_id,
+        workspaceId: claim.workspace_id,
+      })
+      const eventId = String(claim.webhook_event_id)
+      try {
+        const command = claim.normalized_command as
+          NormalizedBillingWebhookCommand | undefined
+        if (!command || command.kind === 'unknown') {
+          await this.withScope(scope, (client) =>
+            client.query(
+              `UPDATE persistent_codex.billing_webhook_events
+               SET processing_state='unknown',last_error_code=NULL,updated_at=$2
+               WHERE webhook_event_id=$1`,
+              [eventId, now.toISOString()],
+            ),
+          )
+          results.push({ eventId, state: 'unknown' })
+          continue
+        }
+        const data = billingWebhookSubscriptionDataSchema.parse(command.data)
+        await this.withScope(scope, async (client) => {
+          const plan = commercialPlanSchema.parse({ ...data.plan, ...scope })
+          await client.query(
+            `INSERT INTO persistent_codex.commercial_plans
+              (tenant_id,organization_id,workspace_id,plan_id,plan_version,display_name,currency,billing_mode,tax_behavior,effective_at,retired_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+            [
+              scope.tenantId,
+              scope.organizationId,
+              scope.workspaceId,
+              plan.planId,
+              plan.planVersion,
+              plan.displayName,
+              plan.currency,
+              plan.billingMode,
+              plan.taxBehavior,
+              plan.effectiveAt,
+              plan.retiredAt,
+            ],
+          )
+          await client.query(
+            `INSERT INTO persistent_codex.billing_customers
+              (tenant_id,organization_id,workspace_id,billing_customer_id,provider,provider_customer_reference,created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+            [
+              scope.tenantId,
+              scope.organizationId,
+              scope.workspaceId,
+              data.billingCustomerId,
+              claim.provider,
+              data.providerCustomerReference,
+              now.toISOString(),
+            ],
+          )
+          const applied = await client.query(
+            `INSERT INTO persistent_codex.billing_subscriptions
+              (tenant_id,organization_id,workspace_id,subscription_id,billing_customer_id,plan_id,plan_version,state,provider,provider_sequence,effective_at,updated_at,source_webhook_event_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             ON CONFLICT (tenant_id,organization_id,workspace_id,subscription_id)
+             DO UPDATE SET billing_customer_id=EXCLUDED.billing_customer_id,plan_id=EXCLUDED.plan_id,
+               plan_version=EXCLUDED.plan_version,state=EXCLUDED.state,provider=EXCLUDED.provider,
+               provider_sequence=EXCLUDED.provider_sequence,effective_at=EXCLUDED.effective_at,
+               updated_at=EXCLUDED.updated_at,source_webhook_event_id=EXCLUDED.source_webhook_event_id
+             WHERE (EXCLUDED.provider_sequence,EXCLUDED.effective_at) >
+               (persistent_codex.billing_subscriptions.provider_sequence,persistent_codex.billing_subscriptions.effective_at)`,
+            [
+              scope.tenantId,
+              scope.organizationId,
+              scope.workspaceId,
+              data.subscriptionId,
+              data.billingCustomerId,
+              plan.planId,
+              plan.planVersion,
+              data.state,
+              claim.provider,
+              Number(claim.provider_sequence),
+              (claim.effective_at as Date).toISOString(),
+              now.toISOString(),
+              eventId,
+            ],
+          )
+          if ((applied.rowCount ?? 0) > 0) {
+            for (const input of data.entitlements) {
+              const value = entitlementSchema.parse({
+                ...input,
+                ...scope,
+                sourceWebhookEventId: eventId,
+              })
+              await client.query(
+                `INSERT INTO persistent_codex.entitlements
+                  (tenant_id,organization_id,workspace_id,entitlement_id,plan_id,plan_version,entitlement_key,enabled,effective_at,expires_at,source_webhook_event_id)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                 ON CONFLICT (tenant_id,organization_id,workspace_id,plan_id,plan_version,entitlement_key)
+                 DO UPDATE SET enabled=EXCLUDED.enabled,effective_at=EXCLUDED.effective_at,
+                   expires_at=EXCLUDED.expires_at,source_webhook_event_id=EXCLUDED.source_webhook_event_id`,
+                [
+                  scope.tenantId,
+                  scope.organizationId,
+                  scope.workspaceId,
+                  value.entitlementId,
+                  value.planId,
+                  value.planVersion,
+                  value.key,
+                  value.enabled,
+                  value.effectiveAt,
+                  value.expiresAt,
+                  eventId,
+                ],
+              )
+            }
+            for (const input of data.budgets) {
+              const value = budgetSchema.parse({ ...input, ...scope })
+              await client.query(
+                `INSERT INTO persistent_codex.budgets
+                  (tenant_id,organization_id,workspace_id,budget_id,period,currency,soft_limit_micros,hard_limit_micros,effective_at,expires_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                 ON CONFLICT (tenant_id,organization_id,workspace_id,budget_id)
+                 DO UPDATE SET period=EXCLUDED.period,currency=EXCLUDED.currency,
+                   soft_limit_micros=EXCLUDED.soft_limit_micros,hard_limit_micros=EXCLUDED.hard_limit_micros,
+                   effective_at=EXCLUDED.effective_at,expires_at=EXCLUDED.expires_at`,
+                [
+                  scope.tenantId,
+                  scope.organizationId,
+                  scope.workspaceId,
+                  value.budgetId,
+                  value.period,
+                  value.currency,
+                  value.softLimitMicros,
+                  value.hardLimitMicros,
+                  value.effectiveAt,
+                  value.expiresAt,
+                ],
+              )
+            }
+            for (const input of data.quotas) {
+              const value = quotaPolicySchema.parse({ ...input, ...scope })
+              await client.query(
+                `INSERT INTO persistent_codex.quota_policies
+                  (tenant_id,organization_id,workspace_id,quota_id,policy_version,meter,soft_limit,hard_limit,in_flight_policy,effective_at,expires_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,
+                [
+                  scope.tenantId,
+                  scope.organizationId,
+                  scope.workspaceId,
+                  value.quotaId,
+                  value.policyVersion,
+                  value.meter,
+                  value.softLimit,
+                  value.hardLimit,
+                  value.inFlightPolicy,
+                  value.effectiveAt,
+                  value.expiresAt,
+                ],
+              )
+            }
+          }
+          await client.query(
+            `UPDATE persistent_codex.billing_webhook_events
+             SET processing_state='processed',last_error_code=NULL,updated_at=$2
+             WHERE webhook_event_id=$1`,
+            [eventId, now.toISOString()],
+          )
+        })
+        results.push({ eventId, state: 'processed' })
+      } catch {
+        const attempt = Number(claim.attempt)
+        const state = attempt >= maxAttempts ? 'dead_letter' : 'retry'
+        await this.withScope(scope, (client) =>
+          client.query(
+            `UPDATE persistent_codex.billing_webhook_events
+             SET processing_state=$2,last_error_code='NORMALIZED_COMMAND_FAILED',updated_at=$3
+             WHERE webhook_event_id=$1`,
+            [eventId, state, now.toISOString()],
+          ),
+        )
+        results.push({ eventId, state })
+      }
+    }
+    return results
+  }
+
   async close() {
     await this.pool.end()
   }
 }
 
-export function createBillingPostgresRepository(connectionString: string) {
-  return new BillingPostgresRepository(new Pool({ connectionString }))
+export function createBillingPostgresRepository(
+  connectionString: string,
+  options: {
+    productionBillingVerified?: boolean
+    developmentSeed?: DevelopmentCommercialSeed
+  } = {},
+) {
+  return new BillingPostgresRepository(new Pool({ connectionString }), options)
 }

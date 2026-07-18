@@ -2,10 +2,14 @@ import { setImmediate as waitForImmediate } from 'node:timers/promises'
 import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import {
   evaluateAdmission,
+  BillingWebhookError,
+  normalizeBillingWebhookPayload,
   type AdmissionDecision,
   type AdmissionRequest,
   type CommercialPolicySnapshot,
   type SubscriptionState as BillingSubscriptionState,
+  type BillingProviderPort,
+  type BillingPostgresRepository,
 } from '@persistent-codex/billing-platform'
 import {
   CorpusIngestionService,
@@ -61,6 +65,7 @@ import {
   pushSubscriptionRevokeRequestSchema,
   pushNotificationResolutionSchema,
   billingOverviewSchema,
+  billingWebhookResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
 import type {
   PushProvider,
@@ -231,6 +236,16 @@ export interface ControlPlaneOptions {
     Record<ProviderId, ProviderCostReconciliationPort>
   >
   commercialPolicy?: {
+    admit?(input: {
+      tenantId: string
+      organizationId: string
+      workspaceId: string
+      operation: AdmissionRequest['operation']
+      requestKey: string
+      sessionId?: string
+      requestedBytes?: number
+      evaluatedAt?: Date
+    }): AdmissionDecision | Promise<AdmissionDecision>
     snapshot(scope: {
       tenantId: string
       organizationId: string
@@ -254,7 +269,25 @@ export interface ControlPlaneOptions {
           watermark: string
           measuredAt: string
         }>
-    recordDecision?(decision: AdmissionDecision): void | Promise<void>
+    recordDecision?(decision: AdmissionDecision): void | Promise<unknown>
+    bindDecision?(
+      scope: { tenantId: string; organizationId: string; workspaceId: string },
+      decisionId: string,
+      resourceId: string,
+    ): void | Promise<unknown>
+    completeOperation?(
+      scope: { tenantId: string; organizationId: string; workspaceId: string },
+      resourceId: string,
+    ): void | Promise<unknown>
+    cancelDecision?(
+      scope: { tenantId: string; organizationId: string; workspaceId: string },
+      decisionId: string,
+    ): void | Promise<unknown>
+    latestDecision?(scope: {
+      tenantId: string
+      organizationId: string
+      workspaceId: string
+    }): AdmissionDecision | null | Promise<AdmissionDecision | null>
     subscription?(scope: {
       tenantId: string
       organizationId: string
@@ -267,6 +300,14 @@ export interface ControlPlaneOptions {
       workspaceId: string
     }): string | null | Promise<string | null>
     productionBillingVerified?: boolean
+    close?(): void | Promise<unknown>
+  }
+  billingWebhook?: {
+    provider: BillingProviderPort
+    repository: Pick<
+      BillingPostgresRepository,
+      'recordWebhook' | 'drainWebhooks'
+    >
   }
   providerCatalogs?: ProviderModelCatalog[]
   providerAdapterFactory?: SessionOrchestratorOptions['providerAdapterFactory']
@@ -524,6 +565,12 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/workspaces/:workspaceId/billing',
       action: 'billing.read',
       resourceType: 'billing',
+    },
+    {
+      method: 'POST',
+      route: '/v1/billing/webhooks/:provider',
+      action: 'billing.webhook.receive',
+      resourceType: 'billing_webhook',
     },
     {
       method: 'GET',
@@ -984,6 +1031,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     workspaceId: string
     sessionId?: string
     operation: AdmissionRequest['operation']
+    requestKey: string
     requestedBytes?: number
   }) => {
     if (!options.commercialPolicy) return null
@@ -992,33 +1040,47 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       organizationId: input.tenantId,
       workspaceId: input.workspaceId,
     }
-    const [snapshot, measurement] = await Promise.all([
-      options.commercialPolicy.snapshot(scoped),
-      options.commercialPolicy.measurements({
-        ...scoped,
-        operation: input.operation,
-        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-        ...(input.requestedBytes !== undefined
-          ? { requestedBytes: input.requestedBytes }
-          : {}),
-      }),
-    ])
-    const decision = evaluateAdmission(
-      {
-        ...scoped,
-        schemaVersion: 1,
-        operation: input.operation,
-        measurements: measurement.values,
-        measurementWatermark: measurement.watermark,
-        evaluatedAt: measurement.measuredAt,
-      },
-      snapshot,
-    )
+    const decision = options.commercialPolicy.admit
+      ? await options.commercialPolicy.admit({
+          ...scoped,
+          operation: input.operation,
+          requestKey: input.requestKey,
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+          ...(input.requestedBytes !== undefined
+            ? { requestedBytes: input.requestedBytes }
+            : {}),
+          evaluatedAt: now(),
+        })
+      : await (async () => {
+          const [snapshot, measurement] = await Promise.all([
+            options.commercialPolicy!.snapshot(scoped),
+            options.commercialPolicy!.measurements({
+              ...scoped,
+              operation: input.operation,
+              ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+              ...(input.requestedBytes !== undefined
+                ? { requestedBytes: input.requestedBytes }
+                : {}),
+            }),
+          ])
+          const value = evaluateAdmission(
+            {
+              ...scoped,
+              schemaVersion: 1,
+              operation: input.operation,
+              measurements: measurement.values,
+              measurementWatermark: measurement.watermark,
+              evaluatedAt: measurement.measuredAt,
+            },
+            snapshot,
+          )
+          await options.commercialPolicy!.recordDecision?.(value)
+          return value
+        })()
     latestCommercialDecisions.set(
       JSON.stringify([input.tenantId, input.workspaceId]),
       decision,
     )
-    await options.commercialPolicy.recordDecision?.(decision)
     store.appendAudit({
       tenantId: input.tenantId,
       workspaceId: input.workspaceId,
@@ -1169,6 +1231,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   app.addContentTypeParser(
     'application/octet-stream',
     { parseAs: 'buffer', bodyLimit: 16 * 1024 * 1024 },
+    (_request, body, done) => done(null, body),
+  )
+  app.addContentTypeParser(
+    'application/vnd.persistent-codex.billing-webhook+json',
+    { parseAs: 'buffer', bodyLimit: 64 * 1024 },
     (_request, body, done) => done(null, body),
   )
   const downloadTokens = new Map<
@@ -1477,6 +1544,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     )
       throw new AuthenticationError('AUTHZ_ROUTE_UNCOVERED')
     if (!coverage) return
+    if (coverage.action === 'billing.webhook.receive') return
     const authorization = headerValue(request.headers.authorization)
     const workloadRequest = authorization?.startsWith('Bearer pcw1.') === true
     if (!workloadRequest && !authentication)
@@ -1609,6 +1677,18 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         message: 'Support access request was rejected',
       })
     }
+    if (error instanceof BillingWebhookError) {
+      const status =
+        error.code === 'EVENT_CONFLICT' || error.code === 'REPLAY_REJECTED'
+          ? 409
+          : error.code === 'PAYLOAD_TOO_LARGE'
+            ? 413
+            : 400
+      return reply.code(status).send({
+        code: error.code,
+        message: 'Billing webhook was rejected',
+      })
+    }
     return reply.send(error)
   })
   app.addHook('onResponse', async (request, reply) => {
@@ -1653,6 +1733,21 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         metadata: { turnOutcome: event.payload.status },
       })
       if (event.codexTurnId) {
+        void Promise.resolve(
+          options.commercialPolicy?.completeOperation?.(
+            {
+              tenantId: event.tenantId,
+              organizationId: event.tenantId,
+              workspaceId: event.workspaceId,
+            },
+            event.codexTurnId,
+          ),
+        ).catch(() =>
+          app.log.error(
+            { code: 'BILLING_LEASE_RELEASE_FAILED' },
+            'commercial admission lease release failed',
+          ),
+        )
         const key = JSON.stringify([
           event.tenantId,
           event.workspaceId,
@@ -1696,6 +1791,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     await supportAccess.close()
     if ('close' in corpus && typeof corpus.close === 'function')
       await corpus.close()
+    await options.commercialPolicy?.close?.()
     if (ownsStore) store.close()
   })
 
@@ -1833,6 +1929,75 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     })
   })
 
+  app.post<{ Params: { provider: string } }>(
+    '/v1/billing/webhooks/:provider',
+    async (request, reply) => {
+      if (!options.billingWebhook)
+        return reply.code(503).send({
+          code: 'BILLING_WEBHOOK_UNAVAILABLE',
+          message: 'Billing webhook adapter is not configured',
+        })
+      if (
+        request.params.provider !== options.billingWebhook.provider.provider ||
+        !Buffer.isBuffer(request.body)
+      )
+        throw new BillingWebhookError('PAYLOAD_INVALID')
+      const timestampValue = headerValue(request.headers['x-billing-timestamp'])
+      const signature = headerValue(request.headers['x-billing-signature'])
+      const eventIdHeader = headerValue(request.headers['x-billing-event-id'])
+      const timestamp = Number(timestampValue)
+      if (!signature || !eventIdHeader || !Number.isSafeInteger(timestamp))
+        throw new BillingWebhookError('PAYLOAD_INVALID')
+      const verified = options.billingWebhook.provider.verify({
+        payload: request.body,
+        timestamp,
+        signature,
+        replayKey: `${request.params.provider}:${eventIdHeader}:${timestamp}`,
+        now: now(),
+      })
+      const { envelope, command } = normalizeBillingWebhookPayload(
+        verified.payload,
+      )
+      if (envelope.eventId !== eventIdHeader)
+        throw new BillingWebhookError('EVENT_CONFLICT')
+      const recorded = await options.billingWebhook.repository.recordWebhook(
+        {
+          schemaVersion: 1,
+          tenantId: envelope.tenantId,
+          organizationId: envelope.organizationId,
+          workspaceId: envelope.workspaceId,
+          webhookEventId: envelope.eventId,
+          provider: verified.provider,
+          signatureVersion: verified.signatureVersion,
+          eventType: envelope.eventType,
+          providerSequence: envelope.providerSequence,
+          payloadDigest: verified.payloadDigest,
+          receivedAt: now().toISOString(),
+          effectiveAt: envelope.effectiveAt,
+          processingState: 'received',
+          attempt: 0,
+          lastErrorCode: null,
+        },
+        command,
+      )
+      const drained = recorded.duplicate
+        ? []
+        : await options.billingWebhook.repository.drainWebhooks(now(), 25)
+      const state =
+        drained.find((value) => value.eventId === envelope.eventId)?.state ??
+        recorded.processingState
+      return reply.code(recorded.duplicate ? 200 : 202).send(
+        billingWebhookResponseSchema.parse({
+          schemaVersion: 1,
+          eventId: envelope.eventId,
+          state,
+          duplicate: recorded.duplicate,
+          productionEvidence: verified.productionEvidence,
+        }),
+      )
+    },
+  )
+
   app.get<{
     Params: { workspaceId: string }
     Querystring: { sessionId?: string }
@@ -1858,11 +2023,18 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       organizationId: scope.tenantId,
       workspaceId: scope.workspaceId,
     }
-    const [snapshot, subscription, lastReconciledAt] = await Promise.all([
-      options.commercialPolicy.snapshot(commercialScope),
-      options.commercialPolicy.subscription?.(commercialScope) ?? null,
-      options.commercialPolicy.lastReconciledAt?.(commercialScope) ?? null,
-    ])
+    const [snapshot, subscription, lastReconciledAt, durableDecision] =
+      await Promise.all([
+        options.commercialPolicy.snapshot(commercialScope),
+        options.commercialPolicy.subscription?.(commercialScope) ?? null,
+        options.commercialPolicy.lastReconciledAt?.(commercialScope) ?? null,
+        options.commercialPolicy.latestDecision?.(commercialScope) ?? null,
+      ])
+    const usage = store.getUsageSummary({
+      tenantId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+      sessionId,
+    })
     return billingOverviewSchema.parse({
       schemaVersion: 1,
       plan: snapshot.plan,
@@ -1870,14 +2042,20 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       budgets: snapshot.budgets,
       quotas: snapshot.quotas,
       latestDecision:
+        durableDecision ??
         latestCommercialDecisions.get(
           JSON.stringify([scope.tenantId, scope.workspaceId]),
-        ) ?? null,
-      usage: store.getUsageSummary({
-        tenantId: scope.tenantId,
-        workspaceId: scope.workspaceId,
-        sessionId,
-      }),
+        ) ??
+        null,
+      usage,
+      usageStates: [
+        ...(Object.values(usage.counters).some((value) => value > 0)
+          ? (['measured'] as const)
+          : []),
+        ...(usage.estimatedCostMicros !== null ? (['estimated'] as const) : []),
+        ...(usage.officialCostMicros !== null ? (['reconciled'] as const) : []),
+        ...(usage.completeness === 'partial' ? (['incomplete'] as const) : []),
+      ],
       usageFreshnessAt: now().toISOString(),
       lastReconciledAt,
       providerMode: snapshot.plan.billingMode,
@@ -1968,11 +2146,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           code: 'INVALID_SOURCE_REQUEST',
           message: 'Scoped source name and binary body are required',
         })
+      let admission: AdmissionDecision | null = null
       try {
-        const admission = await admitCommercialOperation({
+        admission = await admitCommercialOperation({
           tenantId: scope.tenantId,
           workspaceId: scope.workspaceId,
           operation: 'source.upload',
+          requestKey:
+            headerValue(request.headers['idempotency-key']) ??
+            `source-upload:${createHash('sha256').update(request.body).digest('hex')}`,
           requestedBytes: request.body.byteLength,
         })
         if (admission?.outcome === 'deny')
@@ -1998,10 +2180,35 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             : {}),
           chunks: singleChunk(request.body),
         })
+        if (admission) {
+          const commercialScope = {
+            tenantId: scope.tenantId,
+            organizationId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+          }
+          await options.commercialPolicy?.bindDecision?.(
+            commercialScope,
+            admission.decisionId,
+            created.source.sourceId,
+          )
+          await options.commercialPolicy?.completeOperation?.(
+            commercialScope,
+            created.source.sourceId,
+          )
+        }
         if (options.corpusAutoDrain !== false)
           setImmediate(() => scheduleCorpusDrain(scope))
         return reply.code(201).send(createSourceResponseSchema.parse(created))
       } catch (error) {
+        if (admission)
+          await options.commercialPolicy?.cancelDecision?.(
+            {
+              tenantId: scope.tenantId,
+              organizationId: scope.tenantId,
+              workspaceId: scope.workspaceId,
+            },
+            admission.decisionId,
+          )
         if (error instanceof Error && error.name === 'ZodError')
           return reply.code(400).send({
             code: 'INVALID_SOURCE_METADATA',
@@ -2093,11 +2300,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           code: 'MISSING_SCOPE',
           message: 'Workspace scope is required',
         })
+      let admission: AdmissionDecision | null = null
       try {
-        const admission = await admitCommercialOperation({
+        admission = await admitCommercialOperation({
           tenantId: scope.tenantId,
           workspaceId: scope.workspaceId,
           operation: 'source.index',
+          requestKey:
+            headerValue(request.headers['idempotency-key']) ??
+            `source-index:${request.params.sourceId}`,
         })
         if (admission?.outcome === 'deny')
           return reply.code(429).send({
@@ -2109,10 +2320,35 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         if (admission?.outcome === 'warn')
           reply.header('x-usage-warning', admission.reason)
         const job = await corpus.reindexSource(scope, request.params.sourceId)
+        if (admission) {
+          const commercialScope = {
+            tenantId: scope.tenantId,
+            organizationId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+          }
+          await options.commercialPolicy?.bindDecision?.(
+            commercialScope,
+            admission.decisionId,
+            job.jobId,
+          )
+          await options.commercialPolicy?.completeOperation?.(
+            commercialScope,
+            job.jobId,
+          )
+        }
         if (options.corpusAutoDrain !== false)
           setImmediate(() => scheduleCorpusDrain(scope))
         return reply.code(202).send(job)
       } catch (error) {
+        if (admission)
+          await options.commercialPolicy?.cancelDecision?.(
+            {
+              tenantId: scope.tenantId,
+              organizationId: scope.tenantId,
+              workspaceId: scope.workspaceId,
+            },
+            admission.decisionId,
+          )
         if (error instanceof CorpusError)
           return reply
             .code(404)
@@ -2131,11 +2367,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           code: 'MISSING_SCOPE',
           message: 'Workspace scope is required',
         })
+      let admission: AdmissionDecision | null = null
       try {
-        const admission = await admitCommercialOperation({
+        admission = await admitCommercialOperation({
           tenantId: scope.tenantId,
           workspaceId: scope.workspaceId,
           operation: 'source.retrieval',
+          requestKey:
+            headerValue(request.headers['idempotency-key']) ?? request.id,
         })
         if (admission?.outcome === 'deny')
           return reply.code(429).send({
@@ -2152,8 +2391,33 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           { ...scope, principalId: opaquePrincipalId(context.principal) },
           body,
         )
+        if (admission) {
+          const commercialScope = {
+            tenantId: scope.tenantId,
+            organizationId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+          }
+          await options.commercialPolicy?.bindDecision?.(
+            commercialScope,
+            admission.decisionId,
+            request.id,
+          )
+          await options.commercialPolicy?.completeOperation?.(
+            commercialScope,
+            request.id,
+          )
+        }
         return corpusSearchResponseSchema.parse(result)
       } catch (error) {
+        if (admission)
+          await options.commercialPolicy?.cancelDecision?.(
+            {
+              tenantId: scope.tenantId,
+              organizationId: scope.tenantId,
+              workspaceId: scope.workspaceId,
+            },
+            admission.decisionId,
+          )
         if (error instanceof CorpusError)
           return reply
             .code(400)
@@ -3927,12 +4191,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           issues: body.error.issues.map((issue) => issue.message),
         })
       }
+      let admission: AdmissionDecision | null = null
       try {
-        const admission = await admitCommercialOperation({
+        admission = await admitCommercialOperation({
           tenantId: scope.tenantId,
           workspaceId: scope.workspaceId,
           sessionId: scope.sessionId,
           operation: 'turn.start',
+          requestKey: idempotencyKey,
         })
         if (admission?.outcome === 'deny')
           return reply.code(429).send({
@@ -3952,6 +4218,16 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           idempotencyKey,
           turnAttachments,
         )
+        if (admission)
+          await options.commercialPolicy?.bindDecision?.(
+            {
+              tenantId: scope.tenantId,
+              organizationId: scope.tenantId,
+              workspaceId: scope.workspaceId,
+            },
+            admission.decisionId,
+            accepted.codexTurnId,
+          )
         turnStartedAt.set(
           JSON.stringify([
             scope.tenantId,
@@ -3962,6 +4238,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         )
         return reply.code(202).send(accepted)
       } catch (error) {
+        if (admission)
+          await options.commercialPolicy?.cancelDecision?.(
+            {
+              tenantId: scope.tenantId,
+              organizationId: scope.tenantId,
+              workspaceId: scope.workspaceId,
+            },
+            admission.decisionId,
+          )
         if (error instanceof AttachmentStorageError)
           return reply.code(400).send({
             code: error.code,

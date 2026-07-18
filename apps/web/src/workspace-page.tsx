@@ -3425,6 +3425,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                           'bekleniyor'}
                       </small>
                       <small>
+                        usage states · {billing.data.usageStates.join(' · ')}
+                      </small>
+                      <small>
                         freshness{' '}
                         {new Date(
                           billing.data.usageFreshnessAt,

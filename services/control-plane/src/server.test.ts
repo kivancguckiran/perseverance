@@ -26,7 +26,10 @@ import {
   buildControlPlane,
   type ControlPlaneOptions,
 } from './server'
-import type { CommercialPolicySnapshot } from '@persistent-codex/billing-platform'
+import {
+  DeterministicBillingEmulator,
+  type CommercialPolicySnapshot,
+} from '@persistent-codex/billing-platform'
 
 const scope: StoreScope = {
   tenantId: 'ten_test',
@@ -357,6 +360,71 @@ describe('WP24 commercial admission and billing API', () => {
           expect.objectContaining({ action: 'quota.decided' }),
         ]),
       )
+    } finally {
+      await app.close()
+    }
+  })
+
+  it('authenticates a bounded raw webhook without persisting provider payload material', async () => {
+    const provider = new DeterministicBillingEmulator({
+      secret: Buffer.alloc(32, 24),
+    })
+    const recorded: unknown[] = []
+    const repository = {
+      async recordWebhook(event: unknown, command: unknown) {
+        recorded.push({ event, command })
+        return {
+          duplicate: false,
+          processingState: 'received' as const,
+          effectiveAt: '2026-07-18T10:00:00.000Z',
+        }
+      },
+      async drainWebhooks() {
+        return [{ eventId: 'evt_unknown_1', state: 'unknown' }]
+      },
+    }
+    const app = await buildControlPlane({
+      eventStore: new SqliteEventStore(':memory:'),
+      billingWebhook: { provider, repository },
+    })
+    try {
+      const timestamp = Date.now()
+      const payload = Buffer.from(
+        JSON.stringify({
+          schemaVersion: 1,
+          tenantId: 'ten_test',
+          organizationId: 'ten_test',
+          workspaceId: 'wsp_test',
+          eventId: 'evt_unknown_1',
+          eventType: 'future.payment.event',
+          providerSequence: 1,
+          effectiveAt: '2026-07-18T10:00:00.000Z',
+          data: { paymentCredential: 'must-not-survive-normalization' },
+        }),
+      )
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/billing/webhooks/${provider.provider}`,
+        headers: {
+          'content-type':
+            'application/vnd.persistent-codex.billing-webhook+json',
+          'x-billing-event-id': 'evt_unknown_1',
+          'x-billing-timestamp': String(timestamp),
+          'x-billing-signature': provider.sign(payload, timestamp),
+        },
+        payload,
+      })
+      expect(response.statusCode, response.body).toBe(202)
+      expect(response.json()).toEqual({
+        schemaVersion: 1,
+        eventId: 'evt_unknown_1',
+        state: 'unknown',
+        duplicate: false,
+        productionEvidence: false,
+      })
+      expect(recorded).toHaveLength(1)
+      expect(JSON.stringify(recorded)).not.toContain('paymentCredential')
+      expect(response.body).not.toContain('must-not-survive-normalization')
     } finally {
       await app.close()
     }

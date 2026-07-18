@@ -349,9 +349,11 @@ kabulü tamamlanmadan Faz 4 kapatılmaz ve WP25 aktive edilmez.
   versioned plan/entitlement/budget/quota sözleşmelerine bağlandı. Platform-managed
   provider maliyeti ile BYOK ayrıdır; gerçek provider/MoR seçimi, tax, invoice ve
   refund davranışı uygulanmış gerçek olarak sunulmaz.
-- `0024_billing_plan_quota.sql`; tenant/organization/workspace scoped billing
+- `0024_billing_plan_quota.sql` ve `0025_billing_runtime_composition.sql`;
+  tenant/organization/workspace scoped billing
   customer, webhook, subscription, entitlement, budget, quota decision ve invoice
-  reconciliation tablolarını composite foreign key ve forced RLS ile ekledi. Gerçek
+  reconciliation tablolarına normalize webhook komutu ve durable admission lease
+  ekledi. Tümü composite foreign key ve forced RLS sınırındadır. Gerçek
   PostgreSQL smoke'unda cross-tenant görünürlük sıfır; duplicate webhook ek etkisi
   sıfır; out-of-order event eski state'i geri getirmedi ve stale processing restart
   recovery ile yeniden claim edildi.
@@ -365,20 +367,51 @@ kabulü tamamlanmadan Faz 4 kapatılmaz ve WP25 aktive edilmez.
   evaluator uygulanır. Soft limit warning+audit üretir; hard limit yeni işi
   fail-closed reddeder. Başlamış turn varsayılan olarak deterministik biçimde devam
   eder; karar policy version, reason ve measurement watermark ile audit edilir.
+  PostgreSQL advisory transaction lock + request-key lease iki control-plane
+  instance'ında aynı decision/watermark'ın duplicate oluşmasını engeller; terminal
+  event turn lease'ini idempotent bırakır.
+- `main.ts`, billing repository/commercial policy, price catalog ve provider portunu
+  normal bootstrap hattına bağlar. Local alpha emulator'ı yalnız explicit seçimle
+  açar. Production database/provider/secret adapter eksikse fail-closed kapanır ve
+  emulator'a düşmez. Gerçek main process smoke'unda billing UI snapshot'ı PostgreSQL
+  repository'den okundu; subscription, budget, quota/webhook ve reconciliation
+  restart sonrasında korundu.
 - Billing UI plan/version, platform-managed/BYOK modu, budget tüketimi, quota kararı,
   measured/estimated/reconciled/incomplete ayrımı, currency, price version,
   freshness ve reconciliation zamanını gösterir; credential veya ham provider
   payload göstermez.
-- `WP24_CODEX_BIN=<codex-cli-0.144.2> pnpm phase4:accept` geçti: 160 WP24 hedefli test,
-  gerçek PostgreSQL+pgvector, pinli Codex agent/MCP citation senaryosu, kaynak
-  delete/reindex, iki cihazlı approval CAS/realtime reconciliation, session resume,
-  terminal usage/cost, failed/interrupted accounting, hard quota ve cross-tenant sıfır
-  görünürlük doğrulandı. 390x844, 768x1024 ve 1280x720 browser kabulünde keyboard,
-  screen-reader label, yatay taşma, page error ve credential leak kontrolleri geçti.
-- Aynı kapıdaki `pnpm verify`; format, typecheck, 30 test dosyasında 310 test,
-  production build ve SSR HTTP smoke'u tamamladı. PostgreSQL container/volume,
-  browser context, managed Codex config, service worker ve temp dosya cleanup'ı
-  raporlandı.
+- `wp24:e2e`, ayrı WP22/WP23 harness'lerini ardışık başarı saymak yerine tek gerçek
+  environment/session kurar. Evidence; `sessionId`, retrieval ve approval `runId`,
+  `sourceId`, `revisionId`, `chunkId`, `approvalId`, usage dedupe key ve quota decision
+  ID'yi assertion'larla bağlar. Gerçek PDF -> extraction/index -> normal session MCP
+  -> citation -> command approval -> CAS -> resume -> usage/reconciliation -> billing
+  görünümü geçti. Delete/reindex, failed/interrupted incomplete usage, hard turn/source
+  denial, restart persistence ve billing/usage/corpus/notification/timeline
+  cross-tenant sıfır görünürlük aynı harness içinde doğrulandı.
+- Son birleşik E2E evidence zinciri: session
+  `ses_88070e90-7680-4416-8d76-26d32207801b`; retrieval run
+  `run_9fc99df4-9697-4907-af62-6187371de278`; approval run
+  `run_237a91cc-9f9d-437c-89c1-1d00002e908f`; source
+  `src_ff446071-2053-4137-a71e-f212194ece95`; revision
+  `rev_8dee2a25-c675-41b5-a0f2-8313952a74e5`; chunk
+  `chk_980c76fd1288c08a1bd068635bde7c11e0d14858177424592cf971d79c8cd70e`;
+  approval `apr_238fbcb07bc3ee7bae0412af`; usage dedupe
+  `usage:ses_88070e90-7680-4416-8d76-26d32207801b:019f75cf-b336-7ca3-93c7-95bb7c69a1af`;
+  quota decision `qad_1960c89771115414ce17c3ab2e99b6cf`. Harness bu
+  kimliklerin aynı tenant/workspace/session zincirine ait olduğunu assertion ile
+  doğruladı; Codex'in turn başına ayrı run üretmesi gizlenmedi.
+- `wp24:browser` aynı gerçek harness/session'ı iki browser context'inde açtı; fake WP23
+  runtime kullanmadı. Citation, resolved approval, terminal cevap,
+  measured/estimated/reconciled/incomplete usage, price version, currency, freshness,
+  budget ve quota birlikte doğrulandı. 390x844, 768x1024 ve 1280x720 görünümde
+  keyboard/screen-reader label, yatay taşma, page error ve credential/payment payload
+  leak kontrolleri geçti.
+- `WP24_CODEX_BIN=<codex-cli-0.144.2> pnpm phase4:accept` geçti. Kapı 164 hedefli WP24
+  testini, gerçek PostgreSQL/main runtime smoke'unu, unified E2E/browser'ı, WP22/WP23
+  regresyonlarını ve `pnpm verify` adımını tamamladı. `pnpm verify`; 31 test dosyasında
+  314 test, typecheck, production build ve SSR HTTP smoke ile geçti. Container, volume,
+  browser context, managed Codex config, service worker ve harness temp dosyaları
+  başarı/hata cleanup yolunda temizlendi.
 - Billing provider deterministic HMAC emulator'dır; gerçek billing provider
   seçilmediği/credential olmadığı için gerçek tahsilat smoke'u `not-run` durumundadır.
   Web Push emulator kullanıldı; gerçek Web Push credential olmadığı için opt-in
