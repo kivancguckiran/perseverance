@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP21 (Uygulandı / kabul bekliyor)
+- Aktif iş paketi: WP22
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -21,17 +21,17 @@ production rollout seviyesine taşır.
 
 ## 2. İş paketi özeti
 
-| Paket | Faz | Durum                      | Hedef                                                                    |
-| ----- | --- | -------------------------- | ------------------------------------------------------------------------ |
-| WP21  | 4   | Uygulandı / kabul bekliyor | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
-| WP22  | 4   | Planlandı                  | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
-| WP23  | 4   | Planlandı                  | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Planlandı                  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
-| WP25  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP26  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP27  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP28  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP29  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| Paket | Faz | Durum      | Hedef                                                                    |
+| ----- | --- | ---------- | ------------------------------------------------------------------------ |
+| WP21  | 4   | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
+| WP22  | 4   | Aktif      | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
+| WP23  | 4   | Planlandı  | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
+| WP24  | 4   | Planlandı  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
+| WP25  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP26  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP27  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP28  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP29  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; Faz 4
 tamamlanmadan WP25; WP28 tamamlanmadan nihai WP29 aktive edilmez.
@@ -79,6 +79,31 @@ bir ingestion omurgası kurmak.
 #### Teslimat commit'i
 
 `feat: add tenant-aware corpus ingestion foundation`
+
+#### Bağımsız kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama ve hardening commit'leri `f843b35`, `3afad1a`, `98d5f88` ve `94a7a77`
+  birlikte tenant-aware ingestion omurgasını tamamladı.
+- PostgreSQL repository, forced RLS, API/worker restart recovery, concurrent claim,
+  idempotent upload, deterministic rebuild, usage ledger ve cleanup gerçek
+  PostgreSQL smoke'unda iki ardışık çalışmada geçti.
+- Snapshot storage workspace-security KMS/envelope katmanına bağlandı. Tenant,
+  organization, workspace, revision, storage key ve content hash AAD ile
+  doğrulanıyor; ciphertext/tag/wrapped-key substitution, revoked key ve crypto-erasure
+  testleri fail-closed sonuçlandı.
+- PDF/Markdown/text extraction, parser limitleri ve timeout, poison source, delete ve
+  reindex kontrolleri geçti.
+- Browser kabulü doğru API URL'siyle temiz build alarak 1280x720 ve 390x844
+  görünümde iki ardışık kez geçti; pending/extracting/indexed/failed/delete-reindex,
+  reload durability ve cross-tenant görünmezlik doğrulandı. Page error, yatay taşma
+  ve içerik/credential sızıntısı oluşmadı.
+- `pnpm verify` 23 test dosyasında 283 test, typecheck, production build ve SSR HTTP
+  smoke ile tamamlandı. Geçici PostgreSQL container, volume ve test dizinleri
+  temizlendi.
+
+WP21 tamamlandı. WP22 tek aktif iş paketidir.
 
 ### WP22 — Hybrid retrieval, citations, watcher ve workspace-local MCP
 
