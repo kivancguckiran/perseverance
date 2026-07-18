@@ -1,6 +1,6 @@
 # ADR-0023: PWA-first mobil approval, Web Push ve çoklu cihaz sürekliliği
 
-- Durum: Kabul önerisi
+- Durum: Kabul edildi
 - Tarih: 18 Temmuz 2026
 - Kapsam: WP23
 
