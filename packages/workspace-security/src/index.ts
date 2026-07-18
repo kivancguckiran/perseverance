@@ -704,7 +704,9 @@ export interface EncryptionContextV1 extends WorkspaceSecurityScope {
     | 'artifact'
     | 'attachment'
     | 'backup'
+    | 'corpus_snapshot'
   recordId: string
+  additionalAuthenticatedData?: Readonly<Record<string, string>>
 }
 
 export interface WrappedKey {
@@ -741,17 +743,34 @@ export class CryptoError extends Error {
 
 function canonicalContext(context: EncryptionContextV1): Buffer {
   for (const [name, value] of Object.entries(context))
-    requireScopePart(value, name)
-  return Buffer.from(
-    JSON.stringify([
-      ENVELOPE_FORMAT_VERSION,
-      context.tenantId,
-      context.organizationId,
-      context.workspaceId,
-      context.recordType,
-      context.recordId,
-    ]),
-  )
+    if (name !== 'additionalAuthenticatedData') requireScopePart(value, name)
+  const base = [
+    ENVELOPE_FORMAT_VERSION,
+    context.tenantId,
+    context.organizationId,
+    context.workspaceId,
+    context.recordType,
+    context.recordId,
+  ]
+  if (!context.additionalAuthenticatedData)
+    return Buffer.from(JSON.stringify(base))
+  const additional = Object.entries(context.additionalAuthenticatedData)
+    .map(([name, value]) => {
+      requireScopePart(name, 'additionalAuthenticatedData key')
+      if (
+        typeof value !== 'string' ||
+        value.length < 1 ||
+        value.length > 2_048 ||
+        value.includes('\0')
+      )
+        throw new SecurityBoundaryError(
+          'INVALID_ENCRYPTION_CONTEXT_AAD',
+          'Additional authenticated data is invalid',
+        )
+      return [name, value] as const
+    })
+    .sort(([left], [right]) => left.localeCompare(right))
+  return Buffer.from(JSON.stringify([...base, additional]))
 }
 
 function workspaceContext(scope: WorkspaceSecurityScope): Buffer {

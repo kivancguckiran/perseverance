@@ -884,12 +884,12 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     )
   if (
     options.corpusRepository &&
-    options.corpusSnapshotStorage?.adapter === 'local-development' &&
+    !options.corpusSnapshotStorage?.productionCapable &&
     !explicitLocalCorpus
   )
     throw new CorpusError(
-      'ENCRYPTED_CORPUS_STORAGE_REQUIRED',
-      'Production requires encrypted corpus snapshot storage',
+      'PRODUCTION_CORPUS_KMS_REQUIRED',
+      'Production requires corpus snapshot storage backed by a production-capable KMS',
     )
   const corpus = options.corpusRepository
     ? new CorpusIngestionService({

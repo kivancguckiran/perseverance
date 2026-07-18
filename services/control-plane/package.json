@@ -23,6 +23,7 @@
     "@persistent-codex/provider-platform": "workspace:*",
     "@persistent-codex/provider-cli-adapters": "workspace:*",
     "@persistent-codex/support-access": "workspace:*",
+    "@persistent-codex/workspace-security": "workspace:*",
     "@persistent-codex/workspace-agent": "workspace:*",
     "fastify": "^5.10.0"
   },

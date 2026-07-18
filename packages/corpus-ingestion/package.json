@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@persistent-codex/control-plane-contracts": "workspace:*",
+    "@persistent-codex/workspace-security": "workspace:*",
     "pg": "^8.22.0"
   },
   "devDependencies": {

@@ -1,10 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  randomUUID,
-} from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   closeSync,
   createReadStream,
@@ -16,10 +10,16 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
+import {
+  ChunkedEnvelopeEncryption,
+  CryptoError,
+  type EncryptionContextV1,
+} from '@persistent-codex/workspace-security'
 import { CorpusError, type CorpusScope } from './index'
 
 export const CORPUS_SNAPSHOT_STORAGE_VERSION = 1 as const
@@ -36,6 +36,7 @@ export interface StoredCorpusSnapshot {
 export interface CorpusSnapshotStorage {
   readonly version: typeof CORPUS_SNAPSHOT_STORAGE_VERSION
   readonly adapter: 'local-development' | 'encrypted-filesystem'
+  readonly productionCapable: boolean
   put(input: {
     scope: CorpusScope
     revisionId: string
@@ -44,7 +45,9 @@ export interface CorpusSnapshotStorage {
   }): Promise<StoredCorpusSnapshot>
   read(input: {
     scope: CorpusScope
+    revisionId: string
     storageKey: string
+    contentHash: string
     maxBytes: number
   }): Promise<Uint8Array>
   delete(input: { scope: CorpusScope; storageKey: string }): Promise<void>
@@ -63,6 +66,7 @@ function expectedPrefix(scope: CorpusScope) {
 abstract class FilesystemSnapshotStorage implements CorpusSnapshotStorage {
   readonly version = CORPUS_SNAPSHOT_STORAGE_VERSION
   abstract readonly adapter: CorpusSnapshotStorage['adapter']
+  abstract readonly productionCapable: boolean
   abstract put(input: {
     scope: CorpusScope
     revisionId: string
@@ -71,7 +75,9 @@ abstract class FilesystemSnapshotStorage implements CorpusSnapshotStorage {
   }): Promise<StoredCorpusSnapshot>
   abstract read(input: {
     scope: CorpusScope
+    revisionId: string
     storageKey: string
+    contentHash: string
     maxBytes: number
   }): Promise<Uint8Array>
   readonly root: string
@@ -121,6 +127,7 @@ abstract class FilesystemSnapshotStorage implements CorpusSnapshotStorage {
 
 export class LocalCorpusSnapshotStorage extends FilesystemSnapshotStorage {
   readonly adapter = 'local-development' as const
+  readonly productionCapable = false
 
   constructor(
     root: string,
@@ -182,7 +189,9 @@ export class LocalCorpusSnapshotStorage extends FilesystemSnapshotStorage {
 
   async read(input: {
     scope: CorpusScope
+    revisionId: string
     storageKey: string
+    contentHash: string
     maxBytes: number
   }) {
     const path = this.path(input.scope, input.storageKey)
@@ -210,16 +219,41 @@ export class LocalCorpusSnapshotStorage extends FilesystemSnapshotStorage {
 
 export class EncryptedFilesystemCorpusSnapshotStorage extends FilesystemSnapshotStorage {
   readonly adapter = 'encrypted-filesystem' as const
-  readonly #key: Buffer
+  readonly productionCapable: boolean
+  readonly encryption: ChunkedEnvelopeEncryption
 
-  constructor(root: string, key: Uint8Array) {
-    if (key.byteLength !== 32)
+  constructor(
+    root: string,
+    encryption: ChunkedEnvelopeEncryption,
+    options: { explicitUsage?: 'test' | 'development' } = {},
+  ) {
+    if (!encryption.kms.production && !options.explicitUsage)
       throw new CorpusError(
-        'INVALID_CORPUS_ENCRYPTION_KEY',
-        'Corpus encryption key must be 32 bytes',
+        'PRODUCTION_CORPUS_KMS_REQUIRED',
+        'A non-production corpus KMS requires explicit test or development usage',
       )
     super(root)
-    this.#key = Buffer.from(key)
+    this.encryption = encryption
+    this.productionCapable = encryption.kms.production
+  }
+
+  #context(input: {
+    scope: CorpusScope
+    revisionId: string
+    storageKey: string
+    contentHash: string
+  }): EncryptionContextV1 {
+    return {
+      ...input.scope,
+      recordType: 'corpus_snapshot',
+      recordId: safePart(input.revisionId, 'revisionId'),
+      additionalAuthenticatedData: {
+        purpose: 'immutable_raw_corpus_snapshot',
+        revisionId: input.revisionId,
+        storageKey: input.storageKey,
+        contentHash: input.contentHash,
+      },
+    }
   }
 
   async put(input: {
@@ -232,12 +266,11 @@ export class EncryptedFilesystemCorpusSnapshotStorage extends FilesystemSnapshot
     const path = this.path(input.scope, storageKey)
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     const temporary = `${path}.${randomUUID()}.tmp`
-    const nonce = randomBytes(12)
-    const cipher = createCipheriv('aes-256-gcm', this.#key, nonce)
     let plaintextLength = 0
     const hash = createHash('sha256')
+    const parts: Buffer[] = []
+    let plaintext: Buffer | undefined
     try {
-      const encrypted: Buffer[] = [Buffer.from('PCX1'), nonce]
       for await (const chunk of input.chunks) {
         plaintextLength += chunk.byteLength
         if (plaintextLength > input.maxBytes)
@@ -246,21 +279,35 @@ export class EncryptedFilesystemCorpusSnapshotStorage extends FilesystemSnapshot
             'Source exceeds configured byte limit',
           )
         hash.update(chunk)
-        encrypted.push(cipher.update(chunk))
+        parts.push(Buffer.from(chunk))
       }
       if (plaintextLength === 0)
         throw new CorpusError('EMPTY_SOURCE', 'Source must not be empty')
-      encrypted.push(cipher.final(), cipher.getAuthTag())
-      writeFileSync(temporary, Buffer.concat(encrypted), {
-        flag: 'wx',
-        mode: 0o600,
-      })
+      const contentHash = `sha256:${hash.digest('hex')}`
+      plaintext = Buffer.concat(parts)
+      const envelope = await this.encryption.encrypt(
+        this.#context({
+          scope: input.scope,
+          revisionId: input.revisionId,
+          storageKey,
+          contentHash,
+        }),
+        plaintext,
+      )
+      writeFileSync(
+        temporary,
+        JSON.stringify({
+          format: 'persistent-codex-corpus-snapshot-envelope-v1',
+          envelope,
+        }),
+        { flag: 'wx', mode: 0o600 },
+      )
       renameSync(temporary, path)
       return {
         version: CORPUS_SNAPSHOT_STORAGE_VERSION,
         storageKey,
         byteLength: plaintextLength,
-        contentHash: `sha256:${hash.digest('hex')}`,
+        contentHash,
         encrypted: true,
         createdAt: new Date().toISOString(),
       }
@@ -268,12 +315,17 @@ export class EncryptedFilesystemCorpusSnapshotStorage extends FilesystemSnapshot
       rmSync(temporary, { force: true })
       rmSync(path, { force: true })
       throw error
+    } finally {
+      plaintext?.fill(0)
+      for (const part of parts) part.fill(0)
     }
   }
 
   async read(input: {
     scope: CorpusScope
+    revisionId: string
     storageKey: string
+    contentHash: string
     maxBytes: number
   }) {
     const path = this.path(input.scope, input.storageKey)
@@ -282,25 +334,42 @@ export class EncryptedFilesystemCorpusSnapshotStorage extends FilesystemSnapshot
         'CORPUS_SYMLINK_REJECTED',
         'Snapshot symlink is not allowed',
       )
-    const encrypted = readFileSync(path)
-    if (encrypted.subarray(0, 4).toString() !== 'PCX1' || encrypted.length < 32)
+    if (
+      !/^sha256:[a-f0-9]{64}$/.test(input.contentHash) ||
+      statSync(path).size > input.maxBytes * 2 + 1024 * 1024
+    )
       throw new CorpusError(
         'SNAPSHOT_INTEGRITY_FAILED',
         'Encrypted snapshot envelope is invalid',
       )
-    const nonce = encrypted.subarray(4, 16)
-    const tag = encrypted.subarray(encrypted.length - 16)
-    const decipher = createDecipheriv('aes-256-gcm', this.#key, nonce)
-    decipher.setAuthTag(tag)
-    const plaintext = Buffer.concat([
-      decipher.update(encrypted.subarray(16, encrypted.length - 16)),
-      decipher.final(),
-    ])
-    if (plaintext.length > input.maxBytes)
-      throw new CorpusError(
-        'SOURCE_TOO_LARGE',
-        'Source exceeds configured byte limit',
+    try {
+      const stored = JSON.parse(readFileSync(path, 'utf8')) as {
+        format?: unknown
+        envelope?: unknown
+      }
+      if (
+        stored.format !== 'persistent-codex-corpus-snapshot-envelope-v1' ||
+        !stored.envelope
       )
-    return plaintext
+        throw new CryptoError('CORPUS_SNAPSHOT_ENVELOPE_INVALID')
+      const plaintext = await this.encryption.decrypt(
+        this.#context(input),
+        stored.envelope as Parameters<ChunkedEnvelopeEncryption['decrypt']>[1],
+      )
+      if (
+        plaintext.byteLength > input.maxBytes ||
+        `sha256:${createHash('sha256').update(plaintext).digest('hex')}` !==
+          input.contentHash
+      ) {
+        plaintext.fill(0)
+        throw new CryptoError('CORPUS_SNAPSHOT_CONTENT_MISMATCH')
+      }
+      return plaintext
+    } catch {
+      throw new CorpusError(
+        'SNAPSHOT_INTEGRITY_FAILED',
+        'Encrypted snapshot authentication failed',
+      )
+    }
   }
 }

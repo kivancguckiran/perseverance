@@ -109,7 +109,9 @@ export class CorpusIngestionService {
     try {
       const bytes = await this.storage.read({
         scope: input.scope,
+        revisionId,
         storageKey: stored.storageKey,
+        contentHash: stored.contentHash,
         maxBytes: this.#limits.maxBytes,
       })
       const mediaType = sniffMediaType(name, bytes.subarray(0, 8192))
@@ -247,7 +249,9 @@ export class CorpusIngestionService {
     try {
       const bytes = await this.storage.read({
         scope,
+        revisionId: context.revision.revisionId,
         storageKey: context.revision.rawSnapshot.storageKey,
+        contentHash: context.revision.contentHash,
         maxBytes: this.#limits.maxBytes,
       })
       if (

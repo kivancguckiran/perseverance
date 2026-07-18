@@ -1,9 +1,21 @@
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  ChunkedEnvelopeEncryption,
+  LocalKmsProvider,
+} from '@persistent-codex/workspace-security'
+import {
   CorpusError,
+  EncryptedFilesystemCorpusSnapshotStorage,
   extractDocument,
   extractDocumentBounded,
   LocalCorpusRegistry,
@@ -312,5 +324,195 @@ describe('WP21 idempotent registry and worker', () => {
       secretLikeContent,
     )
     expect(created.revision.rawSnapshot.storageKey).not.toContain('private.txt')
+  })
+})
+
+describe('WP21 corpus snapshot envelope encryption', () => {
+  function encryptedStorage(root: string, kms: LocalKmsProvider) {
+    return new EncryptedFilesystemCorpusSnapshotStorage(
+      root,
+      new ChunkedEnvelopeEncryption(kms, 1024),
+      { explicitUsage: 'test' },
+    )
+  }
+
+  it('binds tenant, workspace, revision, storage key, content hash and envelope fields', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wp21-envelope-'))
+    roots.push(root)
+    const storage = encryptedStorage(
+      root,
+      new LocalKmsProvider(Buffer.alloc(32, 11)),
+    )
+    const revisionId = 'rev_context_bound'
+    const stored = await storage.put({
+      scope,
+      revisionId,
+      chunks: singleChunk(Buffer.from('context-bound-snapshot')),
+      maxBytes: 1024,
+    })
+    const valid = {
+      scope,
+      revisionId,
+      storageKey: stored.storageKey,
+      contentHash: stored.contentHash,
+      maxBytes: 1024,
+    }
+    await expect(storage.read(valid)).resolves.toEqual(
+      Buffer.from('context-bound-snapshot'),
+    )
+    const originalPath = join(root, stored.storageKey)
+    const original = readFileSync(originalPath)
+    const copiedRead = async (
+      changedScope: typeof scope,
+      changedRevisionId: string,
+      changedStorageKey: string,
+      changedContentHash = stored.contentHash,
+    ) => {
+      const copiedPath = join(root, changedStorageKey)
+      mkdirSync(dirname(copiedPath), { recursive: true })
+      writeFileSync(copiedPath, original)
+      return storage.read({
+        scope: changedScope,
+        revisionId: changedRevisionId,
+        storageKey: changedStorageKey,
+        contentHash: changedContentHash,
+        maxBytes: 1024,
+      })
+    }
+    const tenantScope = {
+      ...scope,
+      tenantId: 'tenant_b',
+      organizationId: 'tenant_b',
+    }
+    const tenantKey = stored.storageKey.replace(
+      '/tenant_a/tenant_a/',
+      '/tenant_b/tenant_b/',
+    )
+    await expect(
+      copiedRead(tenantScope, revisionId, tenantKey),
+    ).rejects.toMatchObject({ code: 'SNAPSHOT_INTEGRITY_FAILED' })
+    const organizationScope = { ...scope, organizationId: 'organization_b' }
+    const organizationKey = stored.storageKey.replace(
+      '/tenant_a/tenant_a/',
+      '/tenant_a/organization_b/',
+    )
+    await expect(
+      copiedRead(organizationScope, revisionId, organizationKey),
+    ).rejects.toMatchObject({ code: 'SNAPSHOT_INTEGRITY_FAILED' })
+    const workspaceScope = { ...scope, workspaceId: 'workspace_b' }
+    const workspaceKey = stored.storageKey.replace(
+      '/workspace_a/',
+      '/workspace_b/',
+    )
+    await expect(
+      copiedRead(workspaceScope, revisionId, workspaceKey),
+    ).rejects.toMatchObject({ code: 'SNAPSHOT_INTEGRITY_FAILED' })
+    await expect(
+      copiedRead(scope, 'rev_substituted', stored.storageKey),
+    ).rejects.toMatchObject({ code: 'SNAPSHOT_INTEGRITY_FAILED' })
+    const substitutedKey = stored.storageKey.replace(
+      revisionId,
+      'rev_storage_substituted',
+    )
+    await expect(
+      copiedRead(scope, revisionId, substitutedKey),
+    ).rejects.toMatchObject({ code: 'SNAPSHOT_INTEGRITY_FAILED' })
+    await expect(
+      copiedRead(
+        scope,
+        revisionId,
+        stored.storageKey,
+        `sha256:${'0'.repeat(64)}`,
+      ),
+    ).rejects.toMatchObject({ code: 'SNAPSHOT_INTEGRITY_FAILED' })
+
+    const mutate = async (change: (value: any) => void) => {
+      const value = JSON.parse(original.toString())
+      change(value)
+      writeFileSync(originalPath, JSON.stringify(value))
+      try {
+        await expect(storage.read(valid)).rejects.toMatchObject({
+          code: 'SNAPSHOT_INTEGRITY_FAILED',
+        })
+      } finally {
+        writeFileSync(originalPath, original)
+      }
+    }
+    await mutate((value) => {
+      value.envelope.chunks[0].ciphertext =
+        Buffer.from('tampered').toString('base64')
+    })
+    await mutate((value) => {
+      value.envelope.chunks[0].authenticationTag = Buffer.alloc(16, 1).toString(
+        'base64',
+      )
+    })
+    await mutate((value) => {
+      value.envelope.encryptedDek.ciphertext = Buffer.alloc(60, 2).toString(
+        'base64',
+      )
+    })
+  })
+
+  it('supports rotation and fails closed for revoked keys and workspace crypto-erasure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wp21-envelope-lifecycle-'))
+    roots.push(root)
+    const kms = new LocalKmsProvider(Buffer.alloc(32, 12))
+    const storage = encryptedStorage(root, kms)
+    const old = await storage.put({
+      scope,
+      revisionId: 'rev_old_key',
+      chunks: singleChunk(Buffer.from('old-key-snapshot')),
+      maxBytes: 1024,
+    })
+    const oldVersion = '1'
+    kms.rotate(Buffer.alloc(32, 13))
+    const current = await storage.put({
+      scope,
+      revisionId: 'rev_current_key',
+      chunks: singleChunk(Buffer.from('current-key-snapshot')),
+      maxBytes: 1024,
+    })
+    const read = (revisionId: string, snapshot: typeof old) =>
+      storage.read({
+        scope,
+        revisionId,
+        storageKey: snapshot.storageKey,
+        contentHash: snapshot.contentHash,
+        maxBytes: 1024,
+      })
+    await expect(read('rev_old_key', old)).resolves.toEqual(
+      Buffer.from('old-key-snapshot'),
+    )
+    await expect(read('rev_current_key', current)).resolves.toEqual(
+      Buffer.from('current-key-snapshot'),
+    )
+    kms.revokeKeyVersion(oldVersion)
+    await expect(read('rev_old_key', old)).rejects.toMatchObject({
+      code: 'SNAPSHOT_INTEGRITY_FAILED',
+    })
+    await expect(read('rev_current_key', current)).resolves.toEqual(
+      Buffer.from('current-key-snapshot'),
+    )
+    await storage.encryption.kms.revokeWorkspace(scope)
+    await expect(read('rev_current_key', current)).rejects.toMatchObject({
+      code: 'SNAPSHOT_INTEGRITY_FAILED',
+    })
+  })
+
+  it('requires explicit test or development use for a local KMS', () => {
+    const root = mkdtempSync(join(tmpdir(), 'wp21-envelope-local-kms-'))
+    roots.push(root)
+    expect(
+      () =>
+        new EncryptedFilesystemCorpusSnapshotStorage(
+          root,
+          new ChunkedEnvelopeEncryption(
+            new LocalKmsProvider(Buffer.alloc(32, 14)),
+          ),
+        ),
+    ).toThrowError(
+      expect.objectContaining({ code: 'PRODUCTION_CORPUS_KMS_REQUIRED' }),
+    )
   })
 })

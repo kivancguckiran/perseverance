@@ -25,6 +25,10 @@ import {
   createPostgresCorpusRepository,
   EncryptedFilesystemCorpusSnapshotStorage,
 } from '@persistent-codex/corpus-ingestion'
+import {
+  ChunkedEnvelopeEncryption,
+  LocalKmsProvider,
+} from '@persistent-codex/workspace-security'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -45,23 +49,33 @@ const supportAccessRepository = supportDatabaseUrl
       connectionString: supportDatabaseUrl,
     })
   : new InMemorySupportAccessRepository({ explicitUsage: 'development' })
-const corpusEncryptionKey = process.env.CORPUS_SNAPSHOT_KEY_BASE64
+const legacyCorpusEncryptionKey = process.env.CORPUS_SNAPSHOT_KEY_BASE64
+const localCorpusEncryptionKey =
+  process.env.CORPUS_SNAPSHOT_LOCAL_KEY_BASE64 ??
+  (localAlpha ? legacyCorpusEncryptionKey : undefined)
 const corpusDatabaseUrl = process.env.CORPUS_DATABASE_URL
 if (!localAlpha && !corpusDatabaseUrl)
   throw new Error(
     'Production requires CORPUS_DATABASE_URL for the durable corpus repository',
   )
-if (!localAlpha && !corpusEncryptionKey)
+if (!localAlpha && legacyCorpusEncryptionKey)
   throw new Error(
-    'Production requires CORPUS_SNAPSHOT_KEY_BASE64 for encrypted corpus snapshots',
+    'CORPUS_SNAPSHOT_KEY_BASE64 is a development-only raw key and is forbidden in production',
+  )
+if (!localAlpha && corpusDatabaseUrl)
+  throw new Error(
+    'Production corpus startup requires an injected production-capable KmsProvider; raw snapshot keys are not supported',
   )
 const corpusRepository = corpusDatabaseUrl
   ? createPostgresCorpusRepository({ connectionString: corpusDatabaseUrl })
   : undefined
-const corpusSnapshotStorage = corpusEncryptionKey
+const corpusSnapshotStorage = localCorpusEncryptionKey
   ? new EncryptedFilesystemCorpusSnapshotStorage(
       resolve(process.env.CORPUS_SNAPSHOT_ROOT ?? '.runtime/alpha/corpus'),
-      Buffer.from(corpusEncryptionKey, 'base64'),
+      new ChunkedEnvelopeEncryption(
+        new LocalKmsProvider(Buffer.from(localCorpusEncryptionKey, 'base64')),
+      ),
+      { explicitUsage: 'development' },
     )
   : undefined
 const runtimeBackend =
