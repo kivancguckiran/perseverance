@@ -133,6 +133,9 @@ importers:
       '@persistent-codex/control-plane-contracts':
         specifier: workspace:*
         version: link:../control-plane-contracts
+      '@persistent-codex/workspace-security':
+        specifier: workspace:*
+        version: link:../workspace-security
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -244,6 +247,9 @@ importers:
       '@persistent-codex/workspace-agent':
         specifier: workspace:*
         version: link:../../agents/workspace-agent
+      '@persistent-codex/workspace-security':
+        specifier: workspace:*
+        version: link:../../packages/workspace-security
       fastify:
         specifier: ^5.10.0
         version: 5.10.0

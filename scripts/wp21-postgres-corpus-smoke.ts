@@ -10,6 +10,10 @@ import {
   FakeEmbeddingProvider,
   createPostgresCorpusRepository,
 } from '../packages/corpus-ingestion/src/index'
+import {
+  ChunkedEnvelopeEncryption,
+  LocalKmsProvider,
+} from '../packages/workspace-security/src/index'
 import { buildControlPlane } from '../services/control-plane/src/server'
 
 const suffix = randomUUID()
@@ -125,7 +129,8 @@ try {
   const url = `postgresql://corpus_runtime:runtime@127.0.0.1:${port}/postgres`
   const storage = new EncryptedFilesystemCorpusSnapshotStorage(
     join(root, 'snapshots'),
-    Buffer.alloc(32, 7),
+    new ChunkedEnvelopeEncryption(new LocalKmsProvider(Buffer.alloc(32, 7))),
+    { explicitUsage: 'test' },
   )
   const scope = {
     tenantId: 'tenant_a',
@@ -144,6 +149,7 @@ try {
     databasePath: join(root, 'events-1.sqlite'),
     artifactRoot: join(root, 'artifacts-1'),
     allowExplicitDevAuthentication: true,
+    allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
     corpusRepository: createPostgresCorpusRepository({ connectionString: url }),
     corpusSnapshotStorage: storage,
@@ -233,6 +239,7 @@ try {
     databasePath: join(root, 'events-2.sqlite'),
     artifactRoot: join(root, 'artifacts-2'),
     allowExplicitDevAuthentication: true,
+    allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
     corpusRepository: createPostgresCorpusRepository({ connectionString: url }),
     corpusSnapshotStorage: storage,
@@ -260,6 +267,7 @@ try {
     databasePath: join(root, 'events-3.sqlite'),
     artifactRoot: join(root, 'artifacts-3'),
     allowExplicitDevAuthentication: true,
+    allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
     corpusRepository: createPostgresCorpusRepository({ connectionString: url }),
     corpusSnapshotStorage: storage,

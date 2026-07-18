@@ -19,6 +19,10 @@ import {
   createPostgresCorpusRepository,
 } from '../packages/corpus-ingestion/src/index'
 import { SqliteEventStore } from '../packages/event-store/src/index'
+import {
+  ChunkedEnvelopeEncryption,
+  LocalKmsProvider,
+} from '../packages/workspace-security/src/index'
 import { buildControlPlane } from '../services/control-plane/src/server'
 
 const root = resolve(new URL('..', import.meta.url).pathname)
@@ -50,6 +54,23 @@ const browser = async (...args: string[]) =>
     )
   ).stdout.trim()
 const evaluate = (expression: string) => browser('eval', expression)
+const waitFor = async (
+  label: string,
+  expression: string,
+  expected: string,
+  timeoutMs = 10_000,
+) => {
+  const deadline = Date.now() + timeoutMs
+  let actual = ''
+  while (Date.now() < deadline) {
+    actual = await evaluate(expression)
+    if (actual === expected) return
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  }
+  throw new Error(
+    `${label} timed out after ${timeoutMs}ms; expected ${expected}, received ${actual}`,
+  )
+}
 const migration = (name: string) =>
   readFileSync(join(root, 'infra/postgres/migrations', name), 'utf8')
 let api: Awaited<ReturnType<typeof buildControlPlane>> | undefined
@@ -58,6 +79,12 @@ let store: SqliteEventStore | undefined
 const workers: CorpusIngestionService[] = []
 let failure: unknown
 try {
+  execFileSync('pnpm', ['--filter', '@persistent-codex/web', 'build'], {
+    cwd: root,
+    env: { ...process.env, VITE_CONTROL_PLANE_URL: apiUrl },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
   docker('volume', 'create', volume)
   docker(
     'run',
@@ -132,7 +159,8 @@ try {
   const connectionString = `postgresql://corpus_browser:runtime@127.0.0.1:${postgresPort}/postgres`
   const storage = new EncryptedFilesystemCorpusSnapshotStorage(
     join(temporaryRoot, 'snapshots'),
-    Buffer.alloc(32, 9),
+    new ChunkedEnvelopeEncryption(new LocalKmsProvider(Buffer.alloc(32, 9))),
+    { explicitUsage: 'test' },
   )
   const scope = { tenantId: organizationId, organizationId, workspaceId }
   store = new SqliteEventStore(join(temporaryRoot, 'events.sqlite'))
@@ -146,6 +174,7 @@ try {
     eventStore: store,
     artifactRoot: join(temporaryRoot, 'artifacts'),
     allowExplicitDevAuthentication: true,
+    allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
     corpusRepository: createPostgresCorpusRepository({ connectionString }),
     corpusSnapshotStorage: storage,
@@ -205,7 +234,11 @@ try {
   const url = `${baseUrl}/sessions/${sessionId}?organization=${organizationId}&workspace=${workspaceId}`
   await browser('set', 'viewport', '1280', '720')
   await browser('open', url)
-  await browser('wait', '1000')
+  await waitFor(
+    'workspace page content',
+    `document.body.innerText.trim().length > 0`,
+    'true',
+  )
   await evaluate(
     `document.querySelector('.source-panel')?.setAttribute('open','')`,
   )
@@ -214,11 +247,9 @@ try {
     'input[type=file][accept^=".pdf"]',
     join(root, 'packages/corpus-ingestion/test/fixtures/golden.md'),
   )
-  await browser('wait', '150')
-  assert.equal(
-    await evaluate(
-      `document.querySelector('[data-source-status]')?.textContent`,
-    ),
+  await waitFor(
+    'pending source status',
+    `document.querySelector('[data-source-status]')?.textContent`,
     '"pending"',
   )
   const slowEmbedding = {
@@ -244,30 +275,29 @@ try {
   const pending = await worker.claimNext(scope, 'browser_worker')
   assert(pending)
   const processing = worker.processJob(scope, pending.jobId, 'browser_worker')
-  await browser('wait', '1100')
-  assert.equal(
-    await evaluate(
-      `document.querySelector('[data-source-status]')?.textContent`,
-    ),
+  await waitFor(
+    'extracting source status',
+    `document.querySelector('[data-source-status]')?.textContent`,
     '"extracting"',
   )
   await processing
-  await browser('wait', '1400')
-  assert.equal(
-    await evaluate(
-      `document.querySelector('[data-source-status]')?.textContent`,
-    ),
+  await waitFor(
+    'indexed source status',
+    `document.querySelector('[data-source-status]')?.textContent`,
     '"indexed"',
   )
   await browser('reload')
-  await browser('wait', '1000')
+  await waitFor(
+    'workspace page after reload',
+    `document.querySelector('.source-panel') !== null`,
+    'true',
+  )
   await evaluate(
     `document.querySelector('.source-panel')?.setAttribute('open','')`,
   )
-  assert.equal(
-    await evaluate(
-      `document.querySelector('[data-source-status]')?.textContent`,
-    ),
+  await waitFor(
+    'durable indexed source after reload',
+    `document.querySelector('[data-source-status]')?.textContent`,
     '"indexed"',
   )
 
@@ -288,11 +318,9 @@ try {
       await poisonWorker.processJob(scope, poison.jobId, 'browser_poison')
     } catch {}
   }
-  await browser('wait', '1400')
-  assert.equal(
-    await evaluate(
-      `[...document.querySelectorAll('[data-source-status]')].some(v=>v.textContent==='failed')`,
-    ),
+  await waitFor(
+    'failed poison source status',
+    `[...document.querySelectorAll('[data-source-status]')].some(v=>v.textContent==='failed')`,
     'true',
   )
   const sourceId = pending.sourceId
@@ -303,6 +331,11 @@ try {
   const reindexJob = await worker.claimNext(scope, 'browser_reindex')
   assert(reindexJob)
   await worker.processJob(scope, reindexJob.jobId, 'browser_reindex')
+  await waitFor(
+    'reindexed source status',
+    `[...document.querySelectorAll('[data-source-status]')].some(v=>v.textContent==='indexed')`,
+    'true',
+  )
   const otherTenantCount = await evaluate(
     `fetch('${apiUrl}/v1/workspaces/${workspaceId}/sources',{headers:{'x-tenant-id':'tenant_other','x-workspace-id':'${workspaceId}'}}).then(r=>r.json()).then(v=>v.sources.length)`,
   )
@@ -311,14 +344,28 @@ try {
     `fetch('${apiUrl}/v1/workspaces/${workspaceId}/sources/${sourceId}',{method:'DELETE',headers:{'x-tenant-id':'${organizationId}','x-workspace-id':'${workspaceId}'}}).then(r=>r.status)`,
   )
   assert.equal(deleteStatus, '204')
-  await browser('wait', '1200')
+  await browser('reload')
+  await waitFor(
+    'workspace page after delete reload',
+    `document.querySelector('.source-panel') !== null`,
+    'true',
+  )
+  await evaluate(
+    `document.querySelector('.source-panel')?.setAttribute('open','')`,
+  )
+  await waitFor(
+    'durable deleted source removal',
+    `[...document.querySelectorAll('[data-source-status]')].some(v=>v.textContent==='indexed')`,
+    'false',
+  )
   await evaluate(
     `(() => { if(document.documentElement.scrollWidth>document.documentElement.clientWidth) throw new Error('desktop overflow'); const text=document.body.innerText; if(text.includes('WP21 embedding usage fixture')||text.includes('Bearer ')) throw new Error('source or credential leak'); return true })()`,
   )
   await browser('set', 'viewport', '390', '844')
-  await browser('wait', '400')
-  await evaluate(
-    `(() => { if(document.documentElement.scrollWidth>document.documentElement.clientWidth) throw new Error('mobile overflow'); if(!document.querySelector('.source-panel')) throw new Error('source panel missing'); return true })()`,
+  await waitFor(
+    'mobile viewport layout',
+    `document.documentElement.scrollWidth<=document.documentElement.clientWidth && document.querySelector('.source-panel')!==null`,
+    'true',
   )
   const errors = await browser('errors', '--json')
   assert(

@@ -42,9 +42,22 @@ durability, RLS veya worker concurrency kanıtı sayılmaz. Production kanıtı 
 PostgreSQL repository, encrypted snapshot adapter ve API/worker restart smoke'undan
 gelir.
 
-Production bootstrap ayrı `CORPUS_DATABASE_URL` ve 32-byte
-`CORPUS_SNAPSHOT_KEY_BASE64` ister; support-access bağlantısını corpus worker kimliği
-olarak reuse etmez. Restart discovery yalnız pending veya lease'i dolmuş işlerin
+Production bootstrap ayrı `CORPUS_DATABASE_URL` ve `production = true` bildiren gerçek
+bir `KmsProvider` ister; support-access bağlantısını corpus worker kimliği olarak reuse
+etmez. Raw `CORPUS_SNAPSHOT_KEY_BASE64` production'da yasaktır. Local-memory KMS ve
+raw local seed yalnız `test`/`development` kullanımı açıkça seçildiğinde kurulabilir;
+production KMS composition adapter'ı sağlanmadığında bootstrap fail-closed kalır.
+
+Her immutable snapshot için `ChunkedEnvelopeEncryption` yeni bir AES-256-GCM DEK
+üretir. DEK plaintext persist edilmez; tenant/organization/workspace kapsamındaki KMS
+KEK'iyle wrap edilir. Chunk AAD; tenant, organization, workspace, revision, immutable
+snapshot amacı, storage key ve content hash'i bağlar. Bu alanlardan biri ile
+ciphertext, authentication tag veya wrapped DEK değiştirildiğinde okuma fail-closed
+olur. Key rotation eski ve yeni KMS version'larının kontrollü okumasına izin verir;
+revoked version okunamaz. Workspace crypto-erasure KMS unwrap yetkisini kaldırarak
+snapshot ciphertext'i fiziksel olarak kalsa bile okunamaz hale getirir.
+
+Restart discovery yalnız pending veya lease'i dolmuş işlerin
 tenant/organization/workspace kimliklerini döndüren security-definer
 `corpus_recoverable_scopes()` fonksiyonudur. `PUBLIC` execute kapalıdır; yalnız corpus
 worker rolüne açıkça grant edilir ve source/chunk içeriği döndürmez. Claim sonrasında

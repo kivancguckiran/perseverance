@@ -3,6 +3,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sourceListResponseSchema } from '@persistent-codex/control-plane-contracts'
+import {
+  createPostgresCorpusRepository,
+  EncryptedFilesystemCorpusSnapshotStorage,
+} from '@persistent-codex/corpus-ingestion'
+import {
+  ChunkedEnvelopeEncryption,
+  LocalKmsProvider,
+} from '@persistent-codex/workspace-security'
 import { buildControlPlane } from './server'
 
 const roots: string[] = []
@@ -25,6 +33,35 @@ describe('WP21 workspace source API', () => {
       ).rejects.toMatchObject({ code: 'CORPUS_REPOSITORY_REQUIRED' })
     } finally {
       vi.unstubAllEnvs()
+    }
+  })
+
+  it('fails closed when durable corpus storage uses a development KMS', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'wp21-api-local-kms-'))
+    roots.push(root)
+    const repository = createPostgresCorpusRepository({
+      connectionString: 'postgresql://unused:unused@127.0.0.1:1/unused',
+    })
+    const storage = new EncryptedFilesystemCorpusSnapshotStorage(
+      join(root, 'snapshots'),
+      new ChunkedEnvelopeEncryption(new LocalKmsProvider(Buffer.alloc(32, 15))),
+      { explicitUsage: 'test' },
+    )
+    vi.stubEnv('NODE_ENV', 'production')
+    try {
+      await expect(
+        buildControlPlane({
+          databasePath: ':memory:',
+          artifactRoot: join(root, 'artifacts'),
+          allowInMemorySupportAccess: true,
+          corpusRepository: repository,
+          corpusSnapshotStorage: storage,
+          corpusAutoDrain: false,
+        }),
+      ).rejects.toMatchObject({ code: 'PRODUCTION_CORPUS_KMS_REQUIRED' })
+    } finally {
+      vi.unstubAllEnvs()
+      await repository.close()
     }
   })
 
