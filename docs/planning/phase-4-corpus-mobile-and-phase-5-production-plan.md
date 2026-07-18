@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP25
+- Aktif iş paketi: WP26
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -27,8 +27,8 @@ lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine 
 | WP22  | 4   | Tamamlandı | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
 | WP23  | 4   | Tamamlandı | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
 | WP24  | 4   | Tamamlandı | Billing, prepaid kredi ve gelir/COGS/marj kabulü                         |
-| WP25  | 4   | Aktif      | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
-| WP26  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP25  | 4   | Tamamlandı | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
+| WP26  | 5   | Aktif      | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
 | WP27  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
 | WP28  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
 | WP29  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
@@ -532,7 +532,7 @@ kapatılamaz.
 
 ### WP25 — Paylaşımlı klasör, güvenli ortak çalışma ve Faz 4 kabulü
 
-Durum: **Aktif**. WP24 bağımsız kabul edildi; WP25 Faz 4'ün tek aktif iş paketidir.
+Durum: **Tamamlandı**. WP25 bağımsız kabul edildi ve Faz 4 kapatıldı.
 
 #### Hedef
 
@@ -597,7 +597,33 @@ tamamlamak.
 
 `feat: add secure shared-folder collaboration`
 
-## 4. Faz 4 exit kriteri
+#### Bağımsız kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama ve hardening commit'leri `5b4a026`, `e47f1f9` ve `93185a3` birlikte
+  contract, PostgreSQL/RLS, runtime lifecycle, billing ve browser zincirini tamamladı.
+- Durable PostgreSQL adapter production `main.ts` composition'ına bağlandı; eksik
+  production repository fail-closed olur. Forced RLS, invitation replay/expiry/revoke,
+  ownership yarışı, restart persistence, resource move ve cross-instance access
+  invalidation testleri geçti.
+- Pinli Codex `0.144.2` ile iki authenticated principal aynı shared session'da tek
+  gerçek `runId/codexTurnId` üretti. Citation'lı MCP retrieval, attachment, artifact,
+  approval `200/409`, usage dedupe, credit reservation ve gerçek billing settlement
+  aynı durable task zincirinde doğrulandı.
+- Viewer reddi, editor ortak task'ı, private sibling izolasyonu, stale artifact grant
+  reddi, interrupted/start-failed/admission-denied lifecycle ve realtime revoke geçti.
+- İki browser context'inde invite→viewer→editor, ortak task/approval, erişim kaybı ve
+  390x844, 768x1024, 1280x720 görünümleri yatay taşma veya page error olmadan geçti.
+- `WP25_CODEX_BIN=<codex-cli-0.144.2> pnpm phase4:accept`, WP21–WP25'in bütün zorunlu
+  kapılarını tamamladı. Repo-wide verify 34 test dosyasında 327 test, typecheck,
+  production build ve SSR HTTP smoke ile geçti; geçici kaynak cleanup'ı doğrulandı.
+- Billing ve Web Push emulator sonuçları production tahsilat/delivery kanıtı sayılmadı;
+  gerçek credential gerektiren kontroller açıkça `not-run` kaldı.
+
+WP25 ve Faz 4 tamamlandı. WP26 Faz 5'in tek aktif iş paketidir.
+
+## 4. Faz 4 exit kriteri — sağlandı
 
 Tenant kullanıcısı PDF veya workspace kaynağını ekleyebilir; kaynak güvenli ve durable
 şekilde çıkarılıp indekslenir; agent yalnız yetkili corpus'tan citation'lı retrieval
