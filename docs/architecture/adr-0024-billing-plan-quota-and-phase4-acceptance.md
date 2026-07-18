@@ -1,6 +1,6 @@
 # ADR-0024: Billing adapter, ticari plan/kota ve WP24 kabul sınırı
 
-- Durum: Kabul önerisi
+- Durum: Kabul edildi
 - Tarih: 18 Temmuz 2026
 - Kapsam: WP24
 
