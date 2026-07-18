@@ -19,6 +19,7 @@ import {
   type DevelopmentCommercialSeed,
 } from '../packages/billing-platform/src/index'
 import {
+  approvalSchema,
   approvalListResponseSchema,
   billingOverviewSchema,
   replayResponseSchema,
@@ -195,6 +196,16 @@ let app: Awaited<ReturnType<typeof buildControlPlane>> | undefined
 let store: SqliteEventStore | undefined
 let billing: ReturnType<typeof createBillingPostgresRepository> | undefined
 let web: ReturnType<typeof createServer> | undefined
+const browserApprovalBarrierArrivals = new Set<'a' | 'b'>()
+let browserApprovalBarrierReleased = false
+let releaseBrowserApprovalBarrier!: () => void
+const browserApprovalBarrier = new Promise<void>((resolveBarrier) => {
+  releaseBrowserApprovalBarrier = () => {
+    if (browserApprovalBarrierReleased) return
+    browserApprovalBarrierReleased = true
+    resolveBarrier()
+  }
+})
 const browser = async (device: 'a' | 'b', ...args: string[]) =>
   (
     await promisify(execFile)(
@@ -529,6 +540,14 @@ try {
   }
 
   let webUrl: string | undefined
+  let browserApprovalRaceEvidence:
+    | {
+        deviceAStatus: number
+        deviceBStatus: number
+        winningDevice: 'a' | 'b'
+        losingDevice: 'a' | 'b'
+      }
+    | undefined
   if (browserMode) {
     const webPort = await freePort()
     webUrl = `http://127.0.0.1:${webPort}`
@@ -546,6 +565,25 @@ try {
     ).default as { fetch(request: Request): Promise<Response> }
     web = createServer(async (request, response) => {
       const url = new URL(request.url ?? '/', webUrl)
+      if (url.pathname === '/__wp24/approval-decision-barrier') {
+        const device = url.searchParams.get('device')
+        if (request.method !== 'POST') {
+          response.writeHead(405).end('POST required')
+          return
+        }
+        if (device !== 'a' && device !== 'b') {
+          response.writeHead(400).end('device must be a or b')
+          return
+        }
+        if (browserApprovalBarrierArrivals.has(device)) {
+          response.writeHead(409).end(`device ${device} already arrived`)
+          return
+        }
+        browserApprovalBarrierArrivals.add(device)
+        await browserApprovalBarrier
+        response.writeHead(204).end()
+        return
+      }
       const relativePath = normalize(decodeURIComponent(url.pathname)).replace(
         /^[/\\]+/,
         '',
@@ -603,27 +641,126 @@ try {
       },
       30_000,
     )
+    const decisionPath = `/v1/approvals/${approval.approvalId}/decision`
+    await Promise.all(
+      (['a', 'b'] as const).map((device) =>
+        evaluate(
+          device,
+          `(() => {
+            const nativeFetch = window.fetch.bind(window)
+            window.__wp24ApprovalDecisionResult = null
+            window.fetch = async (...args) => {
+              const input = args[0]
+              const init = args[1] ?? {}
+              const requestUrl = typeof input === 'string' ? input : input.url
+              const requestMethod = String(init.method ?? (typeof input === 'string' ? 'GET' : input.method)).toUpperCase()
+              if (requestUrl.includes(${JSON.stringify(decisionPath)}) && requestMethod === 'POST') {
+                const barrier = await nativeFetch(${JSON.stringify(`${webUrl}/__wp24/approval-decision-barrier?device=${device}`)}, { method: 'POST' })
+                if (!barrier.ok) throw new Error('WP24 approval barrier rejected device ${device}: ' + barrier.status)
+                const result = await nativeFetch(...args)
+                const body = await result.clone().text()
+                window.__wp24ApprovalDecisionResult = { status: result.status, body }
+                return result
+              }
+              return nativeFetch(...args)
+            }
+            return true
+          })()`,
+        ),
+      ),
+    )
     await Promise.all([
       evaluate(
         'a',
-        `([...document.querySelectorAll('.approval-actions button')].find(b=>b.textContent.includes('Accept once'))).click()`,
+        `(() => {
+          const button = [...document.querySelectorAll('.approval-actions button')].find(button => button.textContent.includes('Accept once'))
+          if (!button) throw new Error('WP24 device a cannot race approval ${approval.approvalId}: Accept once button is missing')
+          if (button.disabled) throw new Error('WP24 device a cannot race approval ${approval.approvalId}: Accept once button is disabled')
+          button.click()
+          return true
+        })()`,
       ),
       evaluate(
         'b',
-        `([...document.querySelectorAll('.approval-actions button')].find(b=>b.textContent.includes('Accept once'))).click()`,
+        `(() => {
+          const button = [...document.querySelectorAll('.approval-actions button')].find(button => button.textContent.includes('Accept once'))
+          if (!button) throw new Error('WP24 device b cannot race approval ${approval.approvalId}: Accept once button is missing')
+          if (button.disabled) throw new Error('WP24 device b cannot race approval ${approval.approvalId}: Accept once button is disabled')
+          button.click()
+          return true
+        })()`,
       ),
     ])
+    await waitFor(
+      'both browser approval decisions reach the concurrency barrier',
+      async () =>
+        browserApprovalBarrierArrivals.size === 2 ? true : undefined,
+      30_000,
+    )
+    assert.deepEqual(
+      [...browserApprovalBarrierArrivals].sort(),
+      ['a', 'b'],
+      'both browser contexts must reach the approval decision barrier',
+    )
+    releaseBrowserApprovalBarrier()
+    const browserDecisionStatuses = await waitFor(
+      'both browser approval decision responses',
+      async () => {
+        const [a, b] = await Promise.all([
+          evaluate('a', `window.__wp24ApprovalDecisionResult?.status ?? null`),
+          evaluate('b', `window.__wp24ApprovalDecisionResult?.status ?? null`),
+        ])
+        return a !== 'null' && b !== 'null'
+          ? { a: Number(a), b: Number(b) }
+          : undefined
+      },
+      30_000,
+    )
+    assert.deepEqual(
+      Object.values(browserDecisionStatuses).sort((a, b) => a - b),
+      [200, 409],
+      'exactly one browser decision must win the approval CAS',
+    )
+    const losingDevice = browserDecisionStatuses.a === 409 ? 'a' : 'b'
+    const winningDevice = losingDevice === 'a' ? 'b' : 'a'
+    browserApprovalRaceEvidence = {
+      deviceAStatus: browserDecisionStatuses.a,
+      deviceBStatus: browserDecisionStatuses.b,
+      winningDevice,
+      losingDevice,
+    }
+    assert.equal(
+      await evaluate(
+        losingDevice,
+        `(() => {
+          const result = window.__wp24ApprovalDecisionResult
+          if (!result || result.status !== 409) return false
+          try {
+            const code = JSON.parse(result.body).code
+            return code === 'APPROVAL_VERSION_CONFLICT' || code === 'APPROVAL_ALREADY_RESOLVED'
+          } catch { return false }
+        })()`,
+      ),
+      'true',
+      `browser device ${losingDevice} must receive a safe already-resolved/version conflict`,
+    )
     await waitFor(
       'browser CAS reconciliation',
       async () => {
         const [a, b] = await Promise.all([
           evaluate(
             'a',
-            `document.querySelector('.approval-card')?.textContent.includes('resolved')`,
+            `(() => {
+              const card = document.querySelector(${JSON.stringify(`#approval-${approval.approvalId}`)})
+              return Boolean(card && card.classList.contains('approval-resolved') && card.textContent.includes('resolved') && !card.querySelector('.approval-actions'))
+            })()`,
           ),
           evaluate(
             'b',
-            `document.querySelector('.approval-card')?.textContent.includes('resolved')`,
+            `(() => {
+              const card = document.querySelector(${JSON.stringify(`#approval-${approval.approvalId}`)})
+              return Boolean(card && card.classList.contains('approval-resolved') && card.textContent.includes('resolved') && !card.querySelector('.approval-actions'))
+            })()`,
           ),
         ])
         return a === 'true' && b === 'true' ? true : undefined
@@ -631,6 +768,20 @@ try {
       30_000,
     )
   } else await decideWithApiRace()
+
+  const resolvedApprovalReply = await app!.inject({
+    method: 'GET',
+    url: `/v1/approvals/${approval.approvalId}`,
+    headers,
+  })
+  assert.equal(
+    resolvedApprovalReply.statusCode,
+    200,
+    resolvedApprovalReply.body,
+  )
+  const resolvedApproval = approvalSchema.parse(resolvedApprovalReply.json())
+  assert.equal(resolvedApproval.status, 'resolved')
+  assert.equal(resolvedApproval.selectedDecision, 'accept')
 
   const terminal = await waitFor(
     'approval resume terminal answer',
@@ -656,6 +807,46 @@ try {
         ? final
         : undefined
     },
+  )
+  const durableApprovalTimeline = replayResponseSchema.parse(
+    (
+      await app!.inject({
+        method: 'GET',
+        url: `/v1/sessions/${session.sessionId}/events?after=0&limit=500`,
+        headers,
+      })
+    ).json(),
+  )
+  const approvalResolvedEvents = durableApprovalTimeline.events.filter(
+    (event) =>
+      event.type === 'approval.resolved' &&
+      event.codexTurnId === approvalTurn.codexTurnId,
+  )
+  const approvalCommandCompletions = durableApprovalTimeline.events.filter(
+    (event) =>
+      event.type === 'command.completed' &&
+      event.codexTurnId === approvalTurn.codexTurnId,
+  )
+  const resumedTerminalEvents = durableApprovalTimeline.events.filter(
+    (event) =>
+      event.type === 'agent.message.completed' &&
+      event.codexTurnId === approvalTurn.codexTurnId &&
+      event.payload.text.includes('WP24_APPROVAL_RESUMED'),
+  )
+  assert.equal(
+    approvalResolvedEvents.length,
+    1,
+    'the durable timeline must contain one approval resolution',
+  )
+  assert.equal(
+    approvalCommandCompletions.length,
+    1,
+    'the upstream approved command must complete exactly once',
+  )
+  assert.equal(
+    resumedTerminalEvents.length,
+    1,
+    'the approval turn must emit one resumed terminal answer',
   )
 
   const priceCatalog = {
@@ -815,6 +1006,16 @@ try {
   assert.equal(
     approvalSettlementReplay.settlementId,
     approvalSettlement.settlementId,
+  )
+  const approvalSettlementCount = (
+    await billing!.creditAccount(scope)
+  ).settlements.filter(
+    (value) => value.usageDedupeKey === usageDedupeKey,
+  ).length
+  assert.equal(
+    approvalSettlementCount,
+    1,
+    'approval CAS replay must not create a second billing settlement',
   )
 
   const partialCreditEvidence: Record<
@@ -1228,11 +1429,17 @@ try {
       creditSettlementId: approvalSettlement.settlementId,
       creditLedgerWatermark: persisted.credit.balance.ledgerWatermark,
       financialProjectionId: financialProjection.projectionId,
+      browserApprovalRace: browserApprovalRaceEvidence ?? null,
+      approvalResolvedEventSequence: approvalResolvedEvents[0]!.sequence,
       partialCreditEvidence,
       assertions: {
         sameSession: true,
         citationLinked: true,
         approvalCasWinners: 1,
+        approvalCasLosersSafelyReconciled: 1,
+        durableApprovalResolvedEvents: approvalResolvedEvents.length,
+        upstreamApprovedCommandCompletions: approvalCommandCompletions.length,
+        approvalBillingSettlements: approvalSettlementCount,
         resumedTerminal: terminal.payload.text.includes(
           'WP24_APPROVAL_RESUMED',
         ),
@@ -1252,6 +1459,7 @@ try {
     })}\n`,
   )
 } finally {
+  releaseBrowserApprovalBarrier()
   for (const device of ['a', 'b'] as const) {
     try {
       await browser(device, 'set', 'offline', 'off')

@@ -482,6 +482,32 @@ paid lot `clot_835d4dd7c5e718e8c5f3ecb0ae8148bc`; promotional lot
 financial projection `fprj_d8cfe1c124a432eb9a78d0db8f2385bb`. Harness bu kimlikleri
 aynı tenant/workspace/session/run ve usage zincirine assertion ile bağladı.
 
+İki gerçek browser context'inin aynı approval üzerindeki `Accept once` yarışı,
+sleep kullanmayan kontrollü request barrier ile kararlı hale getirildi. İki decision
+request'i de bariyere ulaşmadan CAS serbest bırakılmıyor; kayıp context'in butonunun
+yokluğu/disabled durumu açıklayıcı assertion üretiyor. Pinli Codex `0.144.2` ile üç
+ardışık `wp24:browser` koşusu geçti:
+
+- session `ses_dcb36c9b-a5ca-41fe-8145-3214e736a2f6`, approval
+  `apr_edcf04a36ba2d4a660664c4e`, resolved sequence `238` (`a=409`, `b=200`);
+- session `ses_02a5c909-67d3-4731-aa61-29ab40973f8f`, approval
+  `apr_109982d77e7323c5c872dc1b`, resolved sequence `248` (`a=409`, `b=200`);
+- session `ses_3bbc011b-d780-440a-8447-c9a32accded2`, approval
+  `apr_8f014ee5ed4b839c72f0e459`, resolved sequence `233` (`a=409`, `b=200`).
+
+Son `phase4:accept` browser kanıtı session
+`ses_6392d8a4-df8d-445e-8b50-c05300c750ea`, approval run
+`run_d3503785-60c1-4f1d-be43-962beec74b56`, approval
+`apr_576a4699f8fc5922a7b9985b`, resolved sequence `252`, CAS sonucu `a=200` / `b=409`,
+usage dedupe
+`runtime-usage:ses_6392d8a4-df8d-445e-8b50-c05300c750ea:019f768e-65a7-74b2-b8c8-d027c2129c12`,
+settlement `cset_bfbcff8794d7da7aca9c91b6cd9c9b27` ve ledger watermark `clw_30`
+üretti. Her iki context aynı resolved approval card'ına reconcile oldu; durable
+timeline'da tam bir `approval.resolved`, bir upstream command completion, bir resumed
+terminal answer ve usage dedupe başına bir billing settlement assertion ile
+doğrulandı. Deterministic billing ve Web Push emulator sonuçları production
+tahsilat/delivery kanıtı değildir.
+
 Bu uygulama kaydı WP24'ü `Tamamlandı` yapmaz; bağımsız kabul olmadan Faz 4 kapatılamaz
 ve WP25 aktive edilemez.
 
