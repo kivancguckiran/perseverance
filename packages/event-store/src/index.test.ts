@@ -807,7 +807,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 12,
+        user_version: 13,
       })
       database.close()
     } finally {
@@ -1051,7 +1051,7 @@ describe('WP11 durable audit', () => {
       expect(reopened.listAudit(scope).records).toHaveLength(1)
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
-        user_version: 12,
+        user_version: 13,
       })
       database.close()
     } finally {
@@ -1326,6 +1326,65 @@ describe('WP13 provider persistence and append-only usage ledger', () => {
     )
     store.close()
   })
+
+  it.each([
+    'compute_millisecond',
+    'storage_byte_millisecond',
+    'egress_byte',
+    'index_embedding_token',
+    'retrieval_embedding_token',
+  ] as const)('keeps versioned %s in the same append-only ledger', (meter) => {
+    const store = new SqliteEventStore(':memory:')
+    createProviderSession(store)
+    const record = store.appendCommercialUsage(scope, {
+      schemaVersion: 1,
+      tenantId: scope.tenantId,
+      organizationId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+      ledgerEntryId: `entry-${meter}`,
+      sessionId: scope.sessionId,
+      turnId: 'turn-meter',
+      sourceId: null,
+      meter,
+      quantity: 42,
+      status: 'measured',
+      priceCatalogVersion: 'catalog-v1',
+      currency: 'USD',
+      estimatedCostMicros: 7,
+      officialCostMicros: null,
+      dedupeKey: `meter:${meter}:42`,
+      occurredAt: '2026-07-18T10:00:00.000Z',
+    })
+    expect(record).toMatchObject({
+      entryKind: 'meter',
+      meter,
+      meterVersion: 1,
+      meterQuantity: 42,
+      usageStatus: 'measured',
+    })
+    expect(
+      store.appendCommercialUsage(scope, {
+        schemaVersion: 1,
+        tenantId: scope.tenantId,
+        organizationId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        ledgerEntryId: `entry-${meter}`,
+        sessionId: scope.sessionId,
+        turnId: 'turn-meter',
+        sourceId: null,
+        meter,
+        quantity: 42,
+        status: 'measured',
+        priceCatalogVersion: 'catalog-v1',
+        currency: 'USD',
+        estimatedCostMicros: 7,
+        officialCostMicros: null,
+        dedupeKey: `meter:${meter}:42`,
+        occurredAt: '2026-07-18T10:00:00.000Z',
+      }).ledgerId,
+    ).toBe(record.ledgerId)
+    store.close()
+  })
 })
 
 describe('WP14 durable detached run lifecycle', () => {
@@ -1431,7 +1490,7 @@ describe('WP14 durable detached run lifecycle', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 12,
+        user_version: 13,
       })
       database.close()
     } finally {

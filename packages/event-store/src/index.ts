@@ -21,6 +21,10 @@ import {
   type UsageReport,
 } from '@persistent-codex/provider-platform'
 import { bootstrapSchema } from './schema'
+import {
+  commercialUsageEntrySchema,
+  type CommercialUsageEntry,
+} from '@persistent-codex/billing-platform'
 
 export interface StoreScope {
   tenantId: string
@@ -60,6 +64,7 @@ export const AUDIT_ACTIONS = [
   'git.snapshot_refreshed',
   'artifact.accessed',
   'authorization.decided',
+  'quota.decided',
 ] as const
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]
 export type AuditActor = 'user' | 'system' | 'runtime'
@@ -124,6 +129,9 @@ const AUDIT_METADATA_KEYS = new Set([
   'byteBucket',
   'status',
   'reasonCode',
+  'policyVersion',
+  'measurementWatermark',
+  'inFlightPolicy',
 ])
 const SAFE_AUDIT_IDENTIFIER = /^[A-Za-z0-9._:-]{1,128}$/
 const SENSITIVE_AUDIT_VALUE =
@@ -223,7 +231,7 @@ export interface UsageLedgerRecord extends StoreScope {
   requestId: string | null
   provider: ProviderId
   modelId: string
-  entryKind: 'usage' | 'terminal' | 'reconciliation'
+  entryKind: 'usage' | 'terminal' | 'reconciliation' | 'meter'
   purpose: 'conversation_turn' | 'conversation_title'
   reportKind: 'delta' | 'cumulative' | null
   dedupeKey: string
@@ -236,6 +244,11 @@ export interface UsageLedgerRecord extends StoreScope {
   estimatedCostMicros: number | null
   officialCostMicros: number | null
   sourceReference: string | null
+  meter: CommercialUsageEntry['meter'] | null
+  meterVersion: number | null
+  meterQuantity: number | null
+  usageStatus: CommercialUsageEntry['status'] | null
+  currency: string | null
   occurredAt: string
 }
 
@@ -532,6 +545,11 @@ interface UsageLedgerRow {
   estimated_cost_micros: number | null
   official_cost_micros: number | null
   source_reference: string | null
+  meter: UsageLedgerRecord['meter']
+  meter_version: number | null
+  meter_quantity: number | null
+  usage_status: UsageLedgerRecord['usageStatus']
+  currency: string | null
   occurred_at: string
 }
 
@@ -712,6 +730,11 @@ function usageFromRow(row: UsageLedgerRow): UsageLedgerRecord {
     estimatedCostMicros: row.estimated_cost_micros,
     officialCostMicros: row.official_cost_micros,
     sourceReference: row.source_reference,
+    meter: row.meter,
+    meterVersion: row.meter_version,
+    meterQuantity: row.meter_quantity,
+    usageStatus: row.usage_status,
+    currency: row.currency,
     occurredAt: row.occurred_at,
   }
 }
@@ -2584,6 +2607,84 @@ export class SqliteEventStore {
         input.sessionId,
         input.dedupeKey,
       ) as unknown as UsageLedgerRow
+    return usageFromRow(row)
+  }
+
+  appendCommercialUsage(
+    scope: StoreScope,
+    entryInput: CommercialUsageEntry,
+  ): UsageLedgerRecord {
+    assertScope(scope)
+    const entry = commercialUsageEntrySchema.parse(entryInput)
+    if (
+      entry.tenantId !== scope.tenantId ||
+      entry.organizationId !== scope.tenantId ||
+      entry.workspaceId !== scope.workspaceId ||
+      entry.sessionId !== scope.sessionId
+    )
+      throw new StoreConflictError(
+        'USAGE_SCOPE_CONFLICT',
+        'Commercial usage scope does not match the ledger session scope',
+      )
+    const timestamp = this.#timestamp()
+    this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO usage_ledger (
+          tenant_id,workspace_id,session_id,turn_id,provider,model_id,
+          entry_kind,purpose,dedupe_key,reported_json,effective_json,
+          completeness,reconciliation_status,price_catalog_version,
+          estimated_cost_micros,official_cost_micros,meter,meter_version,
+          meter_quantity,usage_status,currency,occurred_at,created_at
+        ) VALUES (?,?,?,?,?,'platform-meter-v1','meter','conversation_turn',?,?,?,
+          ?,?,?,?,?,?,1,?,?,?,?,?)`,
+      )
+      .run(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        entry.turnId ?? 'workspace-meter',
+        'codex',
+        entry.dedupeKey,
+        JSON.stringify(zeroUsageCounters()),
+        JSON.stringify(zeroUsageCounters()),
+        entry.status === 'incomplete' ? 'partial' : 'complete',
+        entry.status === 'reconciled' ? 'reconciled' : 'unreconciled',
+        entry.priceCatalogVersion,
+        entry.estimatedCostMicros,
+        entry.officialCostMicros,
+        entry.meter,
+        entry.quantity,
+        entry.status,
+        entry.currency,
+        entry.occurredAt,
+        timestamp,
+      )
+    const row = this.#database
+      .prepare(
+        `SELECT * FROM usage_ledger
+         WHERE tenant_id=? AND workspace_id=? AND session_id=? AND dedupe_key=?`,
+      )
+      .get(
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+        entry.dedupeKey,
+      ) as UsageLedgerRow | undefined
+    if (!row)
+      throw new StoreError(
+        'USAGE_INSERT_FAILED',
+        'Commercial usage could not be appended',
+      )
+    if (
+      row.entry_kind !== 'meter' ||
+      row.meter !== entry.meter ||
+      row.meter_quantity !== entry.quantity ||
+      row.usage_status !== entry.status
+    )
+      throw new StoreConflictError(
+        'USAGE_DEDUPE_CONFLICT',
+        'Commercial usage dedupe key was reused with different measurement',
+      )
     return usageFromRow(row)
   }
 

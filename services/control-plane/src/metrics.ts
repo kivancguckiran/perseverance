@@ -128,6 +128,7 @@ export const METRIC_DEFINITIONS = {
         'support',
         'break_glass',
         'notification',
+        'billing',
       ],
       outcome: ['allow', 'deny'],
       reason: [

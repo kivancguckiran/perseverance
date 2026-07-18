@@ -1,5 +1,12 @@
 import { timelineEventSchema } from '@persistent-codex/domain-events'
 import {
+  admissionDecisionSchema,
+  budgetSchema,
+  commercialPlanSchema,
+  quotaPolicySchema,
+  subscriptionStateSchema,
+} from '@persistent-codex/billing-platform/contracts'
+import {
   capabilityMatrixSchema,
   modelSelectionSchema,
   providerModelCatalogSchema,
@@ -98,6 +105,7 @@ export const authorizationActionSchema = z.enum([
   'workspace.snapshot.read',
   'usage.read',
   'usage.reconcile',
+  'billing.read',
   'audit.read',
   'metrics.read',
   'folder.read',
@@ -714,6 +722,7 @@ export const auditActionSchema = z.enum([
   'git.snapshot_refreshed',
   'artifact.accessed',
   'authorization.decided',
+  'quota.decided',
 ])
 export const auditOutcomeSchema = z.enum(['requested', 'success', 'failure'])
 export const auditRecordSchema = scopeSchema.extend({
@@ -877,6 +886,20 @@ export const usageReconciliationResponseSchema = z.object({
   provider: z.enum(['codex', 'claude', 'gemini']).nullable(),
   reconciledItems: z.number().int().nonnegative(),
   message: z.string().min(1),
+})
+
+export const billingOverviewSchema = z.object({
+  schemaVersion: z.literal(1),
+  plan: commercialPlanSchema,
+  subscription: subscriptionStateSchema.nullable(),
+  budgets: z.array(budgetSchema),
+  quotas: z.array(quotaPolicySchema),
+  latestDecision: admissionDecisionSchema.nullable(),
+  usage: usageCostSummarySchema,
+  usageFreshnessAt: z.iso.datetime(),
+  lastReconciledAt: z.iso.datetime().nullable(),
+  providerMode: z.enum(['platform_managed', 'byok', 'hybrid']),
+  productionBillingVerified: z.boolean(),
 })
 
 export const approvalListResponseSchema = z.object({
@@ -1302,6 +1325,7 @@ export type ConversationUsageCost = z.infer<typeof conversationUsageCostSchema>
 export type UsageReconciliationResponse = z.infer<
   typeof usageReconciliationResponseSchema
 >
+export type BillingOverview = z.infer<typeof billingOverviewSchema>
 export type SupportGrant = z.infer<typeof supportGrantSchema>
 export type SupportGrantStatus = z.infer<typeof supportGrantStatusSchema>
 export type SupportAccessAction = z.infer<typeof supportAccessActionSchema>

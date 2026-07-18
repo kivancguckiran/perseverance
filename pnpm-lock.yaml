@@ -99,6 +99,25 @@ importers:
         specifier: workspace:*
         version: link:../control-plane-contracts
 
+  packages/billing-platform:
+    dependencies:
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.3)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
+
   packages/codex-event-adapter:
     dependencies:
       '@persistent-codex/artifact-storage':
@@ -121,6 +140,9 @@ importers:
 
   packages/control-plane-contracts:
     dependencies:
+      '@persistent-codex/billing-platform':
+        specifier: workspace:*
+        version: link:../billing-platform
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../domain-events
@@ -155,6 +177,9 @@ importers:
 
   packages/event-store:
     dependencies:
+      '@persistent-codex/billing-platform':
+        specifier: workspace:*
+        version: link:../billing-platform
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../domain-events
@@ -236,6 +261,9 @@ importers:
       '@persistent-codex/authz':
         specifier: workspace:*
         version: link:../../packages/authz
+      '@persistent-codex/billing-platform':
+        specifier: workspace:*
+        version: link:../../packages/billing-platform
       '@persistent-codex/codex-event-adapter':
         specifier: workspace:*
         version: link:../../packages/codex-event-adapter

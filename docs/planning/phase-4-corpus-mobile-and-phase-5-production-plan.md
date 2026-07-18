@@ -21,17 +21,17 @@ production rollout seviyesine taşır.
 
 ## 2. İş paketi özeti
 
-| Paket | Faz | Durum      | Hedef                                                                    |
-| ----- | --- | ---------- | ------------------------------------------------------------------------ |
-| WP21  | 4   | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
-| WP22  | 4   | Tamamlandı | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
-| WP23  | 4   | Tamamlandı | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Aktif      | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
-| WP25  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP26  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP27  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP28  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP29  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| Paket | Faz | Durum                      | Hedef                                                                    |
+| ----- | --- | -------------------------- | ------------------------------------------------------------------------ |
+| WP21  | 4   | Tamamlandı                 | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
+| WP22  | 4   | Tamamlandı                 | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
+| WP23  | 4   | Tamamlandı                 | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
+| WP24  | 4   | Uygulandı / kabul bekliyor | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
+| WP25  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP26  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP27  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP28  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP29  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; Faz 4
 tamamlanmadan WP25; WP28 tamamlanmadan nihai WP29 aktive edilmez.
@@ -339,6 +339,51 @@ uçtan uca kapatmak.
 #### Teslimat commit'i
 
 `feat: complete corpus mobile and billing beta acceptance`
+
+#### Uygulama ve kabul adayı kanıtı
+
+Durum: **Uygulandı / kabul bekliyor**. Bu kayıt uygulama doğrulamasıdır; bağımsız WP24
+kabulü tamamlanmadan Faz 4 kapatılmaz ve WP25 aktive edilmez.
+
+- Ticari sınır `adr-0024-billing-plan-quota-and-phase4-acceptance.md` ile
+  versioned plan/entitlement/budget/quota sözleşmelerine bağlandı. Platform-managed
+  provider maliyeti ile BYOK ayrıdır; gerçek provider/MoR seçimi, tax, invoice ve
+  refund davranışı uygulanmış gerçek olarak sunulmaz.
+- `0024_billing_plan_quota.sql`; tenant/organization/workspace scoped billing
+  customer, webhook, subscription, entitlement, budget, quota decision ve invoice
+  reconciliation tablolarını composite foreign key ve forced RLS ile ekledi. Gerçek
+  PostgreSQL smoke'unda cross-tenant görünürlük sıfır; duplicate webhook ek etkisi
+  sıfır; out-of-order event eski state'i geri getirmedi ve stale processing restart
+  recovery ile yeniden claim edildi.
+- Mevcut append-only usage ledger tek kaynak olarak korundu. Provider input, cached
+  input, output, reasoning token ve reported cost yanında compute millisecond,
+  storage byte-millisecond, egress byte, index embedding token ve retrieval embedding
+  token meter'ları; price catalog/version, currency, deterministic dedupe ve
+  measured/estimated/reconciled/incomplete durumu taşır. Failed/interrupted kullanım
+  korunur; eksik terminal usage sıfırlaştırılmaz.
+- Turn, source upload/reindex, retrieval ve concurrency girişlerinde aynı policy
+  evaluator uygulanır. Soft limit warning+audit üretir; hard limit yeni işi
+  fail-closed reddeder. Başlamış turn varsayılan olarak deterministik biçimde devam
+  eder; karar policy version, reason ve measurement watermark ile audit edilir.
+- Billing UI plan/version, platform-managed/BYOK modu, budget tüketimi, quota kararı,
+  measured/estimated/reconciled/incomplete ayrımı, currency, price version,
+  freshness ve reconciliation zamanını gösterir; credential veya ham provider
+  payload göstermez.
+- `WP24_CODEX_BIN=<codex-cli-0.144.2> pnpm phase4:accept` geçti: 160 WP24 hedefli test,
+  gerçek PostgreSQL+pgvector, pinli Codex agent/MCP citation senaryosu, kaynak
+  delete/reindex, iki cihazlı approval CAS/realtime reconciliation, session resume,
+  terminal usage/cost, failed/interrupted accounting, hard quota ve cross-tenant sıfır
+  görünürlük doğrulandı. 390x844, 768x1024 ve 1280x720 browser kabulünde keyboard,
+  screen-reader label, yatay taşma, page error ve credential leak kontrolleri geçti.
+- Aynı kapıdaki `pnpm verify`; format, typecheck, 30 test dosyasında 310 test,
+  production build ve SSR HTTP smoke'u tamamladı. PostgreSQL container/volume,
+  browser context, managed Codex config, service worker ve temp dosya cleanup'ı
+  raporlandı.
+- Billing provider deterministic HMAC emulator'dır; gerçek billing provider
+  seçilmediği/credential olmadığı için gerçek tahsilat smoke'u `not-run` durumundadır.
+  Web Push emulator kullanıldı; gerçek Web Push credential olmadığı için opt-in
+  smoke'u `not-run` durumundadır. Emulator sonuçları production tahsilat veya delivery
+  kanıtı değildir.
 
 ## 4. Faz 4 exit kriteri
 

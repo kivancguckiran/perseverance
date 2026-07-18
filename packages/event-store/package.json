@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@persistent-codex/billing-platform": "workspace:*",
     "@persistent-codex/domain-events": "workspace:*",
     "@persistent-codex/provider-platform": "workspace:*"
   },

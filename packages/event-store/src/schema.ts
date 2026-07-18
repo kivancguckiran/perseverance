@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 12
+export const CURRENT_SCHEMA_VERSION = 13
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -187,6 +187,11 @@ export const CREATE_SCHEMA_SQL = `
     estimated_cost_micros INTEGER,
     official_cost_micros INTEGER,
     source_reference TEXT,
+    meter TEXT,
+    meter_version INTEGER,
+    meter_quantity INTEGER,
+    usage_status TEXT,
+    currency TEXT,
     occurred_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
     UNIQUE(tenant_id, workspace_id, session_id, dedupe_key),
@@ -462,6 +467,20 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
       database.exec(
         `ALTER TABLE usage_ledger ADD COLUMN purpose TEXT NOT NULL DEFAULT 'conversation_turn'`,
       )
+    for (const [column, definition] of [
+      ['meter', 'TEXT'],
+      ['meter_version', 'INTEGER'],
+      ['meter_quantity', 'INTEGER'],
+      ['usage_status', 'TEXT'],
+      ['currency', 'TEXT'],
+    ] as const)
+      if (
+        tableExists(database, 'usage_ledger') &&
+        !hasColumn(database, 'usage_ledger', column)
+      )
+        database.exec(
+          `ALTER TABLE usage_ledger ADD COLUMN ${column} ${definition}`,
+        )
     if (
       tableExists(database, 'conversation_folders') &&
       !hasColumn(database, 'conversation_folders', 'archived_at')

@@ -18,6 +18,7 @@ import {
   auditListResponseSchema,
   providerCatalogListResponseSchema,
   conversationUsageCostSchema,
+  billingOverviewSchema,
   meResponseSchema,
   createSupportGrantRequestSchema,
   supportGrantListResponseSchema,
@@ -37,6 +38,7 @@ import {
   type ProviderCatalogListResponse,
   type ConversationUsageCost,
   type UsageCostSummary,
+  type BillingOverview,
   type MeResponse,
   type SupportGrant,
   type SupportAccessAction,
@@ -193,6 +195,15 @@ async function readUsage(sessionId: string): Promise<ConversationUsageCost> {
   )
   if (!response.ok) throw await apiError(response)
   return conversationUsageCostSchema.parse(await response.json())
+}
+
+async function readBilling(sessionId: string): Promise<BillingOverview> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/billing?sessionId=${encodeURIComponent(sessionId)}`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return billingOverviewSchema.parse(await response.json())
 }
 
 export function formatUsageCost(summary: UsageCostSummary | undefined) {
@@ -2628,6 +2639,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     refetchInterval: turnActive ? 2_000 : false,
   })
   const usageDisplay = formatUsageCost(usage.data?.total)
+  const billing = useQuery({
+    queryKey: ['workspace-billing', cacheNamespace, workspaceId, sessionId],
+    queryFn: () => readBilling(sessionId!),
+    enabled: Boolean(sessionId) && online && identity.isSuccess,
+    staleTime: turnActive ? 0 : 5_000,
+    refetchInterval: turnActive ? 2_000 : false,
+  })
   const offlineSelected = offlineHistory.find(
     (item) => item.sessionId === sessionId,
   )
@@ -3388,6 +3406,71 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     Toplam; conversation turn’leri ile otomatik başlık işini
                     birlikte içerir. Eksik usage sıfır maliyet sayılmaz.
                   </p>
+                  {billing.data ? (
+                    <section
+                      className="billing-status"
+                      aria-label="Plan ve bütçe durumu"
+                    >
+                      <div>
+                        <strong>{billing.data.plan.displayName}</strong>
+                        <span>
+                          v{billing.data.plan.planVersion} ·{' '}
+                          {billing.data.providerMode}
+                        </span>
+                      </div>
+                      <small>
+                        currency {billing.data.plan.currency} · tax{' '}
+                        {billing.data.plan.taxBehavior} · price{' '}
+                        {billing.data.usage.priceCatalogVersions.join(', ') ||
+                          'bekleniyor'}
+                      </small>
+                      <small>
+                        freshness{' '}
+                        {new Date(
+                          billing.data.usageFreshnessAt,
+                        ).toLocaleString()}{' '}
+                        · last reconciliation{' '}
+                        {billing.data.lastReconciledAt
+                          ? new Date(
+                              billing.data.lastReconciledAt,
+                            ).toLocaleString()
+                          : 'yok'}
+                      </small>
+                      {billing.data.budgets.map((budget) => (
+                        <small key={budget.budgetId}>
+                          {budget.period} budget · consumed{' '}
+                          {billing.data.usage.estimatedCostMicros === null
+                            ? 'incomplete'
+                            : `${billing.data.usage.estimatedCostMicros} µ${budget.currency}`}{' '}
+                          · soft {budget.softLimitMicros ?? 'yok'} · hard{' '}
+                          {budget.hardLimitMicros ?? 'yok'}
+                        </small>
+                      ))}
+                      {billing.data.latestDecision ? (
+                        <p
+                          className={`quota-${billing.data.latestDecision.outcome}`}
+                          role={
+                            billing.data.latestDecision.outcome === 'deny'
+                              ? 'alert'
+                              : 'status'
+                          }
+                        >
+                          {billing.data.latestDecision.outcome === 'warn'
+                            ? 'Soft limit uyarısı'
+                            : billing.data.latestDecision.outcome === 'deny'
+                              ? 'Hard limit'
+                              : 'Kota uygun'}
+                          : {billing.data.latestDecision.reason} · policy v
+                          {billing.data.latestDecision.policyVersion}
+                        </p>
+                      ) : null}
+                      {!billing.data.productionBillingVerified ? (
+                        <small>
+                          Billing emulator · production tahsilat doğrulanmadı
+                        </small>
+                      ) : null}
+                    </section>
+                  ) : null}
                   {usage.data?.items.length ? (
                     <ul>
                       {usage.data.items.map((item) => {

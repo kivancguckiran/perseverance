@@ -1,6 +1,13 @@
 import { setImmediate as waitForImmediate } from 'node:timers/promises'
 import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
 import {
+  evaluateAdmission,
+  type AdmissionDecision,
+  type AdmissionRequest,
+  type CommercialPolicySnapshot,
+  type SubscriptionState as BillingSubscriptionState,
+} from '@persistent-codex/billing-platform'
+import {
   CorpusIngestionService,
   CorpusError,
   HybridCorpusRetrievalService,
@@ -53,6 +60,7 @@ import {
   pushSubscriptionListResponseSchema,
   pushSubscriptionRevokeRequestSchema,
   pushNotificationResolutionSchema,
+  billingOverviewSchema,
 } from '@persistent-codex/control-plane-contracts'
 import type {
   PushProvider,
@@ -222,6 +230,44 @@ export interface ControlPlaneOptions {
   costReconciliationPorts?: Partial<
     Record<ProviderId, ProviderCostReconciliationPort>
   >
+  commercialPolicy?: {
+    snapshot(scope: {
+      tenantId: string
+      organizationId: string
+      workspaceId: string
+    }): CommercialPolicySnapshot | Promise<CommercialPolicySnapshot>
+    measurements(input: {
+      tenantId: string
+      organizationId: string
+      workspaceId: string
+      sessionId?: string
+      operation: AdmissionRequest['operation']
+      requestedBytes?: number
+    }):
+      | {
+          values: AdmissionRequest['measurements']
+          watermark: string
+          measuredAt: string
+        }
+      | Promise<{
+          values: AdmissionRequest['measurements']
+          watermark: string
+          measuredAt: string
+        }>
+    recordDecision?(decision: AdmissionDecision): void | Promise<void>
+    subscription?(scope: {
+      tenantId: string
+      organizationId: string
+      workspaceId: string
+    }):
+      BillingSubscriptionState | null | Promise<BillingSubscriptionState | null>
+    lastReconciledAt?(scope: {
+      tenantId: string
+      organizationId: string
+      workspaceId: string
+    }): string | null | Promise<string | null>
+    productionBillingVerified?: boolean
+  }
   providerCatalogs?: ProviderModelCatalog[]
   providerAdapterFactory?: SessionOrchestratorOptions['providerAdapterFactory']
   cursorForceAllowed?: boolean
@@ -472,6 +518,12 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/sessions/:sessionId/usage',
       action: 'usage.read',
       resourceType: 'usage',
+    },
+    {
+      method: 'GET',
+      route: '/v1/workspaces/:workspaceId/billing',
+      action: 'billing.read',
+      resourceType: 'billing',
     },
     {
       method: 'GET',
@@ -926,6 +978,70 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const metrics = options.metricRecorder ?? new BoundedMetricRecorder({ now })
   const turnStartedAt = new Map<string, number>()
   const store = options.eventStore ?? new SqliteEventStore(options.databasePath)
+  const latestCommercialDecisions = new Map<string, AdmissionDecision>()
+  const admitCommercialOperation = async (input: {
+    tenantId: string
+    workspaceId: string
+    sessionId?: string
+    operation: AdmissionRequest['operation']
+    requestedBytes?: number
+  }) => {
+    if (!options.commercialPolicy) return null
+    const scoped = {
+      tenantId: input.tenantId,
+      organizationId: input.tenantId,
+      workspaceId: input.workspaceId,
+    }
+    const [snapshot, measurement] = await Promise.all([
+      options.commercialPolicy.snapshot(scoped),
+      options.commercialPolicy.measurements({
+        ...scoped,
+        operation: input.operation,
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.requestedBytes !== undefined
+          ? { requestedBytes: input.requestedBytes }
+          : {}),
+      }),
+    ])
+    const decision = evaluateAdmission(
+      {
+        ...scoped,
+        schemaVersion: 1,
+        operation: input.operation,
+        measurements: measurement.values,
+        measurementWatermark: measurement.watermark,
+        evaluatedAt: measurement.measuredAt,
+      },
+      snapshot,
+    )
+    latestCommercialDecisions.set(
+      JSON.stringify([input.tenantId, input.workspaceId]),
+      decision,
+    )
+    await options.commercialPolicy.recordDecision?.(decision)
+    store.appendAudit({
+      tenantId: input.tenantId,
+      workspaceId: input.workspaceId,
+      sessionId: input.sessionId ?? null,
+      actor: 'system',
+      actorPrincipalId: null,
+      action: 'quota.decided',
+      outcome: decision.outcome === 'deny' ? 'failure' : 'success',
+      idempotencyKey: `quota:${decision.decisionId}`,
+      correlationId: null,
+      requestId: null,
+      traceId: null,
+      metadata: {
+        operation: decision.operation,
+        status: decision.outcome,
+        reasonCode: decision.reason,
+        policyVersion: decision.policyVersion,
+        measurementWatermark: decision.measurementWatermark,
+        inFlightPolicy: decision.inFlightPolicy,
+      },
+    })
+    return decision
+  }
   const explicitInMemory =
     options.allowInMemorySupportAccess === true ||
     process.env.NODE_ENV === 'test'
@@ -1717,6 +1833,59 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     })
   })
 
+  app.get<{
+    Params: { workspaceId: string }
+    Querystring: { sessionId?: string }
+  }>('/v1/workspaces/:workspaceId/billing', async (request, reply) => {
+    const scope = supportRepositoryScope(request.headers)
+    const sessionId = request.query.sessionId
+    if (
+      !scope ||
+      scope.workspaceId !== request.params.workspaceId ||
+      !sessionId?.trim()
+    )
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'Workspace scope and sessionId are required',
+      })
+    if (!options.commercialPolicy)
+      return reply.code(503).send({
+        code: 'BILLING_POLICY_UNAVAILABLE',
+        message: 'Commercial policy adapter is not configured',
+      })
+    const commercialScope = {
+      tenantId: scope.tenantId,
+      organizationId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+    }
+    const [snapshot, subscription, lastReconciledAt] = await Promise.all([
+      options.commercialPolicy.snapshot(commercialScope),
+      options.commercialPolicy.subscription?.(commercialScope) ?? null,
+      options.commercialPolicy.lastReconciledAt?.(commercialScope) ?? null,
+    ])
+    return billingOverviewSchema.parse({
+      schemaVersion: 1,
+      plan: snapshot.plan,
+      subscription,
+      budgets: snapshot.budgets,
+      quotas: snapshot.quotas,
+      latestDecision:
+        latestCommercialDecisions.get(
+          JSON.stringify([scope.tenantId, scope.workspaceId]),
+        ) ?? null,
+      usage: store.getUsageSummary({
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        sessionId,
+      }),
+      usageFreshnessAt: now().toISOString(),
+      lastReconciledAt,
+      providerMode: snapshot.plan.billingMode,
+      productionBillingVerified:
+        options.commercialPolicy.productionBillingVerified === true,
+    })
+  })
+
   app.get<{ Params: { sessionId: string } }>(
     '/v1/sessions/:sessionId/support-grants',
     async (request, reply) => {
@@ -1800,6 +1969,21 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Scoped source name and binary body are required',
         })
       try {
+        const admission = await admitCommercialOperation({
+          tenantId: scope.tenantId,
+          workspaceId: scope.workspaceId,
+          operation: 'source.upload',
+          requestedBytes: request.body.byteLength,
+        })
+        if (admission?.outcome === 'deny')
+          return reply.code(429).send({
+            code: 'USAGE_LIMIT_REACHED',
+            message: admission.reason,
+            policyVersion: admission.policyVersion,
+            measurementWatermark: admission.measurementWatermark,
+          })
+        if (admission?.outcome === 'warn')
+          reply.header('x-usage-warning', admission.reason)
         const metadata = sourceUploadMetadataSchema.parse({
           version: 1,
           displayName: decodeURIComponent(encodedName),
@@ -1910,6 +2094,20 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Workspace scope is required',
         })
       try {
+        const admission = await admitCommercialOperation({
+          tenantId: scope.tenantId,
+          workspaceId: scope.workspaceId,
+          operation: 'source.index',
+        })
+        if (admission?.outcome === 'deny')
+          return reply.code(429).send({
+            code: 'USAGE_LIMIT_REACHED',
+            message: admission.reason,
+            policyVersion: admission.policyVersion,
+            measurementWatermark: admission.measurementWatermark,
+          })
+        if (admission?.outcome === 'warn')
+          reply.header('x-usage-warning', admission.reason)
         const job = await corpus.reindexSource(scope, request.params.sourceId)
         if (options.corpusAutoDrain !== false)
           setImmediate(() => scheduleCorpusDrain(scope))
@@ -1934,6 +2132,20 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Workspace scope is required',
         })
       try {
+        const admission = await admitCommercialOperation({
+          tenantId: scope.tenantId,
+          workspaceId: scope.workspaceId,
+          operation: 'source.retrieval',
+        })
+        if (admission?.outcome === 'deny')
+          return reply.code(429).send({
+            code: 'USAGE_LIMIT_REACHED',
+            message: admission.reason,
+            policyVersion: admission.policyVersion,
+            measurementWatermark: admission.measurementWatermark,
+          })
+        if (admission?.outcome === 'warn')
+          reply.header('x-usage-warning', admission.reason)
         const body = corpusSearchRequestSchema.parse(request.body)
         const context = authContexts.get(request)!
         const result = await corpusRetrieval.search(
@@ -3716,6 +3928,21 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       }
       try {
+        const admission = await admitCommercialOperation({
+          tenantId: scope.tenantId,
+          workspaceId: scope.workspaceId,
+          sessionId: scope.sessionId,
+          operation: 'turn.start',
+        })
+        if (admission?.outcome === 'deny')
+          return reply.code(429).send({
+            code: 'USAGE_LIMIT_REACHED',
+            message: admission.reason,
+            policyVersion: admission.policyVersion,
+            measurementWatermark: admission.measurementWatermark,
+          })
+        if (admission?.outcome === 'warn')
+          reply.header('x-usage-warning', admission.reason)
         const turnAttachments = body.data.attachmentIds.map((attachmentId) =>
           attachments.resolve(scope, attachmentId),
         )
