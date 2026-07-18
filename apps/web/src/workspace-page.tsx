@@ -19,6 +19,7 @@ import {
   providerCatalogListResponseSchema,
   conversationUsageCostSchema,
   billingOverviewSchema,
+  billingFinancialOverviewSchema,
   meResponseSchema,
   createSupportGrantRequestSchema,
   supportGrantListResponseSchema,
@@ -39,6 +40,7 @@ import {
   type ConversationUsageCost,
   type UsageCostSummary,
   type BillingOverview,
+  type BillingFinancialOverview,
   type MeResponse,
   type SupportGrant,
   type SupportAccessAction,
@@ -204,6 +206,15 @@ async function readBilling(sessionId: string): Promise<BillingOverview> {
   )
   if (!response.ok) throw await apiError(response)
   return billingOverviewSchema.parse(await response.json())
+}
+
+async function readBillingFinancial(): Promise<BillingFinancialOverview> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/billing/financial`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return billingFinancialOverviewSchema.parse(await response.json())
 }
 
 export function formatUsageCost(summary: UsageCostSummary | undefined) {
@@ -2646,6 +2657,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     staleTime: turnActive ? 0 : 5_000,
     refetchInterval: turnActive ? 2_000 : false,
   })
+  const billingFinancial = useQuery({
+    queryKey: ['workspace-billing-financial', cacheNamespace, workspaceId],
+    queryFn: readBillingFinancial,
+    enabled: Boolean(sessionId) && online && identity.isSuccess,
+    staleTime: 5_000,
+    retry: false,
+  })
   const offlineSelected = offlineHistory.find(
     (item) => item.sessionId === sessionId,
   )
@@ -3427,6 +3445,61 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                       <small>
                         usage states · {billing.data.usageStates.join(' · ')}
                       </small>
+                      <div aria-label="Prepaid kredi bakiyesi">
+                        <strong>
+                          available credits{' '}
+                          {billing.data.credits.balance.availableCreditsMicros}
+                        </strong>
+                        <span>
+                          reserved credits{' '}
+                          {billing.data.credits.balance.reservedCreditsMicros}
+                        </span>
+                        <small>
+                          paid{' '}
+                          {
+                            billing.data.credits.balance
+                              .paidAvailableCreditsMicros
+                          }{' '}
+                          · promotional{' '}
+                          {
+                            billing.data.credits.balance
+                              .promotionalAvailableCreditsMicros
+                          }{' '}
+                          · ledger{' '}
+                          {billing.data.credits.balance.ledgerWatermark}
+                        </small>
+                      </div>
+                      <details aria-label="Kredi geçmişi">
+                        <summary>Credit history</summary>
+                        <ul>
+                          {billing.data.credits.ledger
+                            .slice(0, 12)
+                            .map((entry) => (
+                              <li key={entry.ledgerEntryId}>
+                                {entry.entryType} · {entry.creditAmountMicros} µ
+                                {entry.currency} ·{' '}
+                                {entry.usageDedupeKey ?? entry.ledgerEntryId}
+                              </li>
+                            ))}
+                        </ul>
+                        {billing.data.credits.reservations.map(
+                          (reservation) => (
+                            <small key={reservation.reservationId}>
+                              reservation {reservation.reservationId} ·{' '}
+                              {reservation.state} · unresolved{' '}
+                              {reservation.unresolvedCreditsMicros}
+                            </small>
+                          ),
+                        )}
+                        {billing.data.credits.settlements.map((settlement) => (
+                          <small key={settlement.settlementId}>
+                            settlement {settlement.settlementId} ·{' '}
+                            {settlement.usageStatus} · measured{' '}
+                            {settlement.measuredCreditsMicros} · released{' '}
+                            {settlement.releasedCreditsMicros}
+                          </small>
+                        ))}
+                      </details>
                       <small>
                         freshness{' '}
                         {new Date(
@@ -3471,6 +3544,59 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                         <small>
                           Billing emulator · production tahsilat doğrulanmadı
                         </small>
+                      ) : null}
+                      {billingFinancial.data ? (
+                        <section aria-label="Admin finansal projection">
+                          <strong>Admin financial projection</strong>
+                          <small>
+                            cash collected{' '}
+                            {
+                              billingFinancial.data.projection
+                                .cashCollectedMicros
+                            }{' '}
+                            · outstanding liability{' '}
+                            {
+                              billingFinancial.data.projection
+                                .outstandingPaidCreditLiabilityMicros
+                            }
+                          </small>
+                          <small>
+                            consumed-credit revenue{' '}
+                            {
+                              billingFinancial.data.projection
+                                .consumedPaidCreditRevenueMicros
+                            }{' '}
+                            · promotional consumption{' '}
+                            {
+                              billingFinancial.data.projection
+                                .promotionalConsumptionMicros
+                            }
+                          </small>
+                          <small>
+                            provider COGS{' '}
+                            {
+                              billingFinancial.data.projection
+                                .providerCogsMicros
+                            }{' '}
+                            · infrastructure COGS{' '}
+                            {
+                              billingFinancial.data.projection
+                                .infrastructureCogsMicros
+                            }{' '}
+                            · gross margin{' '}
+                            {billingFinancial.data.projection.grossMarginMicros}
+                          </small>
+                          <small>
+                            {billingFinancial.data.projection.accountingStatus}
+                            {' · '}ledger{' '}
+                            {billingFinancial.data.projection.ledgerWatermark} ·
+                            retail price{' '}
+                            {
+                              billingFinancial.data.projection
+                                .retailPriceCatalogVersion
+                            }
+                          </small>
+                        </section>
                       ) : null}
                     </section>
                   ) : null}

@@ -165,6 +165,31 @@ export const billingWebhookSubscriptionDataSchema = z
     ),
   })
   .strict()
+export const billingWebhookCreditPurchaseDataSchema = z
+  .object({
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    creditsMicros: z.number().int().positive(),
+    cashAmountMicros: z.number().int().positive(),
+    paymentReference: id,
+    expiresAt: z.iso.datetime().nullable(),
+  })
+  .strict()
+export const billingWebhookPromotionalGrantDataSchema = z
+  .object({
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    creditsMicros: z.number().int().positive(),
+    grantReference: id,
+    expiresAt: z.iso.datetime().nullable(),
+  })
+  .strict()
+export const billingWebhookCreditReversalDataSchema = z
+  .object({
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    creditsMicros: z.number().int().positive(),
+    cashAmountMicros: z.number().int().nonnegative(),
+    paymentReference: id,
+  })
+  .strict()
 export const billingWebhookResponseSchema = z.object({
   schemaVersion: z.literal(1),
   eventId: id,
@@ -222,6 +247,147 @@ export const commercialUsageEntrySchema = billingScopeSchema.extend({
   dedupeKey: id,
   occurredAt: z.iso.datetime(),
 })
+export const creditEntryTypeSchema = z.enum([
+  'purchase',
+  'promotional_grant',
+  'reservation',
+  'reservation_release',
+  'usage_settlement',
+  'refund',
+  'chargeback',
+  'expiration',
+  'admin_adjustment',
+])
+export const creditLotKindSchema = z.enum(['paid', 'promotional'])
+const creditReferencesSchema = z.object({
+  paymentReference: id.nullable(),
+  usageDedupeKey: id.nullable(),
+  runId: id.nullable(),
+  operationReference: id.nullable(),
+})
+export const creditLotSchema = billingScopeSchema
+  .merge(creditReferencesSchema)
+  .extend({
+    schemaVersion: z.literal(1),
+    lotId: id,
+    kind: creditLotKindSchema,
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    originalCreditsMicros: z.number().int().nonnegative(),
+    originalCashMicros: z.number().int().nonnegative(),
+    idempotencyKey: id,
+    occurredAt: z.iso.datetime(),
+    expiresAt: z.iso.datetime().nullable(),
+    sourceWebhookEventId: id.nullable(),
+    consumptionPolicyVersion: z.number().int().positive(),
+  })
+export const creditLedgerEntrySchema = billingScopeSchema
+  .merge(creditReferencesSchema)
+  .extend({
+    schemaVersion: z.literal(1),
+    ledgerEntryId: id,
+    ledgerSequence: z.number().int().nonnegative(),
+    lotId: id,
+    entryType: creditEntryTypeSchema,
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    creditAmountMicros: z.number().int(),
+    cashAmountMicros: z.number().int().nonnegative(),
+    idempotencyKey: id,
+    occurredAt: z.iso.datetime(),
+    reservationId: id.nullable(),
+    settlementId: id.nullable(),
+    sourceWebhookEventId: id.nullable(),
+  })
+export const creditReservationSchema = billingScopeSchema
+  .merge(creditReferencesSchema)
+  .extend({
+    schemaVersion: z.literal(1),
+    reservationId: id,
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    idempotencyKey: id,
+    operation: entitlementKeySchema,
+    retailPriceCatalogVersion: id,
+    maximumCreditsMicros: z.number().int().positive(),
+    settledCreditsMicros: z.number().int().nonnegative(),
+    releasedCreditsMicros: z.number().int().nonnegative(),
+    unresolvedCreditsMicros: z.number().int().nonnegative(),
+    state: z.enum(['reserved', 'partially_settled', 'settled', 'released']),
+    version: z.number().int().positive(),
+    occurredAt: z.iso.datetime(),
+    resolvedAt: z.iso.datetime().nullable(),
+  })
+export const creditSettlementSchema = billingScopeSchema
+  .merge(creditReferencesSchema)
+  .extend({
+    schemaVersion: z.literal(1),
+    settlementId: id,
+    reservationId: id,
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    idempotencyKey: id,
+    retailPriceCatalogVersion: id,
+    measuredCreditsMicros: z.number().int().nonnegative(),
+    releasedCreditsMicros: z.number().int().nonnegative(),
+    usageStatus: commercialUsageStatusSchema,
+    outcome: z.enum(['completed', 'failed', 'interrupted', 'incomplete']),
+    terminal: z.boolean(),
+    occurredAt: z.iso.datetime(),
+  })
+export const retailPriceRateSchema = z.object({
+  meter: usageMeterSchema,
+  creditsMicrosPerUnit: z.number().int().nonnegative(),
+})
+export const retailOperationMaximumSchema = z.object({
+  operation: entitlementKeySchema,
+  maximumCreditsMicros: z.number().int().positive(),
+})
+export const retailPriceCatalogSchema = billingScopeSchema
+  .merge(creditReferencesSchema)
+  .extend({
+    schemaVersion: z.literal(1),
+    catalogId: id,
+    catalogVersion: id,
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    rates: z.array(retailPriceRateSchema).min(1),
+    operationMaximums: z.array(retailOperationMaximumSchema).min(1),
+    idempotencyKey: id,
+    occurredAt: z.iso.datetime(),
+    effectiveAt: z.iso.datetime(),
+    retiredAt: z.iso.datetime().nullable(),
+  })
+export const creditBalanceSchema = billingScopeSchema.extend({
+  schemaVersion: z.literal(1),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  availableCreditsMicros: z.number().int(),
+  reservedCreditsMicros: z.number().int().nonnegative(),
+  consumedCreditsMicros: z.number().int().nonnegative(),
+  paidAvailableCreditsMicros: z.number().int(),
+  promotionalAvailableCreditsMicros: z.number().int(),
+  paidReservedCreditsMicros: z.number().int().nonnegative(),
+  promotionalReservedCreditsMicros: z.number().int().nonnegative(),
+  ledgerWatermark: id,
+  freshnessAt: z.iso.datetime(),
+})
+export const financialProjectionSchema = billingScopeSchema
+  .merge(creditReferencesSchema)
+  .extend({
+    schemaVersion: z.literal(1),
+    projectionId: id,
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    retailPriceCatalogVersion: id,
+    ledgerWatermark: id,
+    idempotencyKey: id,
+    occurredAt: z.iso.datetime(),
+    cashCollectedMicros: z.number().int(),
+    outstandingPaidCreditLiabilityMicros: z.number().int(),
+    consumedPaidCreditRevenueMicros: z.number().int().nonnegative(),
+    promotionalConsumptionMicros: z.number().int().nonnegative(),
+    refundsMicros: z.number().int().nonnegative(),
+    chargebacksMicros: z.number().int().nonnegative(),
+    providerCogsMicros: z.number().int().nonnegative(),
+    infrastructureCogsMicros: z.number().int().nonnegative(),
+    grossMarginMicros: z.number().int(),
+    projectedAt: z.iso.datetime(),
+    accountingStatus: z.literal('operational_projection_not_tax_advice'),
+  })
 export const admissionRequestSchema = billingScopeSchema.extend({
   schemaVersion: z.literal(1),
   operation: entitlementKeySchema,
@@ -255,11 +421,28 @@ export type BillingWebhookPayload = z.infer<typeof billingWebhookPayloadSchema>
 export type BillingWebhookSubscriptionData = z.infer<
   typeof billingWebhookSubscriptionDataSchema
 >
+export type BillingWebhookCreditPurchaseData = z.infer<
+  typeof billingWebhookCreditPurchaseDataSchema
+>
+export type BillingWebhookPromotionalGrantData = z.infer<
+  typeof billingWebhookPromotionalGrantDataSchema
+>
+export type BillingWebhookCreditReversalData = z.infer<
+  typeof billingWebhookCreditReversalDataSchema
+>
 export type BillingWebhookResponse = z.infer<
   typeof billingWebhookResponseSchema
 >
 export type InvoiceReconciliation = z.infer<typeof invoiceReconciliationSchema>
 export type CommercialUsageEntry = z.infer<typeof commercialUsageEntrySchema>
+export type CreditEntryType = z.infer<typeof creditEntryTypeSchema>
+export type CreditLot = z.infer<typeof creditLotSchema>
+export type CreditLedgerEntry = z.infer<typeof creditLedgerEntrySchema>
+export type CreditReservation = z.infer<typeof creditReservationSchema>
+export type CreditSettlement = z.infer<typeof creditSettlementSchema>
+export type RetailPriceCatalog = z.infer<typeof retailPriceCatalogSchema>
+export type CreditBalance = z.infer<typeof creditBalanceSchema>
+export type FinancialProjection = z.infer<typeof financialProjectionSchema>
 export type AdmissionRequest = z.infer<typeof admissionRequestSchema>
 export type AdmissionDecision = z.infer<typeof admissionDecisionSchema>
 export interface CommercialPolicySnapshot {

@@ -87,6 +87,7 @@ try {
     '0023_pwa_push_multi_device.sql',
     '0024_billing_plan_quota.sql',
     '0025_billing_runtime_composition.sql',
+    '0026_prepaid_credit_financial_projection.sql',
   ])
     docker(
       [
@@ -215,6 +216,89 @@ try {
     ['evt_subscription_10'],
   )
 
+  await repository.upsertRetailPriceCatalog({
+    schemaVersion: 1,
+    ...scopedA,
+    catalogId: 'retail',
+    catalogVersion: 'retail-v1',
+    currency: 'USD',
+    rates: [
+      { meter: 'provider_input_token', creditsMicrosPerUnit: 1 },
+      { meter: 'provider_output_token', creditsMicrosPerUnit: 2 },
+    ],
+    operationMaximums: (
+      [
+        'turn.start',
+        'source.upload',
+        'source.index',
+        'source.retrieval',
+        'workspace.concurrency',
+      ] as const
+    ).map((operation) => ({ operation, maximumCreditsMicros: 100 })),
+    idempotencyKey: 'retail-v1',
+    paymentReference: null,
+    usageDedupeKey: null,
+    runId: null,
+    operationReference: null,
+    occurredAt: '2026-07-18T00:00:00.000Z',
+    effectiveAt: '2026-07-18T00:00:00.000Z',
+    retiredAt: null,
+  })
+  const paidLot = await repository.createCreditLot({
+    ...scopedA,
+    kind: 'paid',
+    currency: 'USD',
+    creditsMicros: 1_000,
+    cashAmountMicros: 1_000,
+    idempotencyKey: 'purchase-a',
+    paymentReference: 'payment-a',
+  })
+  const paidLotReplay = await repository.createCreditLot({
+    ...scopedA,
+    kind: 'paid',
+    currency: 'USD',
+    creditsMicros: 1_000,
+    cashAmountMicros: 1_000,
+    idempotencyKey: 'purchase-a',
+    paymentReference: 'payment-a',
+  })
+  assert.equal(paidLotReplay.lotId, paidLot.lotId)
+  await repository.createCreditLot({
+    ...scopedA,
+    kind: 'promotional',
+    currency: 'USD',
+    creditsMicros: 500,
+    cashAmountMicros: 0,
+    idempotencyKey: 'promo-a',
+    operationReference: 'grant-a',
+  })
+  assert.equal(
+    (await repository.creditBalance(scopedA)).availableCreditsMicros,
+    1_500,
+  )
+  await repository.appendCreditLifecycle({
+    ...scopedA,
+    entryType: 'chargeback',
+    currency: 'USD',
+    creditsMicros: 50,
+    cashAmountMicros: 50,
+    idempotencyKey: 'late-chargeback',
+    paymentReference: 'payment-late',
+  })
+  await repository.createCreditLot({
+    ...scopedA,
+    kind: 'paid',
+    currency: 'USD',
+    creditsMicros: 100,
+    cashAmountMicros: 100,
+    idempotencyKey: 'late-purchase',
+    paymentReference: 'payment-late',
+  })
+  assert.equal(
+    (await repository.creditBalance(scopedA)).availableCreditsMicros,
+    1_550,
+  )
+
   const secondRepository = createBillingPostgresRepository(
     `postgresql://billing_runtime:runtime@127.0.0.1:${port}/postgres`,
   )
@@ -252,6 +336,104 @@ try {
     'turn_runtime_1',
   )
   await repository.completeOperation(scopedA, 'turn_runtime_1')
+  const firstSettlement = await repository.settleOperation(
+    scopedA,
+    'turn_runtime_1',
+    {
+      idempotencyKey: 'usage-turn-runtime-1',
+      usageDedupeKey: 'usage-turn-runtime-1',
+      measuredCreditsMicros: 40,
+      usageStatus: 'measured',
+      outcome: 'completed',
+      terminal: true,
+      runId: 'turn_runtime_1',
+    },
+  )
+  assert.equal(
+    (
+      await repository.settleCredits({
+        ...scopedA,
+        reservationId: firstSettlement.reservationId,
+        idempotencyKey: 'usage-turn-runtime-1',
+        usageDedupeKey: 'usage-turn-runtime-1',
+        measuredCreditsMicros: 40,
+        usageStatus: 'measured',
+        outcome: 'completed',
+        terminal: true,
+        runId: 'turn_runtime_1',
+      })
+    ).settlementId,
+    firstSettlement.settlementId,
+  )
+  const spendable = (await repository.creditBalance(scopedA))
+    .availableCreditsMicros
+  const concurrent = await Promise.allSettled([
+    repository.reserveCredits({
+      ...scopedA,
+      operation: 'turn.start',
+      idempotencyKey: 'double-spend-a',
+      maximumCreditsMicros: spendable,
+    }),
+    secondRepository.reserveCredits({
+      ...scopedA,
+      operation: 'turn.start',
+      idempotencyKey: 'double-spend-b',
+      maximumCreditsMicros: spendable,
+    }),
+  ])
+  assert.equal(
+    concurrent.filter((value) => value.status === 'fulfilled').length,
+    1,
+  )
+  const winner = concurrent.find(
+    (value) => value.status === 'fulfilled',
+  ) as PromiseFulfilledResult<{ reservationId: string }>
+  await repository.settleCredits({
+    ...scopedA,
+    reservationId: winner.value.reservationId,
+    idempotencyKey: 'double-spend-release',
+    usageDedupeKey: 'double-spend-release',
+    measuredCreditsMicros: 0,
+    usageStatus: 'measured',
+    outcome: 'failed',
+    terminal: true,
+  })
+  await assert.rejects(
+    repository.withScope(scopedA, (client) =>
+      client.query(
+        `UPDATE persistent_codex.credit_ledger_entries SET credit_amount_micros=1`,
+      ),
+    ),
+    /append-only/,
+  )
+  await repository.appendCreditLifecycle({
+    ...scopedA,
+    entryType: 'refund',
+    currency: 'USD',
+    creditsMicros: 10,
+    cashAmountMicros: 10,
+    idempotencyKey: 'refund-a',
+    paymentReference: 'payment-a',
+  })
+  const projection = await repository.financialProjection(scopedA)
+  assert.equal(projection.cashCollectedMicros, 1_040)
+  assert.equal(
+    projection.grossMarginMicros,
+    projection.consumedPaidCreditRevenueMicros -
+      projection.providerCogsMicros -
+      projection.infrastructureCogsMicros,
+  )
+  assert.equal(
+    (
+      await repository.creditAccount({
+        ...scopedA,
+        tenantId: 'org_b',
+        organizationId: 'org_b',
+        workspaceId: 'wsp_b',
+      })
+    ).ledger.length,
+    0,
+  )
   assert.equal(
     (await secondRepository.latestDecision(scopedA))?.decisionId,
     deniedAdmission.decisionId,
@@ -286,6 +468,18 @@ try {
     ]),
   )
   assert.equal(forbiddenColumns, 0)
+  const prepaidForcedRls = Number(
+    docker([
+      'exec',
+      container,
+      'psql',
+      '-U',
+      'postgres',
+      '-tAc',
+      "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='persistent_codex' AND c.relname IN ('retail_price_catalogs','credit_lots','credit_reservations','credit_reservation_allocations','credit_settlements','credit_ledger_entries','financial_projection_checkpoints') AND c.relrowsecurity AND c.relforcerowsecurity",
+    ]),
+  )
+  assert.equal(prepaidForcedRls, 7)
   await repository.close()
 
   const runtimeRoot = mkdtempSync(join(tmpdir(), 'wp24-main-runtime-'))
@@ -412,6 +606,7 @@ try {
       migrations: [
         '0024_billing_plan_quota.sql',
         '0025_billing_runtime_composition.sql',
+        '0026_prepaid_credit_financial_projection.sql',
       ],
       forcedRls: true,
       crossTenantVisible: 0,
@@ -419,6 +614,13 @@ try {
       outOfOrderRollback: 0,
       restartRecovered: 1,
       twoInstanceAdmissionIdempotent: true,
+      prepaidCredit: true,
+      creditLotId: paidLot.lotId,
+      creditSettlementId: firstSettlement.settlementId,
+      financialProjectionId: projection.projectionId,
+      creditLedgerWatermark: projection.ledgerWatermark,
+      concurrentDoubleSpend: 0,
+      appendOnlyCreditLedger: true,
       durableQuotaWatermark: deniedAdmission.measurementWatermark,
       signature: 'hmac-sha256-v1',
       boundedPayload: true,

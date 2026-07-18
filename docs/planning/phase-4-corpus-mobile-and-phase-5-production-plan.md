@@ -14,10 +14,10 @@ Provider Platform ve Multi-tenant Security Beta fazlarından sonra bu planda Faz
 olarak; Production hardening ise Faz 5 olarak numaralandırılır.
 
 Faz 4, tenant-aware kaynak alma ve retrieval katmanını gerçek agent çalışmasına
-kaynaklı bağlam olarak ekler; mobil/PWA approval-resume deneyimini ve ticari plan/kota
-akışını tamamlar. Faz 5, kabul edilmiş ürün sınırlarını yüksek erişilebilirlik,
-felaket kurtarma, kapasite, enterprise lifecycle, supply-chain güvenliği ve kontrollü
-production rollout seviyesine taşır.
+kaynaklı bağlam olarak ekler; mobil/PWA approval-resume deneyimini, ticari plan/kota
+akışını ve güvenli paylaşımlı klasör ortak çalışmasını tamamlar. Faz 5, kabul edilmiş
+ürün sınırlarını yüksek erişilebilirlik, felaket kurtarma, kapasite, enterprise
+lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine taşır.
 
 ## 2. İş paketi özeti
 
@@ -26,15 +26,16 @@ production rollout seviyesine taşır.
 | WP21  | 4   | Tamamlandı                 | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
 | WP22  | 4   | Tamamlandı                 | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
 | WP23  | 4   | Tamamlandı                 | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Uygulandı / kabul bekliyor | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
-| WP25  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP26  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP27  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP28  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP29  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| WP24  | 4   | Uygulandı / kabul bekliyor | Billing, prepaid kredi ve gelir/COGS/marj kabulü                         |
+| WP25  | 4   | Planlandı                  | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
+| WP26  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP27  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP28  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP29  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP30  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
-Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; Faz 4
-tamamlanmadan WP25; WP28 tamamlanmadan nihai WP29 aktive edilmez.
+Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; WP24 kabul
+edilmeden WP25; Faz 4 tamamlanmadan WP26; WP29 tamamlanmadan nihai WP30 aktive edilmez.
 
 ## 3. Faz 4 — Corpus ve mobil ürün
 
@@ -302,25 +303,43 @@ Uygulama commit'i: `3962844`.
 WP23 tamamlandı. WP24 tek aktif iş paketidir; Faz 4 WP24 bağımsız kabul edilmeden
 kapatılamaz ve WP25 aktive edilemez.
 
-### WP24 — Billing, plan/kota ve Faz 4 birleşik kabul
+### WP24 — Billing, prepaid kredi ve gelir/COGS/marj kabulü
 
 #### Hedef
 
-Provider, compute, storage, egress ve corpus kullanımını ticari plan/kota politikasıyla
-birleştirmek; Faz 4'ü PDF'den citation'lı agent cevabına ve mobil approval'a kadar
-uçtan uca kapatmak.
+Provider, compute, storage, egress ve corpus kullanımını ticari plan/kota ve prepaid
+kredi politikasıyla birleştirmek; tahsilat, tüketilen kredi geliri ve COGS/marjı
+birbirinden ayırmak; Faz 4'ü PDF'den citation'lı agent cevabına ve mobil approval'a
+kadar uçtan uca kapatmak.
 
 #### Kapsam
 
 - ADR ile billing provider, merchant-of-record ve platform-managed/BYOK ücret ayrımı.
 - Plan, entitlement, budget, quota, invoice reconciliation ve webhook event
   sözleşmeleri; webhook signature, replay ve idempotency.
+- Append-only prepaid kredi ledger'ı: satın alma/top-up, promotional grant,
+  reservation, reservation release, usage settlement, refund, chargeback, expiration
+  ve admin adjustment. Mutable balance doğruluk kaynağı olamaz; available/reserved
+  balance ledger projection'ından türetilir.
+- Ödeme webhook'u doğrulandıktan sonra idempotent credit lot üretimi. Her lot paid veya
+  promotional niteliği, para birimi, parasal değer, kredi miktarı, grant/expiry ve
+  refund/chargeback bağını taşır.
+- İş başlamadan bounded kredi reservation; ölçülen kullanım geldikten sonra versioned
+  retail price catalog ile kredi settlement ve kullanılmayan reservation release.
+  Failed/interrupted/incomplete işte gerçekleşmiş kullanım ücretlenir; bilinmeyen
+  terminal kullanım sıfırlaştırılmaz.
 - Mevcut append-only usage ledger'da provider token/cost, compute, storage, egress ve
   embedding meter'ları; failed/interrupted task kullanımını koru.
 - Soft warning, hard limit ve in-flight turn politikası; tenant/session concurrency ve
   corpus kapasite limitleri.
-- Billing UI: tahmini/ölçülmüş/faturalandırılmış ayrımı, fiyat version ve veri tazeliği;
-  API key veya provider credential gösterilmez.
+- Revenue projection: cash collected, paid credits outstanding liability, consumed
+  paid-credit revenue, promotional consumption, refund/chargeback, provider COGS,
+  infrastructure COGS ve gross margin. Cash collection ile revenue recognition aynı
+  metrik gibi sunulmaz.
+- Billing UI: available/reserved credits, credit history, tahmini/ölçülmüş/
+  faturalandırılmış ayrımı, fiyat version ve veri tazeliği. Admin görünümü cash,
+  outstanding credits, recognized usage revenue, COGS ve gross margin gösterir; API
+  key veya provider credential gösterilmez.
 - Tek `pnpm phase4:accept` gate'i: ingestion, hybrid retrieval, MCP, delete/reindex,
   mobile/push, multi-device approval, billing webhook/quota ve responsive browser.
 - Gerçek senaryo: PDF yükle -> extract/index -> agent retrieval -> citation -> mobil
@@ -329,6 +348,17 @@ uçtan uca kapatmak.
 #### Zorunlu kabul
 
 - Duplicate/out-of-order webhook çift entitlement veya ücret üretmez.
+- Duplicate payment webhook ikinci credit lot üretmez. Aynı reservation/settlement
+  replay'i krediyi ikinci kez düşmez; hard credit shortage yeni işi fail-closed
+  engeller.
+- Reservation maksimum tahmini tüketimi ayırır; terminal settlement yalnız ölçülen
+  retail kredi tutarını tüketir ve artanı serbest bırakır. Failed/interrupted işte
+  gerçekleşmiş kullanım kaybolmaz; incomplete kullanım görünür kalır.
+- Paid ve promotional kredi tüketimi ayrıdır. Cash collected, outstanding paid-credit
+  liability, consumed-credit revenue, provider/infrastructure COGS ve gross margin
+  aynı ledger watermark'ında deterministik reconcile edilir.
+- Refund, chargeback ve expiry available balance ile revenue/liability projection'ını
+  idempotent günceller; negatife düşme ve concurrent double-spend engellenir.
 - Provider-reported usage ledger ile reconcile edilir; eksik terminal usage görünür
   `incomplete` kalır, sıfır uydurulmaz.
 - Hard quota yeni işi fail-closed engeller; mevcut işin politikası açık ve auditlidir.
@@ -349,7 +379,8 @@ kabulü tamamlanmadan Faz 4 kapatılmaz ve WP25 aktive edilmez.
   versioned plan/entitlement/budget/quota sözleşmelerine bağlandı. Platform-managed
   provider maliyeti ile BYOK ayrıdır; gerçek provider/MoR seçimi, tax, invoice ve
   refund davranışı uygulanmış gerçek olarak sunulmaz.
-- `0024_billing_plan_quota.sql` ve `0025_billing_runtime_composition.sql`;
+- `0024_billing_plan_quota.sql`, `0025_billing_runtime_composition.sql` ve
+  `0026_prepaid_credit_financial_projection.sql`;
   tenant/organization/workspace scoped billing
   customer, webhook, subscription, entitlement, budget, quota decision ve invoice
   reconciliation tablolarına normalize webhook komutu ve durable admission lease
@@ -407,9 +438,10 @@ kabulü tamamlanmadan Faz 4 kapatılmaz ve WP25 aktive edilmez.
   keyboard/screen-reader label, yatay taşma, page error ve credential/payment payload
   leak kontrolleri geçti.
 - `WP24_CODEX_BIN=<codex-cli-0.144.2> pnpm phase4:accept` geçti. Kapı 164 hedefli WP24
-  testini, gerçek PostgreSQL/main runtime smoke'unu, unified E2E/browser'ı, WP22/WP23
-  regresyonlarını ve `pnpm verify` adımını tamamladı. `pnpm verify`; 31 test dosyasında
-  314 test, typecheck, production build ve SSR HTTP smoke ile geçti. Container, volume,
+  testini, prepaid hedefli testi, gerçek PostgreSQL/main runtime smoke'unu, unified
+  E2E/browser'ı, WP22/WP23 regresyonlarını ve `pnpm verify` adımını tamamladı. `pnpm
+verify`; 32 test dosyasında 319 test, typecheck, production build ve SSR HTTP smoke
+  ile geçti. Container, volume,
   browser context, managed Codex config, service worker ve harness temp dosyaları
   başarı/hata cleanup yolunda temizlendi.
 - Billing provider deterministic HMAC emulator'dır; gerçek billing provider
@@ -418,17 +450,122 @@ kabulü tamamlanmadan Faz 4 kapatılmaz ve WP25 aktive edilmez.
   smoke'u `not-run` durumundadır. Emulator sonuçları production tahsilat veya delivery
   kanıtı değildir.
 
+#### Prepaid kredi genişletmesi — uygulandı / bağımsız kabul bekliyor
+
+Prepaid kredi zinciri mevcut billing repository ve birleşik Faz 4 harness'i içinde
+uygulandı; paralel balance veya entitlement sistemi kurulmadı. Bağımsız WP24 kabulü
+henüz yapılmadığından iş paketi `Uygulandı / kabul bekliyor` durumundadır.
+
+- Payment webhook -> paid/promotional credit lot -> derived available balance.
+- Turn/source/retrieval öncesi atomic reservation -> measured usage settlement ->
+  unused release; concurrent double-spend ve replay reddi.
+- Completed, failed, interrupted ve incomplete run'ların aynı usage dedupe kimliğiyle
+  kredi tüketimine bağlanması.
+- Refund, chargeback, expiration ve admin adjustment'ın append-only ve idempotent
+  işlenmesi.
+- Customer credit balance/history ile admin cash, outstanding liability, consumed
+  paid-credit revenue, provider/infrastructure COGS ve gross-margin görünümü.
+- Cross-tenant kredi, ödeme, revenue ve margin görünürlüğünün REST, repository, RLS,
+  cache ve browser katmanlarında sıfır olması.
+
+Gerçek PostgreSQL smoke; forced RLS, immutable ledger trigger, out-of-order
+chargeback→purchase, replay etkisinin sıfır olması, iki repository instance'ında
+double-spend engeli ve restart projection persistence'ını doğruladı. Birleşik E2E
+evidence zinciri: session `ses_848efb7e-0110-47b6-871f-32c988fb215b`; approval run
+`run_83851acb-9574-4c28-bf4d-49b90a152805`; retrieval run
+`run_7a6cd330-604c-450d-afa9-8a8b1fcbac0e`; usage dedupe
+`runtime-usage:ses_848efb7e-0110-47b6-871f-32c988fb215b:019f7609-4e68-75d0-88a6-0d56a2f02661`;
+paid lot `clot_835d4dd7c5e718e8c5f3ecb0ae8148bc`; promotional lot
+`clot_59068e2753807bc20880e3d1092d4ce1`; reservation
+`cres_ad1d5a472dbb0e01b0adfd16765f6b46`; settlement
+`cset_4359932fcc5eebfc8a962fc758d5185d`; credit ledger watermark `clw_31` ve
+financial projection `fprj_d8cfe1c124a432eb9a78d0db8f2385bb`. Harness bu kimlikleri
+aynı tenant/workspace/session/run ve usage zincirine assertion ile bağladı.
+
+Bu uygulama kaydı WP24'ü `Tamamlandı` yapmaz; bağımsız kabul olmadan Faz 4 kapatılamaz
+ve WP25 aktive edilemez.
+
+### WP25 — Paylaşımlı klasör, güvenli ortak çalışma ve Faz 4 kabulü
+
+Durum: **Planlandı**. WP24 tek aktif iş paketidir; WP24 bağımsız kabul edilmeden WP25
+başlatılamaz.
+
+#### Hedef
+
+Bir kullanıcının bir klasörü arkadaşına davet yoluyla paylaşabildiği; iki kullanıcının
+yalnız bu klasöre bağlı kaynak, konuşma, attachment/artifact ve agent görevlerini rol
+sınırları içinde birlikte kullanabildiği güvenli consumer collaboration akışını
+tamamlamak.
+
+#### Kapsam
+
+- ADR: folder resource modeli, tenant/workspace/folder sınırı, ACL inheritance,
+  ownership transfer, invitation güvenliği ve revoke sonrası cache/realtime davranışı.
+- Versioned `folder`, `folder_membership` ve `folder_invitation` sözleşmeleri; her
+  kayıtta açık tenant, workspace, folder ve principal scope'u.
+- Klasörler varsayılan private olur. `owner`, `editor` ve `viewer` rolleri; davet için
+  pending, accepted, expired ve revoked durumları tanımlanır. Ownership transfer ve
+  son owner koruması açık bir state machine ile uygulanır.
+- Davetler tahmin edilemez, süreli, tek kullanımlık token ile yapılır; yalnız digest
+  saklanır. Token, URL, log, event ve telemetry tenant/source adı, secret veya içerik
+  taşımaz. Kabul işlemi idempotenttir ve authenticated principal'a bağlanır.
+- Conversation, source, attachment/artifact ve agent task'ı klasöre atanabilir.
+  Folder ACL; REST, realtime/replay, retrieval/index, workspace-local MCP, object
+  storage, cache ve browser yüzeylerinin tümünde kaynak okunmadan önce uygulanır.
+- Viewer yalnız okuyabilir; editor klasör içinde kaynak/conversation/task oluşturup
+  agent çalıştırabilir; owner üye ve rol yönetebilir. Move, role change ve revoke
+  işlemleri authorization cache'lerini geçersiz kılar ve yeni erişimde fail-closed olur.
+- Ortak kullanım; paylaşılan geçmişi görme, aynı klasörde agent görevi başlatma,
+  sonucu/realtime durumunu izleme ve yetkili approval verme anlamına gelir. İlk sürüm
+  aynı dosya içeriğini Google Docs benzeri eşzamanlı düzenlemeyi kapsamaz.
+- Tek workspace'te tek aktif turn, idempotency ve optimistic-locking değişmezleri
+  korunur. İki kullanıcının eşzamanlı turn/approval yarışında duplicate upstream iş
+  veya çift ücret oluşmaz.
+- Invite create/accept/revoke, role change, ownership transfer, resource move ve
+  yetkili export işlemleri immutable audit'e yazılır; içerik ve secret audit'e girmez.
+- Responsive/PWA UI; klasör oluşturma, paylaşma, davet kabulü, üye/rol yönetimi ve
+  erişimi kaybeden kullanıcı için güvenli geri dönüş durumlarını içerir.
+- Tek `pnpm phase4:accept` gate'i WP21–WP25 ingestion, retrieval/MCP, mobile/PWA,
+  billing/prepaid kredi ve paylaşımlı klasör kanıtlarını temiz bir ortamda birlikte
+  çalıştırır.
+
+#### Zorunlu kabul
+
+- İki bağımsız hesapla owner klasörü paylaşır, arkadaş daveti kabul eder ve yalnız
+  paylaşılan klasörü; ona bağlı konuşma, kaynak ve task geçmişini görür.
+- Viewer mutation/turn/approval yapamaz; editor klasör içinde çalışabilir fakat kardeş
+  private klasörlere veya workspace'in paylaşılmamış köküne erişemez.
+- Cross-tenant kimlik, tahmin edilen ID, replay edilen veya süresi dolmuş davet ve
+  revoke edilmiş üyelik REST, realtime, retrieval/MCP, object ve cache katmanlarında
+  fail-closed reddedilir.
+- Resource move, role change ve revoke; açık browser/realtime session'ı dahil sonraki
+  erişimlerde deterministik uygulanır ve eski cache/search sonucu veri sızdırmaz.
+- Eşzamanlı ortak task/approval yarışı tek kazanan ve tek billing settlement üretir;
+  her iki kullanıcı aynı durable timeline sonucunu replay ile görür.
+- Gerçek PostgreSQL forced-RLS/adversarial testleri ve 390x844, 768x1024, 1280x720
+  browser E2E geçer; kullanıcı A'nın private verisi kullanıcı B'ye hiçbir yüzeyde
+  görünmez.
+- `pnpm phase4:accept` WP21–WP25'in tüm zorunlu kapılarını geçer; eksik gerçek
+  credential/provider kanıtı açıkça `not-run` kalır ve emulator sonucu production
+  kanıtı sayılmaz.
+
+#### Teslimat commit'i
+
+`feat: add secure shared-folder collaboration`
+
 ## 4. Faz 4 exit kriteri
 
 Tenant kullanıcısı PDF veya workspace kaynağını ekleyebilir; kaynak güvenli ve durable
 şekilde çıkarılıp indekslenir; agent yalnız yetkili corpus'tan citation'lı retrieval
 yapar. Kaynak silme/reindex sonuçlara deterministik yansır. Kullanıcı telefondan güvenli
 approval verip session'ı sürdürebilir. Kullanım ve ticari entitlement aynı append-only
-ledger ile reconciliation'a girer.
+ledger ile reconciliation'a girer. Kullanıcı bir klasörü arkadaşına güvenli davetle
+paylaşabilir; iki kullanıcı yalnız yetkili klasör kapsamındaki kaynak, conversation ve
+agent görevlerini rol sınırları içinde birlikte kullanabilir.
 
 ## 5. Faz 5 — Production hardening
 
-### WP25 — HA production topology, scheduler ve kapasite izolasyonu
+### WP26 — HA production topology, scheduler ve kapasite izolasyonu
 
 #### Hedef
 
@@ -463,7 +600,7 @@ yatay ölçeklenebilir, tenant-fair ve arızaya dayanıklı production topolojis
 
 `feat: add highly available tenant-fair production topology`
 
-### WP26 — Observability, SLO, backup/restore ve DR
+### WP27 — Observability, SLO, backup/restore ve DR
 
 #### Hedef
 
@@ -494,7 +631,7 @@ senaryolarını belgeli RPO/RTO ile tekrarlanabilir kılmak.
 
 `feat: add production observability and disaster recovery`
 
-### WP27 — Enterprise identity ve veri lifecycle
+### WP28 — Enterprise identity ve veri lifecycle
 
 #### Hedef
 
@@ -526,7 +663,7 @@ döngüsünü tenant izolasyonu ve crypto-erasure garantileriyle tamamlamak.
 
 `feat: add enterprise identity and tenant data lifecycle`
 
-### WP28 — Supply-chain, provider canary ve compliance hazırlığı
+### WP29 — Supply-chain, provider canary ve compliance hazırlığı
 
 #### Hedef
 
@@ -561,7 +698,7 @@ kontrollere bağlamak.
 
 `feat: secure the release supply chain and provider upgrades`
 
-### WP29 — Pentest, performance ve kontrollü production rollout kabulü
+### WP30 — Pentest, performance ve kontrollü production rollout kabulü
 
 #### Hedef
 
@@ -614,4 +751,4 @@ kontrollü production rollout tamamlanır.
   teslim edilir.
 - Secret, API key, push token, billing credential, source içeriği veya decrypted tenant
   verisi fixture, log, trace ve kabul raporuna yazılmaz.
-- Faz 4 WP24; Faz 5 WP29 bağımsız kabul edilmeden ilgili faz kapanmaz.
+- Faz 4 WP25; Faz 5 WP30 bağımsız kabul edilmeden ilgili faz kapanmaz.

@@ -5,6 +5,11 @@ import {
   billingWebhookResponseSchema,
   budgetSchema,
   commercialPlanSchema,
+  creditBalanceSchema,
+  creditLedgerEntrySchema,
+  creditReservationSchema,
+  creditSettlementSchema,
+  financialProjectionSchema,
   quotaPolicySchema,
   subscriptionStateSchema,
 } from '@persistent-codex/billing-platform/contracts'
@@ -108,6 +113,7 @@ export const authorizationActionSchema = z.enum([
   'usage.read',
   'usage.reconcile',
   'billing.read',
+  'billing.financial.read',
   'billing.webhook.receive',
   'audit.read',
   'metrics.read',
@@ -906,6 +912,18 @@ export const billingOverviewSchema = z.object({
   lastReconciledAt: z.iso.datetime().nullable(),
   providerMode: z.enum(['platform_managed', 'byok', 'hybrid']),
   productionBillingVerified: z.boolean(),
+  credits: z.object({
+    balance: creditBalanceSchema,
+    ledger: z.array(creditLedgerEntrySchema),
+    reservations: z.array(creditReservationSchema),
+    settlements: z.array(creditSettlementSchema),
+  }),
+})
+
+export const billingFinancialOverviewSchema = z.object({
+  schemaVersion: z.literal(1),
+  projection: financialProjectionSchema,
+  productionBillingVerified: z.boolean(),
 })
 
 export { billingWebhookPayloadSchema, billingWebhookResponseSchema }
@@ -1334,6 +1352,9 @@ export type UsageReconciliationResponse = z.infer<
   typeof usageReconciliationResponseSchema
 >
 export type BillingOverview = z.infer<typeof billingOverviewSchema>
+export type BillingFinancialOverview = z.infer<
+  typeof billingFinancialOverviewSchema
+>
 export type SupportGrant = z.infer<typeof supportGrantSchema>
 export type SupportGrantStatus = z.infer<typeof supportGrantStatusSchema>
 export type SupportAccessAction = z.infer<typeof supportAccessActionSchema>

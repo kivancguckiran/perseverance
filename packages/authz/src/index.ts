@@ -472,6 +472,7 @@ const ROLE_ACTIONS: Record<OrganizationMembership['role'], Set<string>> = {
     'workspace.snapshot.read',
     'usage.read',
     'billing.read',
+    'billing.financial.read',
     'usage.reconcile',
     'audit.read',
     'metrics.read',
@@ -559,6 +560,7 @@ const ROLE_ACTIONS: Record<OrganizationMembership['role'], Set<string>> = {
   billing: new Set([
     'usage.read',
     'billing.read',
+    'billing.financial.read',
     'usage.reconcile',
     'audit.read',
   ]),

@@ -111,7 +111,7 @@ export class Wp22E2eHarness {
         'postgres',
       ],
       {
-        input: `${migration('0018_oidc_authorization_rls.sql')}\n${migration('0021_tenant_corpus_ingestion.sql')}\n${migration('0022_hybrid_corpus_retrieval.sql')}${this.phase4 ? `\n${migration('0023_pwa_push_multi_device.sql')}\n${migration('0024_billing_plan_quota.sql')}\n${migration('0025_billing_runtime_composition.sql')}` : ''}
+        input: `${migration('0018_oidc_authorization_rls.sql')}\n${migration('0021_tenant_corpus_ingestion.sql')}\n${migration('0022_hybrid_corpus_retrieval.sql')}${this.phase4 ? `\n${migration('0023_pwa_push_multi_device.sql')}\n${migration('0024_billing_plan_quota.sql')}\n${migration('0025_billing_runtime_composition.sql')}\n${migration('0026_prepaid_credit_financial_projection.sql')}` : ''}
 CREATE ROLE corpus_runtime LOGIN PASSWORD 'runtime' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
 GRANT USAGE ON SCHEMA persistent_codex TO corpus_runtime;
 GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA persistent_codex TO corpus_runtime;

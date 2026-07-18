@@ -17,6 +17,7 @@ const run = (script: string, env: NodeJS.ProcessEnv = process.env) => {
 }
 
 run('wp24:test')
+run('wp24:prepaid')
 run('wp24:postgres')
 run('wp24:e2e', { ...process.env, WP24_CODEX_BIN: codexBin })
 run('wp24:browser', { ...process.env, WP24_CODEX_BIN: codexBin })

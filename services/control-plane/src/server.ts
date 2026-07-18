@@ -65,6 +65,7 @@ import {
   pushSubscriptionRevokeRequestSchema,
   pushNotificationResolutionSchema,
   billingOverviewSchema,
+  billingFinancialOverviewSchema,
   billingWebhookResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
 import type {
@@ -299,6 +300,10 @@ export interface ControlPlaneOptions {
       organizationId: string
       workspaceId: string
     }): string | null | Promise<string | null>
+    creditAccount?: BillingPostgresRepository['creditAccount']
+    financialProjection?: BillingPostgresRepository['financialProjection']
+    retailCreditsForUsage?: BillingPostgresRepository['retailCreditsForUsage']
+    settleOperation?: BillingPostgresRepository['settleOperation']
     productionBillingVerified?: boolean
     close?(): void | Promise<unknown>
   }
@@ -565,6 +570,12 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/workspaces/:workspaceId/billing',
       action: 'billing.read',
       resourceType: 'billing',
+    },
+    {
+      method: 'GET',
+      route: '/v1/workspaces/:workspaceId/billing/financial',
+      action: 'billing.financial.read',
+      resourceType: 'billing_financial',
     },
     {
       method: 'POST',
@@ -1748,6 +1759,69 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             'commercial admission lease release failed',
           ),
         )
+        if (
+          options.commercialPolicy?.retailCreditsForUsage &&
+          options.commercialPolicy.settleOperation
+        ) {
+          const usage = store.getUsageSummary(
+            {
+              tenantId: event.tenantId,
+              workspaceId: event.workspaceId,
+              sessionId: event.sessionId,
+            },
+            event.codexTurnId,
+          )
+          const creditScope = {
+            tenantId: event.tenantId,
+            organizationId: event.tenantId,
+            workspaceId: event.workspaceId,
+          }
+          void options.commercialPolicy
+            .retailCreditsForUsage(creditScope, {
+              provider_input_token: usage.counters.inputTokens,
+              provider_cached_input_token: usage.counters.cachedInputTokens,
+              provider_output_token: usage.counters.outputTokens,
+              provider_reasoning_token: usage.counters.reasoningTokens,
+            })
+            .then((priced) => {
+              if (
+                priced.creditsMicros === 0 &&
+                usage.completeness === 'partial'
+              )
+                return undefined
+              return options.commercialPolicy!.settleOperation!(
+                creditScope,
+                event.codexTurnId!,
+                {
+                  idempotencyKey: `runtime-usage:${event.sessionId}:${event.codexTurnId}`,
+                  usageDedupeKey: `runtime-usage:${event.sessionId}:${event.codexTurnId}`,
+                  measuredCreditsMicros: priced.creditsMicros,
+                  usageStatus:
+                    usage.completeness === 'partial'
+                      ? 'incomplete'
+                      : usage.reconciliationStatus === 'reconciled'
+                        ? 'reconciled'
+                        : 'measured',
+                  outcome:
+                    event.payload.status === 'interrupted'
+                      ? 'interrupted'
+                      : failed
+                        ? 'failed'
+                        : usage.completeness === 'partial'
+                          ? 'incomplete'
+                          : 'completed',
+                  terminal: usage.completeness === 'complete',
+                  runId: event.codexTurnId!,
+                },
+              )
+            })
+            .catch(() =>
+              app.log.error(
+                { code: 'CREDIT_SETTLEMENT_FAILED' },
+                'prepaid credit settlement failed',
+              ),
+            )
+        }
         const key = JSON.stringify([
           event.tenantId,
           event.workspaceId,
@@ -2023,13 +2097,19 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       organizationId: scope.tenantId,
       workspaceId: scope.workspaceId,
     }
-    const [snapshot, subscription, lastReconciledAt, durableDecision] =
-      await Promise.all([
-        options.commercialPolicy.snapshot(commercialScope),
-        options.commercialPolicy.subscription?.(commercialScope) ?? null,
-        options.commercialPolicy.lastReconciledAt?.(commercialScope) ?? null,
-        options.commercialPolicy.latestDecision?.(commercialScope) ?? null,
-      ])
+    const [
+      snapshot,
+      subscription,
+      lastReconciledAt,
+      durableDecision,
+      creditAccount,
+    ] = await Promise.all([
+      options.commercialPolicy.snapshot(commercialScope),
+      options.commercialPolicy.subscription?.(commercialScope) ?? null,
+      options.commercialPolicy.lastReconciledAt?.(commercialScope) ?? null,
+      options.commercialPolicy.latestDecision?.(commercialScope) ?? null,
+      options.commercialPolicy.creditAccount?.(commercialScope) ?? null,
+    ])
     const usage = store.getUsageSummary({
       tenantId: scope.tenantId,
       workspaceId: scope.workspaceId,
@@ -2061,8 +2141,52 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       providerMode: snapshot.plan.billingMode,
       productionBillingVerified:
         options.commercialPolicy.productionBillingVerified === true,
+      credits:
+        creditAccount ??
+        ({
+          balance: {
+            schemaVersion: 1,
+            ...commercialScope,
+            currency: snapshot.plan.currency,
+            availableCreditsMicros: 0,
+            reservedCreditsMicros: 0,
+            consumedCreditsMicros: 0,
+            paidAvailableCreditsMicros: 0,
+            promotionalAvailableCreditsMicros: 0,
+            paidReservedCreditsMicros: 0,
+            promotionalReservedCreditsMicros: 0,
+            ledgerWatermark: 'clw_0',
+            freshnessAt: now().toISOString(),
+          },
+          ledger: [],
+          reservations: [],
+          settlements: [],
+        } as const),
     })
   })
+
+  app.get<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/billing/financial',
+    async (request, reply) => {
+      const scope = supportRepositoryScope(request.headers)
+      if (!scope || scope.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'Workspace scope is required',
+        })
+      if (!options.commercialPolicy?.financialProjection)
+        return reply.code(503).send({
+          code: 'FINANCIAL_PROJECTION_UNAVAILABLE',
+          message: 'Financial projection adapter is not configured',
+        })
+      return billingFinancialOverviewSchema.parse({
+        schemaVersion: 1,
+        projection: await options.commercialPolicy.financialProjection(scope),
+        productionBillingVerified:
+          options.commercialPolicy.productionBillingVerified === true,
+      })
+    },
+  )
 
   app.get<{ Params: { sessionId: string } }>(
     '/v1/sessions/:sessionId/support-grants',

@@ -145,6 +145,34 @@ const seed: DevelopmentCommercialSeed = {
       expiresAt: null,
     },
   ],
+  retailPriceCatalog: {
+    schemaVersion: 1,
+    catalogId: 'phase4-retail',
+    catalogVersion: 'phase4-retail-v1',
+    currency: 'USD',
+    rates: [
+      { meter: 'provider_input_token', creditsMicrosPerUnit: 1 },
+      { meter: 'provider_output_token', creditsMicrosPerUnit: 2 },
+      { meter: 'compute_millisecond', creditsMicrosPerUnit: 1 },
+    ],
+    operationMaximums: (
+      [
+        'turn.start',
+        'source.upload',
+        'source.index',
+        'source.retrieval',
+        'workspace.concurrency',
+      ] as const
+    ).map((operation) => ({ operation, maximumCreditsMicros: 50_000 })),
+    idempotencyKey: 'phase4-retail-v1',
+    paymentReference: null,
+    usageDedupeKey: null,
+    runId: null,
+    operationReference: null,
+    occurredAt: '2026-01-01T00:00:00.000Z',
+    effectiveAt: '2026-01-01T00:00:00.000Z',
+    retiredAt: null,
+  },
 }
 
 const sleep = (ms: number) =>
@@ -281,6 +309,79 @@ try {
     payload: webhookPayload,
   })
   assert.equal(webhook.statusCode, 202, webhook.body)
+  await billing!.upsertRetailPriceCatalog({
+    ...seed.retailPriceCatalog!,
+    ...scope,
+  })
+
+  let creditWebhookClock = Date.now()
+  const sendCreditWebhook = async (
+    eventId: string,
+    eventType: string,
+    data: Record<string, unknown>,
+  ) => {
+    const timestamp = ++creditWebhookClock
+    const payload = Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        ...scope,
+        eventId,
+        eventType,
+        providerSequence: eventType === 'credit.purchase' ? 25 : 26,
+        effectiveAt:
+          eventType === 'credit.purchase'
+            ? '2026-07-18T12:00:00.000Z'
+            : '2026-07-18T12:00:01.000Z',
+        data,
+      }),
+    )
+    return app!.inject({
+      method: 'POST',
+      url: `/v1/billing/webhooks/${billingProvider.provider}`,
+      headers: {
+        'content-type': 'application/vnd.persistent-codex.billing-webhook+json',
+        'x-billing-event-id': eventId,
+        'x-billing-timestamp': String(timestamp),
+        'x-billing-signature': billingProvider.sign(payload, timestamp),
+      },
+      payload,
+    })
+  }
+  const purchaseWebhook = await sendCreditWebhook(
+    'evt_wp24_credit_purchase',
+    'credit.purchase',
+    {
+      currency: 'USD',
+      creditsMicros: 2_000_000,
+      cashAmountMicros: 2_000_000,
+      paymentReference: 'payment-wp24-unified',
+      expiresAt: null,
+    },
+  )
+  assert.equal(purchaseWebhook.statusCode, 202, purchaseWebhook.body)
+  const promotionalWebhook = await sendCreditWebhook(
+    'evt_wp24_credit_promo',
+    'credit.promotional_grant',
+    {
+      currency: 'USD',
+      creditsMicros: 500_000,
+      grantReference: 'promo-wp24-unified',
+      expiresAt: null,
+    },
+  )
+  assert.equal(promotionalWebhook.statusCode, 202, promotionalWebhook.body)
+  const duplicatePurchase = await sendCreditWebhook(
+    'evt_wp24_credit_purchase',
+    'credit.purchase',
+    {
+      currency: 'USD',
+      creditsMicros: 2_000_000,
+      cashAmountMicros: 2_000_000,
+      paymentReference: 'payment-wp24-unified',
+      expiresAt: null,
+    },
+  )
+  assert.equal(duplicatePurchase.statusCode, 200, duplicatePurchase.body)
 
   const sessionReply = await app!.inject({
     method: 'POST',
@@ -489,8 +590,14 @@ try {
       'two browser contexts see real approval',
       async () => {
         const [a, b] = await Promise.all([
-          evaluate('a', `document.body.innerText.includes('Komut onayı')`),
-          evaluate('b', `document.body.innerText.includes('Komut onayı')`),
+          evaluate(
+            'a',
+            `document.body.innerText.includes('Komut onayı') && [...document.querySelectorAll('.approval-actions button')].some(b=>b.textContent.includes('Accept once')&&!b.disabled)`,
+          ),
+          evaluate(
+            'b',
+            `document.body.innerText.includes('Komut onayı') && [...document.querySelectorAll('.approval-actions button')].some(b=>b.textContent.includes('Accept once')&&!b.disabled)`,
+          ),
         ])
         return a === 'true' && b === 'true' ? true : undefined
       },
@@ -567,7 +674,7 @@ try {
       },
     ],
   }
-  const usageDedupeKey = `usage:${session.sessionId}:${approvalTurn.codexTurnId}`
+  const usageDedupeKey = `runtime-usage:${session.sessionId}:${approvalTurn.codexTurnId}`
   store!.appendUsage({
     tenantId,
     workspaceId,
@@ -669,6 +776,123 @@ try {
     )
   })
 
+  let creditAccount = await billing!.creditAccount(scope)
+  let approvalSettlement = creditAccount.settlements.find(
+    (value) => value.usageDedupeKey === usageDedupeKey,
+  )
+  if (!approvalSettlement) {
+    const retail = await billing!.retailCreditsForUsage(scope, {
+      provider_input_token: 1200,
+      provider_cached_input_token: 200,
+      provider_output_token: 300,
+      provider_reasoning_token: 100,
+    })
+    approvalSettlement = await billing!.settleOperation(
+      scope,
+      approvalTurn.codexTurnId,
+      {
+        idempotencyKey: usageDedupeKey,
+        usageDedupeKey,
+        measuredCreditsMicros: retail.creditsMicros,
+        usageStatus: 'reconciled',
+        outcome: 'completed',
+        terminal: true,
+        runId: approvalTurn.codexTurnId,
+      },
+    )
+  }
+  const approvalSettlementReplay = await billing!.settleCredits({
+    ...scope,
+    reservationId: approvalSettlement.reservationId,
+    idempotencyKey: usageDedupeKey,
+    usageDedupeKey,
+    measuredCreditsMicros: approvalSettlement.measuredCreditsMicros,
+    usageStatus: approvalSettlement.usageStatus,
+    outcome: approvalSettlement.outcome,
+    terminal: approvalSettlement.terminal,
+    runId: approvalTurn.codexTurnId,
+  })
+  assert.equal(
+    approvalSettlementReplay.settlementId,
+    approvalSettlement.settlementId,
+  )
+
+  const partialCreditEvidence: Record<
+    'failed' | 'interrupted' | 'incomplete',
+    { reservationId: string; settlementId: string }
+  > = {} as Record<
+    'failed' | 'interrupted' | 'incomplete',
+    { reservationId: string; settlementId: string }
+  >
+  for (const outcome of ['failed', 'interrupted', 'incomplete'] as const) {
+    const evidenceRunId = `credit_${outcome}_${approvalTurn.runId}`
+    const reservation = await billing!.reserveCredits({
+      ...scope,
+      operation: 'turn.start',
+      idempotencyKey: `credit:${outcome}:reservation`,
+      maximumCreditsMicros: 500,
+      runId: evidenceRunId,
+      operationReference: evidenceRunId,
+    })
+    const settlement = await billing!.settleCredits({
+      ...scope,
+      reservationId: reservation.reservationId,
+      idempotencyKey: `credit:${outcome}:settlement`,
+      usageDedupeKey: `${outcome}:${usageDedupeKey}`,
+      measuredCreditsMicros: 100,
+      usageStatus: outcome === 'incomplete' ? 'incomplete' : 'measured',
+      outcome,
+      terminal: outcome !== 'incomplete',
+      runId: evidenceRunId,
+    })
+    partialCreditEvidence[outcome] = {
+      reservationId: reservation.reservationId,
+      settlementId: settlement.settlementId,
+    }
+  }
+  creditAccount = await billing!.creditAccount(scope)
+  assert.ok(creditAccount.balance.availableCreditsMicros > 0)
+  assert.ok(creditAccount.balance.paidAvailableCreditsMicros > 0)
+  assert.ok(creditAccount.balance.promotionalAvailableCreditsMicros >= 0)
+  assert.ok(creditAccount.balance.reservedCreditsMicros >= 400)
+  const doubleSpendAmount = creditAccount.balance.availableCreditsMicros
+  const doubleSpendResults = await Promise.allSettled([
+    billing!.reserveCredits({
+      ...scope,
+      operation: 'turn.start',
+      idempotencyKey: 'double-spend-a',
+      maximumCreditsMicros: doubleSpendAmount,
+      runId: 'double-spend-a',
+    }),
+    billing!.reserveCredits({
+      ...scope,
+      operation: 'turn.start',
+      idempotencyKey: 'double-spend-b',
+      maximumCreditsMicros: doubleSpendAmount,
+      runId: 'double-spend-b',
+    }),
+  ])
+  assert.equal(
+    doubleSpendResults.filter((value) => value.status === 'fulfilled').length,
+    1,
+  )
+  const doubleSpendWinner = doubleSpendResults.find(
+    (value) => value.status === 'fulfilled',
+  ) as PromiseFulfilledResult<
+    Awaited<ReturnType<typeof billing.reserveCredits>>
+  >
+  await billing!.settleCredits({
+    ...scope,
+    reservationId: doubleSpendWinner.value.reservationId,
+    idempotencyKey: 'double-spend-release',
+    usageDedupeKey: 'double-spend-release',
+    measuredCreditsMicros: 0,
+    usageStatus: 'measured',
+    outcome: 'failed',
+    terminal: true,
+    runId: doubleSpendWinner.value.runId ?? undefined,
+  })
+
   const reindex = await app!.inject({
     method: 'POST',
     url: `/v1/workspaces/${workspaceId}/sources/${sourceId}/reindex`,
@@ -716,6 +940,90 @@ try {
       ),
     false,
   )
+  const paidLotId = creditAccount.ledger.find(
+    (entry) => entry.entryType === 'purchase',
+  )!.lotId
+  const promotionalLotId = creditAccount.ledger.find(
+    (entry) => entry.entryType === 'promotional_grant',
+  )!.lotId
+  await billing!.appendCreditLifecycle({
+    ...scope,
+    entryType: 'refund',
+    currency: 'USD',
+    creditsMicros: 10_000,
+    cashAmountMicros: 10_000,
+    idempotencyKey: 'wp24-refund',
+    paymentReference: 'payment-wp24-unified',
+  })
+  await billing!.appendCreditLifecycle({
+    ...scope,
+    entryType: 'refund',
+    currency: 'USD',
+    creditsMicros: 10_000,
+    cashAmountMicros: 10_000,
+    idempotencyKey: 'wp24-refund',
+    paymentReference: 'payment-wp24-unified',
+  })
+  await billing!.appendCreditLifecycle({
+    ...scope,
+    entryType: 'chargeback',
+    currency: 'USD',
+    creditsMicros: 5_000,
+    cashAmountMicros: 5_000,
+    idempotencyKey: 'wp24-chargeback',
+    paymentReference: 'payment-wp24-unified',
+  })
+  await billing!.appendCreditLifecycle({
+    ...scope,
+    entryType: 'expiration',
+    currency: 'USD',
+    creditsMicros: 3_000,
+    idempotencyKey: 'wp24-expiration',
+    lotId: promotionalLotId,
+  })
+  const financialProjection = await billing!.financialProjection(scope)
+  assert.equal(financialProjection.cashCollectedMicros, 1_985_000)
+  assert.ok(financialProjection.consumedPaidCreditRevenueMicros >= 0)
+  assert.ok(financialProjection.promotionalConsumptionMicros > 0)
+  assert.equal(
+    financialProjection.grossMarginMicros,
+    financialProjection.consumedPaidCreditRevenueMicros -
+      financialProjection.providerCogsMicros -
+      financialProjection.infrastructureCogsMicros,
+  )
+
+  const beforeShortage = await billing!.creditBalance(scope)
+  await billing!.appendCreditLifecycle({
+    ...scope,
+    entryType: 'admin_adjustment',
+    currency: 'USD',
+    creditsMicros: -(beforeShortage.availableCreditsMicros + 1),
+    idempotencyKey: 'wp24-credit-shortage',
+    lotId: paidLotId,
+  })
+  const creditDeniedTurn = await app!.inject({
+    method: 'POST',
+    url: `/v1/sessions/${session.sessionId}/turns`,
+    headers: { ...headers, 'idempotency-key': 'wp24-credit-denied-turn' },
+    payload: { prompt: 'must not start without prepaid credit' },
+  })
+  assert.equal(creditDeniedTurn.statusCode, 429, creditDeniedTurn.body)
+  assert.equal(creditDeniedTurn.json().message, 'HARD_LIMIT_PREPAID_CREDIT')
+  const creditDeniedSource = await app!.inject({
+    method: 'POST',
+    url: `/v1/workspaces/${workspaceId}/sources`,
+    headers: {
+      ...headers,
+      'content-type': 'application/octet-stream',
+      'x-source-name': 'credit-denied.txt',
+      'x-source-media-type': 'text/plain',
+      'idempotency-key': 'wp24-credit-denied-source',
+    },
+    payload: Buffer.from('credit denied'),
+  })
+  assert.equal(creditDeniedSource.statusCode, 429, creditDeniedSource.body)
+  assert.equal(creditDeniedSource.json().message, 'HARD_LIMIT_PREPAID_CREDIT')
+
   await billing!.withScope(scope, async (client) => {
     await client.query(
       `INSERT INTO persistent_codex.quota_policies
@@ -747,6 +1055,7 @@ try {
   assert.equal(deniedSource.statusCode, 429, deniedSource.body)
   const quotaDecision = await billing!.latestDecision(scope)
   assert.equal(quotaDecision?.outcome, 'deny')
+  const financialProjectionForUi = await billing!.financialProjection(scope)
 
   const billingBeforeRestart = billingOverviewSchema.parse(
     (
@@ -773,7 +1082,7 @@ try {
           (['a', 'b'] as const).map((device) =>
             evaluate(
               device,
-              `document.querySelector('.usage-summary > summary')?.click();['${sourceId}','${revisionId}','${citation.chunkId}','WP24_APPROVAL_RESUMED','measured','estimated','reconciled','incomplete','wp24-price-v1','currency USD','freshness','Hard limit'].every(v=>document.body.innerText.includes(v))`,
+              `document.querySelector('.usage-summary > summary')?.click();['${sourceId}','${revisionId}','${citation.chunkId}','WP24_APPROVAL_RESUMED','measured','estimated','reconciled','incomplete','wp24-price-v1','currency USD','freshness','Hard limit','available credits','reserved credits','Credit history','Admin financial projection','cash collected','gross margin','${financialProjectionForUi.ledgerWatermark}'].every(v=>document.body.innerText.includes(v))`,
             ),
           ),
         )
@@ -851,11 +1160,17 @@ try {
   }
   assert.equal(await billing!.subscription(otherBillingScope), null)
   assert.equal(await billing!.latestDecision(otherBillingScope), null)
+  const otherCredit = await billing!.creditAccount(otherBillingScope)
+  assert.equal(otherCredit.ledger.length, 0)
+  assert.equal(otherCredit.reservations.length, 0)
+  assert.equal(otherCredit.settlements.length, 0)
 
   const persisted = {
     subscription: await billing!.subscription(scope),
     decision: await billing!.latestDecision(scope),
     reconciledAt: await billing!.lastReconciledAt(scope),
+    credit: await billing!.creditAccount(scope),
+    projection: await billing!.financialProjection(scope),
   }
   await app!.close()
   app = undefined
@@ -880,6 +1195,15 @@ try {
     persisted.decision?.decisionId,
   )
   assert.equal(afterRestart.lastReconciledAt, persisted.reconciledAt)
+  assert.equal(
+    afterRestart.credits.balance.ledgerWatermark,
+    persisted.credit.balance.ledgerWatermark,
+  )
+  const projectionAfterRestart = await billing!.financialProjection(scope)
+  assert.equal(
+    projectionAfterRestart.ledgerWatermark,
+    persisted.projection.ledgerWatermark,
+  )
 
   process.stdout.write(
     `${JSON.stringify({
@@ -898,6 +1222,13 @@ try {
       usageDedupeKey,
       quotaDecisionId: quotaDecision!.decisionId,
       subscriptionId: persisted.subscription!.subscriptionId,
+      creditLotId: paidLotId,
+      promotionalCreditLotId: promotionalLotId,
+      creditReservationId: approvalSettlement.reservationId,
+      creditSettlementId: approvalSettlement.settlementId,
+      creditLedgerWatermark: persisted.credit.balance.ledgerWatermark,
+      financialProjectionId: financialProjection.projectionId,
+      partialCreditEvidence,
       assertions: {
         sameSession: true,
         citationLinked: true,
@@ -908,6 +1239,10 @@ try {
         deleteReindexVisible: true,
         incompleteFailedInterrupted: true,
         hardTurnAndSourceDenied: true,
+        hardCreditShortageDenied: true,
+        duplicateCreditEffects: 0,
+        concurrentDoubleSpend: 0,
+        refundChargebackExpiryProjected: true,
         crossTenantVisibility: 0,
         restartStatePreserved: true,
         productionBillingEvidence: false,
