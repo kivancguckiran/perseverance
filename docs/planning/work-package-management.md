@@ -77,12 +77,13 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP21 — Corpus ingestion temeli               | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index omurgası bağımsız kabul edildi             |
 | WP22 — Hybrid retrieval ve MCP               | Tamamlandı | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP bağımsız kabul edildi          |
 | WP23 — Mobil approval ve push                | Tamamlandı | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği bağımsız kabul edildi                          |
-| WP24 — Billing ve Faz 4 kabulü               | Aktif      | Plan/kota/billing entegrasyonu ile corpus-mobil ürün fazı uçtan uca kapatılacak                             |
-| WP25 — HA topology ve kapasite               | Planlandı  | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
-| WP26 — SLO ve DR                             | Planlandı  | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
-| WP27 — Enterprise lifecycle                  | Planlandı  | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
-| WP28 — Supply-chain ve canary                | Planlandı  | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
-| WP29 — Production kabul ve rollout           | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
+| WP24 — Billing, kredi ve gelir/marj kabulü   | Aktif      | Prepaid kredi, reservation, gelir/COGS/marj ve billing kabulü tamamlanacak                                  |
+| WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Planlandı  | Davet, rol/ACL, güvenli ortak kullanım ve birleşik Faz 4 kabulü tamamlanacak                                |
+| WP26 — HA topology ve kapasite               | Planlandı  | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
+| WP27 — SLO ve DR                             | Planlandı  | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
+| WP28 — Enterprise lifecycle                  | Planlandı  | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
+| WP29 — Supply-chain ve canary                | Planlandı  | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
+| WP30 — Production kabul ve rollout           | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
 
 ## WP1 nihai denetim sonucu
 
@@ -1002,11 +1003,12 @@ uygulama paketi başlatılmaz.
 
 ## Faz 4 ve Faz 5 plan kabulü
 
-Faz 4 Corpus ve mobil ürün WP21–WP24; Faz 5 Production hardening WP25–WP29 olarak
+Faz 4 Corpus ve mobil ürün WP21–WP25; Faz 5 Production hardening WP26–WP30 olarak
 `docs/planning/phase-4-corpus-mobile-and-phase-5-production-plan.md` içinde planlandı.
-Paketler source ingestion, retrieval/MCP, mobil/push, billing/kota, HA/capacity,
-observability/DR, enterprise lifecycle, supply-chain/canary ve nihai production
-kabulünü bağımsız doğrulanabilir sınırlara ayırır.
+Paketler source ingestion, retrieval/MCP, mobil/push, billing/kota, paylaşımlı klasör
+ortak çalışması, HA/capacity, observability/DR, enterprise lifecycle,
+supply-chain/canary ve nihai production kabulünü bağımsız doğrulanabilir sınırlara
+ayırır.
 
 WP21 tek aktif iş paketidir. WP21 bağımsız kabul edilmeden WP22'ye geçilemez.
 
@@ -1093,3 +1095,46 @@ Uygulama commit'i: `3962844`.
 
 WP23 tamamlandı. Aktif iş paketi WP24'tür; WP24 tamamlanmadan Faz 4 kapatılamaz ve WP25
 başlatılamaz.
+
+## WP24 prepaid kredi kapsam genişletmesi
+
+WP24 ayrı bir paket açılmadan genişletildi. Aktif WP24 artık mevcut billing, usage,
+plan ve quota kapsamına ek olarak şunları zorunlu kabul kriteri sayar:
+
+- Append-only credit ledger ve derived available/reserved balance.
+- Paid/promotional credit lot; payment top-up, refund, chargeback ve expiration.
+- İş öncesi atomic reservation; ölçülen kullanım settlement'ı ve unused release.
+- Failed/interrupted/incomplete task kullanımının doğru kredi tüketimi.
+- Versioned retail price catalog; platform-managed ve BYOK ayrımı.
+- Customer credit/history; admin cash collected, outstanding credit liability,
+  consumed paid-credit revenue, provider/infrastructure COGS ve gross margin.
+- Payment/settlement replay, concurrent double-spend ve cross-tenant RLS/browser
+  adversarial testleri.
+
+Mevcut WP24 billing/quota ve birleşik E2E kanıtı bu genişletmeyi kapsamadığı için WP24
+halen aktiftir. Bu kriterler bağımsız doğrulanmadan WP24 tamamlanamaz, Faz 4 kapatılamaz
+ve WP25 aktive edilemez.
+
+## WP25 paylaşımlı klasör kapsamı
+
+WP25, Faz 4'ün yeni ve son iş paketi olarak planlandı; aktif değildir. WP24 tek aktif
+iş paketi olmaya devam eder ve bağımsız kabul edilmeden WP25 başlatılamaz.
+
+WP25'in hedefi, bir kullanıcının klasörü arkadaşına davet ederek paylaşması ve iki
+kullanıcının yalnız bu klasöre bağlı conversation, source, attachment/artifact ve
+agent task'larını birlikte kullanmasıdır. Private-by-default klasörler;
+`owner`/`editor`/`viewer` rolleri; süreli, tek kullanımlık ve digest olarak saklanan
+davetler; role/revoke/move sonrası cache ve realtime authorization yenilemesi; REST,
+RLS, retrieval/MCP, object storage ve browser katmanlarında folder ACL zorunludur.
+Security boundary ve veri modeli uygulamadan önce ADR ile kesinleştirilir.
+
+Kabul; iki gerçek kullanıcıyla invite/accept, private kardeş klasör izolasyonu,
+viewer/editor yetki ayrımı, expired/replayed invite ve revoke testleri, eşzamanlı
+task/approval yarışında tek upstream iş ve tek billing settlement, gerçek PostgreSQL
+forced-RLS ile üç viewport browser E2E kanıtını gerektirir. İlk sürüm paylaşılan klasör
+kaynaklarını ve agent işlerini ortak kullanmayı kapsar; Google Docs benzeri aynı dosya
+içeriğini canlı ortak düzenleme kapsam dışıdır. Son kabulde `pnpm phase4:accept`,
+WP21–WP25 kapılarını birlikte çalıştırır.
+
+WP25 bağımsız kabul edilmeden Faz 4 kapatılamaz ve Faz 5'in ilk paketi WP26 aktive
+edilemez.

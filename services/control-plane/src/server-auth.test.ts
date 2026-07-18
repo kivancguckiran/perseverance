@@ -91,6 +91,51 @@ function setup(role: OrganizationMembership['role'] = 'developer') {
 }
 
 describe('WP18 REST authorization boundary', () => {
+  it('keeps admin financial projections out of normal tenant roles', async () => {
+    const tenantFixture = setup('developer')
+    const tenantApp = await buildControlPlane({
+      eventStore: tenantFixture.store,
+      artifactRoot: join(tenantFixture.root, 'artifacts'),
+      authenticationAdapter: new FixedAuthentication(),
+      membershipDirectory: tenantFixture.directory,
+    })
+    const adminFixture = setup('admin')
+    const adminApp = await buildControlPlane({
+      eventStore: adminFixture.store,
+      artifactRoot: join(adminFixture.root, 'artifacts'),
+      authenticationAdapter: new FixedAuthentication(),
+      membershipDirectory: adminFixture.directory,
+    })
+    const headers = {
+      authorization: 'Bearer valid',
+      'x-tenant-id': 'org-a',
+      'x-workspace-id': 'wsp-a',
+    }
+    try {
+      expect(
+        (
+          await tenantApp.inject({
+            method: 'GET',
+            url: '/v1/workspaces/wsp-a/billing/financial',
+            headers,
+          })
+        ).statusCode,
+      ).toBe(403)
+      expect(
+        (
+          await adminApp.inject({
+            method: 'GET',
+            url: '/v1/workspaces/wsp-a/billing/financial',
+            headers,
+          })
+        ).statusCode,
+      ).toBe(503)
+    } finally {
+      await tenantApp.close()
+      await adminApp.close()
+    }
+  })
+
   it('derives access from principal membership and rejects forged tenant/workspace scope', async () => {
     const fixture = setup()
     const app = await buildControlPlane({
@@ -354,7 +399,7 @@ describe('public route authorization coverage', () => {
       (entry) => `${entry.method} ${entry.route}`,
     )
     expect(new Set(keys).size).toBe(keys.length)
-    expect(keys).toHaveLength(58)
+    expect(keys).toHaveLength(59)
     expect(
       PUBLIC_ROUTE_AUTHORIZATION_CATALOG.every(
         (entry) => entry.action && entry.resourceType,

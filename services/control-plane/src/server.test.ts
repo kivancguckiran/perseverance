@@ -350,6 +350,16 @@ describe('WP24 commercial admission and billing API', () => {
         plan: { planId: 'beta', planVersion: 24, billingMode: 'hybrid' },
         latestDecision: { outcome: 'deny' },
         productionBillingVerified: false,
+        credits: {
+          balance: {
+            availableCreditsMicros: 0,
+            reservedCreditsMicros: 0,
+            ledgerWatermark: 'clw_0',
+          },
+          ledger: [],
+          reservations: [],
+          settlements: [],
+        },
       })
       expect(billing.body).not.toMatch(
         /api.?key|webhook.?secret|credential|payload/i,

@@ -110,6 +110,34 @@ const billingSeed: DevelopmentCommercialSeed = {
       expiresAt: null,
     },
   ],
+  retailPriceCatalog: {
+    schemaVersion: 1,
+    catalogId: 'local-alpha-retail',
+    catalogVersion: 'local-alpha-retail-v1',
+    currency: 'USD',
+    rates: [
+      { meter: 'provider_input_token', creditsMicrosPerUnit: 1 },
+      { meter: 'provider_output_token', creditsMicrosPerUnit: 2 },
+      { meter: 'compute_millisecond', creditsMicrosPerUnit: 1 },
+    ],
+    operationMaximums: (
+      [
+        'turn.start',
+        'source.upload',
+        'source.index',
+        'source.retrieval',
+        'workspace.concurrency',
+      ] as const
+    ).map((operation) => ({ operation, maximumCreditsMicros: 100_000 })),
+    idempotencyKey: 'local-alpha-retail-v1',
+    paymentReference: null,
+    usageDedupeKey: null,
+    runId: null,
+    operationReference: null,
+    occurredAt: '2026-01-01T00:00:00.000Z',
+    effectiveAt: '2026-01-01T00:00:00.000Z',
+    retiredAt: null,
+  },
 }
 const billingRepository = createBillingPostgresRepository(billingDatabaseUrl, {
   developmentSeed: billingSeed,

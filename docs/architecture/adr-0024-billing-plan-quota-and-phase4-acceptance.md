@@ -1,4 +1,4 @@
-# ADR-0024: Billing adapter, ticari plan/kota ve Faz 4 kabul sınırı
+# ADR-0024: Billing adapter, ticari plan/kota ve WP24 kabul sınırı
 
 - Durum: Kabul önerisi
 - Tarih: 18 Temmuz 2026
@@ -33,6 +33,36 @@ merchant-of-record, vergi ve invoice/refund operasyonu henüz seçilmemiştir.
   platform compute, storage, egress, corpus indexing/retrieval ve abonelik bileşenlerini
   ölçmeye devam eder. `hybrid` plan bu ayrımı workspace/provider credential mode'una
   göre satır bazında korur; BYOK provider maliyetini sıfır diye uydurmaz.
+- Tüketici modeli prepaid kredidir. Kredi, provider token'ının kendisi değil versioned
+  retail price catalog ile hesaplanan ürün birimidir. Satın alma/top-up doğrulanmış
+  payment webhook'undan paid credit lot; kampanya ise parasal tahsilattan ayrı
+  promotional credit lot üretir. Aynı webhook veya grant idempotency key'i ikinci lot
+  oluşturamaz.
+- Kredi doğruluk kaynağı append-only `credit_ledger`'dır. `purchase`,
+  `promotional_grant`, `reservation`, `reservation_release`, `usage_settlement`,
+  `refund`, `chargeback`, `expiration` ve `admin_adjustment` entry'leri tenant,
+  workspace, lot, payment ve usage referansıyla tutulur. Mutable balance yalnız derived
+  projection/cache'tir; ledger ile yeniden üretilebilir olmalıdır.
+- İş başlamadan önce retail katalog ve bounded maksimum tahmine göre atomic reservation
+  yapılır. Terminal veya ara provider usage ölçümü geldiğinde aynı usage dedupe key'i
+  üzerinden settlement yapılır, kullanılmayan tutar serbest bırakılır. Failed,
+  interrupted veya incomplete işin gerçekleşmiş kullanımı ücretlenir; eksik kullanım
+  sıfır varsayılmaz. Concurrent reservation ve settlement double-spend/replay'e karşı
+  CAS/transaction lock ile korunur.
+- Cash collected, revenue ve balance aynı kavram değildir. Cash collected doğrulanmış
+  ödemedir; outstanding paid-credit value henüz tüketilmemiş yükümlülük projection'ıdır;
+  consumed paid credits usage revenue projection'ını üretir. Promotional consumption
+  revenue değildir. Provider ve infrastructure COGS ayrı tutulur; gross margin,
+  consumed paid-credit revenue eksi COGS olarak aynı watermark/price version üzerinde
+  raporlanır. Vergisel/muhasebesel revenue recognition nihai hukuk ve muhasebe kararı
+  olmadan kesinleştirilmez.
+- Refund, chargeback ve expiry yeni append-only entry/projection üretir; geçmiş kredi
+  veya usage kayıtlarını mutate etmez. Lot tüketim sırası ve negatif balance politikası
+  versioned ve audit edilebilirdir. Consumption policy v1; promotional lotları paid
+  lotlardan önce, her grup içinde en yakın expiry sonra `occurredAt/lotId` sırasıyla
+  tüketir. Reservation birden çok lota deterministic allocation yapabilir. Workspace
+  toplam available balance reservation tutarından düşükse veya negatifse yeni iş
+  fail-closed reddedilir; pozitif tek bir lot global negatif bakiyeyi maskeleyemez.
 - Mevcut append-only `usage_ledger` tek kullanım doğruluk kaynağıdır. Provider input,
   cached input, output ve reasoning token; provider-reported cost; compute millisecond;
   storage byte-millisecond; egress byte; index ve retrieval embedding token meter'ları
@@ -65,7 +95,7 @@ effectiveAt)` uygular; duplicate ve out-of-order event eski state'i geri getirme
 - Runtime admission, scope başına PostgreSQL transaction advisory lock ve durable
   request-key lease kullanır. İki control-plane instance aynı request'i tek quota
   decision'a bağlar; aktif turn lease'i provider turn kimliğine bind edilir ve terminal
-  event'te idempotent bırakılır. Bu lease WP24 admission bütünlüğüdür; WP25'in HA
+  event'te idempotent bırakılır. Bu lease WP24 admission bütünlüğüdür; WP26'nın HA
   scheduler/fair-queue kapsamını aktive etmez.
 - Version 1 aktif turn politikası `continue` varsayılanıdır: hard limit yeni işi
   engeller, başlamış turn tamamlanır ve gerçekleşen kullanım ledger'a yazılır. Yalnız
@@ -73,10 +103,10 @@ effectiveAt)` uygular; duplicate ve out-of-order event eski state'i geri getirme
   yolunu bir kez çağırabilir. Billing webhook veya approval replay'i concurrency ya da
   quota ölçümünü ikinci kez artırmaz.
 - Tenant ve session concurrency; provider spend; corpus source, byte ve chunk; storage
-  limitleri desteklenir. Compute/egress meter'ları ticari ölçümdür; WP25 scheduler,
+  limitleri desteklenir. Compute/egress meter'ları ticari ölçümdür; WP26 scheduler,
   distributed lease, HA admission veya noisy-neighbor çözümü bu ADR'ye dahil değildir.
 
-## Faz 4 kabul ayrımı
+## WP24 kabul ayrımı
 
 `phase4:accept`, önce yeni `wp24:e2e` ve `wp24:browser` kapılarını doğrudan çalıştırır.
 Bu iki kapı aynı harness içinde gerçek PostgreSQL + pgvector, pinli Codex `0.144.2`,
@@ -90,10 +120,24 @@ WP22/WP23 kapıları yalnız regresyondur; birleşik kanıt yerine geçmez. Bill
 Push credential yoksa gerçek-provider smoke `not-run` raporlanır; emulator sonucu
 production kanıtı sayılmaz.
 
+WP24 kabulü ayrıca aynı harness ve PostgreSQL scope'unda payment webhook -> credit
+lot -> reservation -> usage settlement -> unused release akışını; failed/interrupted/
+incomplete kullanım ücretini; refund/chargeback/expiry idempotency'sini; customer
+credit history ve admin cash/liability/revenue/COGS/margin projection'ını doğrular.
+Bu kanıt olmadan billing/quota testleri geçmiş olsa dahi WP24 tamamlanmış sayılmaz.
+
+Migration `0026_prepaid_credit_financial_projection.sql`; retail catalog, paid ve
+promotional lot, append-only credit ledger, CAS reservation/allocation, settlement ve
+financial projection checkpoint tablolarını aynı forced-RLS workspace sınırında kurar.
+Customer API derived balance/history'yi; ayrı `billing.financial.read` action'ı ise
+yalnız owner/admin/billing rollerine operational projection'ı açar. Bu projection
+vergi veya nihai muhasebe revenue-recognition kararı değildir.
+
 ## Sonuçlar
 
 Ticari policy usage'ın sahibi değildir; ledger watermark üzerinden karar verir.
 Out-of-order billing olayı hakları geri sarmaz ve failed/interrupted maliyet kaybolmaz.
 Gerçek provider/MoR, tax, invoice/refund ve production Web Push doğrulaması bağımsız
-karar ve credential gerektirir. WP24 uygulaması Faz 4'ü veya WP25'i aktive etmez;
-bağımsız WP24 kabul task'ı bunu ayrıca yapar.
+karar ve credential gerektirir. WP24 uygulaması Faz 4'ü kapatmaz veya WP25'i aktive
+etmez; bağımsız WP24 kabul task'ı yalnız WP24'ü tamamlar ve planlanmış WP25'in aktive
+edilebilmesini sağlar. Birleşik Faz 4 kapanışı WP25'in sorumluluğudur.
