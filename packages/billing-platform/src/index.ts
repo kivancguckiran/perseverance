@@ -1090,6 +1090,24 @@ export class BillingPostgresRepository {
     return this.settleCredits({ ...scope, ...input, reservationId })
   }
 
+  async creditReservationForOperation(
+    scopeInput: BillingScope,
+    resourceId: string,
+  ): Promise<CreditReservation | null> {
+    const scope = billingScopeSchema.parse(scopeInput)
+    return this.withScope(scope, async (client) => {
+      const row = (
+        await client.query<Record<string, unknown>>(
+          `SELECT * FROM persistent_codex.credit_reservations
+           WHERE run_id=$1 OR operation_reference=$1
+           ORDER BY occurred_at DESC LIMIT 1`,
+          [resourceId],
+        )
+      ).rows[0]
+      return row ? this.#parseReservation(scope, row) : null
+    })
+  }
+
   #parseReservation(
     scope: BillingScope,
     row: Record<string, unknown>,

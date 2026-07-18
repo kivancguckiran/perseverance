@@ -325,6 +325,7 @@ export interface ControlPlaneOptions {
     financialProjection?: BillingPostgresRepository['financialProjection']
     retailCreditsForUsage?: BillingPostgresRepository['retailCreditsForUsage']
     settleOperation?: BillingPostgresRepository['settleOperation']
+    creditReservationForOperation?: BillingPostgresRepository['creditReservationForOperation']
     productionBillingVerified?: boolean
     close?(): void | Promise<unknown>
   }
@@ -1124,6 +1125,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const now = options.now ?? (() => new Date())
   const metrics = options.metricRecorder ?? new BoundedMetricRecorder({ now })
   const turnStartedAt = new Map<string, number>()
+  const sharedTasksByTurn = new Map<
+    string,
+    { identity: FolderIdentity; taskId: string }
+  >()
   const store = options.eventStore ?? new SqliteEventStore(options.databasePath)
   const latestCommercialDecisions = new Map<string, AdmissionDecision>()
   const admitCommercialOperation = async (input: {
@@ -1843,6 +1848,49 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         requestId: String(event.payload.requestId),
         metadata: { approvalKind: event.payload.approvalKind },
       })
+    if (event.type === 'approval.resolved') {
+      const approval = store
+        .listApprovals({
+          tenantId: event.tenantId,
+          workspaceId: event.workspaceId,
+        })
+        .find(
+          (value) =>
+            String(value.requestId) === String(event.payload.requestId) &&
+            value.status === 'resolved',
+        )
+      const session = approval
+        ? store.getSession({
+            tenantId: event.tenantId,
+            workspaceId: event.workspaceId,
+            sessionId: approval.sessionId,
+          })
+        : null
+      if (
+        approval?.resolvingUserId &&
+        approval.selectedDecision &&
+        session?.folderId?.startsWith('fld_')
+      )
+        void sharedFolders
+          .reserveApprovalResolution({
+            tenantId: event.tenantId,
+            organizationId: event.tenantId,
+            workspaceId: event.workspaceId,
+            principalId: approval.resolvingUserId,
+            folderId: session.folderId,
+            approvalId: approval.approvalId,
+            expectedVersion: approval.version,
+            durableEventId: event.eventId,
+            codexTurnId: event.codexTurnId ?? null,
+            decision: approval.selectedDecision,
+          })
+          .catch(() =>
+            app.log.error(
+              { code: 'SHARED_APPROVAL_LINK_FAILED' },
+              'shared approval lifecycle link failed',
+            ),
+          )
+    }
     if (event.type === 'turn.completed') {
       const failed = !['completed', 'success'].includes(event.payload.status)
       store.appendAudit({
@@ -1893,26 +1941,68 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
               provider_output_token: usage.counters.outputTokens,
               provider_reasoning_token: usage.counters.reasoningTokens,
             })
-            .then((priced) => {
+            .then(async (priced) => {
+              const task =
+                sharedTasksByTurn.get(
+                  JSON.stringify([
+                    event.tenantId,
+                    event.workspaceId,
+                    event.codexTurnId,
+                  ]),
+                ) ??
+                (await sharedFolders.findTaskByTurn(
+                  {
+                    tenantId: event.tenantId,
+                    organizationId: event.tenantId,
+                    workspaceId: event.workspaceId,
+                  },
+                  event.codexTurnId!,
+                ))
               if (
                 priced.creditsMicros === 0 &&
                 usage.completeness === 'partial'
-              )
+              ) {
+                if (task)
+                  await sharedFolders.settleTask({
+                    ...task.identity,
+                    taskId: task.taskId,
+                    status:
+                      event.payload.status === 'interrupted'
+                        ? 'interrupted'
+                        : failed
+                          ? 'failed'
+                          : 'incomplete',
+                    usageDedupeKey: `runtime-usage:${event.sessionId}:${event.codexTurnId}`,
+                  })
                 return undefined
-              return options.commercialPolicy!.settleOperation!(
-                creditScope,
-                event.codexTurnId!,
-                {
-                  idempotencyKey: `runtime-usage:${event.sessionId}:${event.codexTurnId}`,
-                  usageDedupeKey: `runtime-usage:${event.sessionId}:${event.codexTurnId}`,
-                  measuredCreditsMicros: priced.creditsMicros,
-                  usageStatus:
-                    usage.completeness === 'partial'
-                      ? 'incomplete'
-                      : usage.reconciliationStatus === 'reconciled'
-                        ? 'reconciled'
-                        : 'measured',
-                  outcome:
+              }
+              const settlement = await options.commercialPolicy!
+                .settleOperation!(creditScope, event.codexTurnId!, {
+                idempotencyKey: `runtime-usage:${event.sessionId}:${event.codexTurnId}`,
+                usageDedupeKey: `runtime-usage:${event.sessionId}:${event.codexTurnId}`,
+                measuredCreditsMicros: priced.creditsMicros,
+                usageStatus:
+                  usage.completeness === 'partial'
+                    ? 'incomplete'
+                    : usage.reconciliationStatus === 'reconciled'
+                      ? 'reconciled'
+                      : 'measured',
+                outcome:
+                  event.payload.status === 'interrupted'
+                    ? 'interrupted'
+                    : failed
+                      ? 'failed'
+                      : usage.completeness === 'partial'
+                        ? 'incomplete'
+                        : 'completed',
+                terminal: usage.completeness === 'complete',
+                runId: event.codexTurnId!,
+              })
+              if (task)
+                await sharedFolders.settleTask({
+                  ...task.identity,
+                  taskId: task.taskId,
+                  status:
                     event.payload.status === 'interrupted'
                       ? 'interrupted'
                       : failed
@@ -1920,10 +2010,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
                         : usage.completeness === 'partial'
                           ? 'incomplete'
                           : 'completed',
-                  terminal: usage.completeness === 'complete',
-                  runId: event.codexTurnId!,
-                },
-              )
+                  usageDedupeKey: settlement.usageDedupeKey,
+                  creditReservationId: settlement.reservationId,
+                  billingSettlementId: settlement.settlementId,
+                })
+              return settlement
             })
             .catch(() =>
               app.log.error(
@@ -3734,20 +3825,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           scope,
           request.params.approvalId,
         )
-        const approvalSession = await enforceSessionFolder(
+        await enforceSessionFolder(
           request,
           { ...scope, sessionId: pendingApproval.sessionId },
           'approval',
         )
-        if (approvalSession.folderId?.startsWith('fld_'))
-          await sharedFolders.reserveApprovalResolution({
-            ...sharedFolderIdentity(request)!,
-            folderId: approvalSession.folderId,
-            approvalId: request.params.approvalId,
-            expectedVersion: body.data.expectedVersion,
-            resolutionKey: key,
-            decision: body.data.decision,
-          })
         const reservation = store.reserveIdempotencyKey({
           ...scope,
           scope: `approval:${request.params.approvalId}`,
@@ -3761,7 +3843,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           approvalId: request.params.approvalId,
           decision: body.data.decision,
           expectedVersion: body.data.expectedVersion,
-          userId: body.data.clientContext?.deviceId ?? 'poc-user',
+          userId:
+            sharedFolderIdentity(request)?.principalId ??
+            body.data.clientContext?.deviceId ??
+            'poc-user',
           ...auditContext(request),
         })
         const safe = approvalSchema.parse(result)
@@ -4974,14 +5059,28 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       }
       let admission: AdmissionDecision | null = null
+      let sharedTask:
+        | { identity: FolderIdentity; taskId: string; created: boolean }
+        | undefined
       try {
         const session = await enforceSessionFolder(request, scope, 'turn')
-        if (session.folderId?.startsWith('fld_'))
-          await sharedFolders.reserveTask({
-            ...sharedFolderIdentity(request)!,
+        if (session.folderId?.startsWith('fld_')) {
+          const identity = sharedFolderIdentity(request)!
+          const reserved = await sharedFolders.reserveTask({
+            ...identity,
             folderId: session.folderId,
+            sessionId: scope.sessionId,
             idempotencyKey,
+            requestHash: createHash('sha256')
+              .update(JSON.stringify(body.data))
+              .digest('hex'),
           })
+          sharedTask = {
+            identity,
+            taskId: reserved.reservation.taskId,
+            created: reserved.created,
+          }
+        }
         admission = await admitCommercialOperation({
           tenantId: scope.tenantId,
           workspaceId: scope.workspaceId,
@@ -4989,13 +5088,20 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           operation: 'turn.start',
           requestKey: idempotencyKey,
         })
-        if (admission?.outcome === 'deny')
+        if (admission?.outcome === 'deny') {
+          if (sharedTask?.created)
+            await sharedFolders.settleTask({
+              ...sharedTask.identity,
+              taskId: sharedTask.taskId,
+              status: 'admission_denied',
+            })
           return reply.code(429).send({
             code: 'USAGE_LIMIT_REACHED',
             message: admission.reason,
             policyVersion: admission.policyVersion,
             measurementWatermark: admission.measurementWatermark,
           })
+        }
         if (admission?.outcome === 'warn')
           reply.header('x-usage-warning', admission.reason)
         const turnAttachments = body.data.attachmentIds.map((attachmentId) =>
@@ -5017,6 +5123,35 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             admission.decisionId,
             accepted.codexTurnId,
           )
+        if (sharedTask?.created) {
+          const billingScope = {
+            tenantId: scope.tenantId,
+            organizationId: scope.tenantId,
+            workspaceId: scope.workspaceId,
+          }
+          const creditReservation =
+            await options.commercialPolicy?.creditReservationForOperation?.(
+              billingScope,
+              accepted.codexTurnId,
+            )
+          await sharedFolders.bindTaskRuntime({
+            ...sharedTask.identity,
+            taskId: sharedTask.taskId,
+            runId: accepted.runId,
+            codexTurnId: accepted.codexTurnId,
+            upstreamWorkId: accepted.codexTurnId,
+            admissionDecisionId: admission?.decisionId ?? null,
+            creditReservationId: creditReservation?.reservationId ?? null,
+          })
+          sharedTasksByTurn.set(
+            JSON.stringify([
+              scope.tenantId,
+              scope.workspaceId,
+              accepted.codexTurnId,
+            ]),
+            { identity: sharedTask.identity, taskId: sharedTask.taskId },
+          )
+        }
         turnStartedAt.set(
           JSON.stringify([
             scope.tenantId,
@@ -5036,6 +5171,16 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             },
             admission.decisionId,
           )
+        if (sharedTask?.created)
+          await sharedFolders.settleTask({
+            ...sharedTask.identity,
+            taskId: sharedTask.taskId,
+            status:
+              error instanceof OrchestrationError &&
+              error.code === 'RECOVERY_OUTCOME_UNKNOWN'
+                ? 'recovery_required'
+                : 'start_failed',
+          })
         if (error instanceof AttachmentStorageError)
           return reply.code(400).send({
             code: error.code,

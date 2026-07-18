@@ -143,6 +143,8 @@ const translate = (error: unknown): never => {
   const message = value.message ?? ''
   if (/last owner/i.test(message))
     throw new SharedFolderError('LAST_OWNER_PROTECTED')
+  if (value.code === '23505' && /folder_task_reservations/i.test(message))
+    throw new SharedFolderError('TASK_IDEMPOTENCY_CONFLICT')
   if (value.code === '23505') throw new SharedFolderError('VERSION_CONFLICT')
   if (value.code === '42501')
     throw new SharedFolderError('FOLDER_ACCESS_DENIED')
@@ -988,17 +990,83 @@ export class PostgresSharedFolderRepository implements SharedFolderRepository {
   }
 
   async reserveTask(
-    input: FolderIdentity & { folderId: string; idempotencyKey: string },
+    input: FolderIdentity & {
+      folderId: string
+      sessionId: string
+      idempotencyKey: string
+      requestHash: string
+    },
   ) {
     return this.#transaction(input, async (client) => {
       await this.#folder(client, input, input.folderId, 'turn')
+      await client.query(
+        `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+        [
+          JSON.stringify([
+            input.tenantId,
+            input.organizationId,
+            input.workspaceId,
+            input.idempotencyKey,
+          ]),
+        ],
+      )
+      const current = (
+        await client.query(
+          `SELECT * FROM persistent_codex.folder_task_reservations
+           WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND idempotency_key=$4`,
+          [
+            input.tenantId,
+            input.organizationId,
+            input.workspaceId,
+            input.idempotencyKey,
+          ],
+        )
+      ).rows[0]
+      if (current) {
+        if (
+          String(current.folder_id) !== input.folderId ||
+          String(current.session_id) !== input.sessionId ||
+          String(current.request_hash) !== input.requestHash
+        )
+          throw new SharedFolderError('TASK_IDEMPOTENCY_CONFLICT')
+        return {
+          reservation: {
+            key: input.idempotencyKey,
+            folderId: String(current.folder_id),
+            principalId: String(current.principal_id),
+            taskId: String(current.task_id),
+            sessionId: String(current.session_id),
+            requestHash: String(current.request_hash),
+            runId: current.run_id ? String(current.run_id) : null,
+            codexTurnId: current.codex_turn_id
+              ? String(current.codex_turn_id)
+              : null,
+            upstreamWorkId: current.upstream_work_id
+              ? String(current.upstream_work_id)
+              : null,
+            admissionDecisionId: current.admission_decision_id
+              ? String(current.admission_decision_id)
+              : null,
+            usageDedupeKey: current.usage_dedupe_key
+              ? String(current.usage_dedupe_key)
+              : null,
+            creditReservationId: current.credit_reservation_id
+              ? String(current.credit_reservation_id)
+              : null,
+            billingSettlementId: current.billing_settlement_id
+              ? String(current.billing_settlement_id)
+              : null,
+            status: current.status,
+          },
+          created: false,
+        }
+      }
       const taskId = `tsk_${randomUUID()}`
-      const upstreamWorkId = `up_${randomUUID()}`
       const inserted = await client.query(
         `INSERT INTO persistent_codex.folder_task_reservations
-         (tenant_id,organization_id,workspace_id,folder_id,principal_id,task_id,idempotency_key,upstream_work_id,status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'reserved')
-         ON CONFLICT (tenant_id,organization_id,workspace_id,idempotency_key) DO NOTHING RETURNING *`,
+         (tenant_id,organization_id,workspace_id,folder_id,principal_id,task_id,session_id,idempotency_key,request_hash,status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'reserved')
+         RETURNING *`,
         [
           input.tenantId,
           input.organizationId,
@@ -1006,8 +1074,9 @@ export class PostgresSharedFolderRepository implements SharedFolderRepository {
           input.folderId,
           input.principalId,
           taskId,
+          input.sessionId,
           input.idempotencyKey,
-          upstreamWorkId,
+          input.requestHash,
         ],
       )
       const row =
@@ -1024,70 +1093,237 @@ export class PostgresSharedFolderRepository implements SharedFolderRepository {
             ],
           )
         ).rows[0]
+      if (!row) throw new SharedFolderError('TASK_IDEMPOTENCY_CONFLICT')
+      if (
+        String(row.folder_id) !== input.folderId ||
+        String(row.session_id) !== input.sessionId ||
+        String(row.request_hash) !== input.requestHash
+      )
+        throw new SharedFolderError('TASK_IDEMPOTENCY_CONFLICT')
       return {
         reservation: {
           key: input.idempotencyKey,
           folderId: String(row.folder_id),
           principalId: String(row.principal_id),
           taskId: String(row.task_id),
-          upstreamWorkId: String(row.upstream_work_id),
-          billingSettlementId: null,
-          status: row.status as 'reserved' | 'completed',
+          sessionId: String(row.session_id),
+          requestHash: String(row.request_hash),
+          runId: row.run_id ? String(row.run_id) : null,
+          codexTurnId: row.codex_turn_id ? String(row.codex_turn_id) : null,
+          upstreamWorkId: row.upstream_work_id
+            ? String(row.upstream_work_id)
+            : null,
+          admissionDecisionId: row.admission_decision_id
+            ? String(row.admission_decision_id)
+            : null,
+          usageDedupeKey: row.usage_dedupe_key
+            ? String(row.usage_dedupe_key)
+            : null,
+          creditReservationId: row.credit_reservation_id
+            ? String(row.credit_reservation_id)
+            : null,
+          billingSettlementId: row.billing_settlement_id
+            ? String(row.billing_settlement_id)
+            : null,
+          status: row.status,
         },
         created: Boolean(inserted.rowCount),
       }
     })
   }
 
+  async getTask(
+    identity: FolderIdentity,
+    sessionId: string,
+    idempotencyKey: string,
+  ) {
+    return this.#transaction(identity, async (client) => {
+      const row = (
+        await client.query(
+          `SELECT * FROM persistent_codex.folder_task_reservations WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4 AND idempotency_key=$5`,
+          [
+            identity.tenantId,
+            identity.organizationId,
+            identity.workspaceId,
+            sessionId,
+            idempotencyKey,
+          ],
+        )
+      ).rows[0]
+      if (!row) throw new SharedFolderError('TASK_NOT_FOUND')
+      await this.#folder(client, identity, String(row.folder_id), 'read')
+      return {
+        key: String(row.idempotency_key),
+        folderId: String(row.folder_id),
+        principalId: String(row.principal_id),
+        sessionId: String(row.session_id),
+        requestHash: String(row.request_hash),
+        taskId: String(row.task_id),
+        runId: row.run_id ? String(row.run_id) : null,
+        codexTurnId: row.codex_turn_id ? String(row.codex_turn_id) : null,
+        upstreamWorkId: row.upstream_work_id
+          ? String(row.upstream_work_id)
+          : null,
+        admissionDecisionId: row.admission_decision_id
+          ? String(row.admission_decision_id)
+          : null,
+        usageDedupeKey: row.usage_dedupe_key
+          ? String(row.usage_dedupe_key)
+          : null,
+        creditReservationId: row.credit_reservation_id
+          ? String(row.credit_reservation_id)
+          : null,
+        billingSettlementId: row.billing_settlement_id
+          ? String(row.billing_settlement_id)
+          : null,
+        status: row.status,
+      }
+    })
+  }
+
+  async findTaskByTurn(scope: FolderScope, codexTurnId: string) {
+    const row = (
+      await this.pool.query(
+        `SELECT * FROM persistent_codex.shared_folder_task_for_turn($1,$2,$3,$4)`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId, codexTurnId],
+      )
+    ).rows[0]
+    return row
+      ? {
+          identity: { ...scope, principalId: String(row.principal_id) },
+          taskId: String(row.task_id),
+        }
+      : null
+  }
+
+  async bindTaskRuntime(
+    input: FolderIdentity & {
+      taskId: string
+      runId: string
+      codexTurnId: string
+      upstreamWorkId: string
+      admissionDecisionId: string | null
+      creditReservationId: string | null
+    },
+  ) {
+    return this.#transaction(input, async (client) => {
+      const result = await client.query(
+        `UPDATE persistent_codex.folder_task_reservations SET run_id=coalesce(run_id,$5),codex_turn_id=coalesce(codex_turn_id,$6),upstream_work_id=coalesce(upstream_work_id,$7),admission_decision_id=coalesce(admission_decision_id,$8),credit_reservation_id=coalesce(credit_reservation_id,$9),status='running',version=version+1,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND task_id=$4 RETURNING *`,
+        [
+          input.tenantId,
+          input.organizationId,
+          input.workspaceId,
+          input.taskId,
+          input.runId,
+          input.codexTurnId,
+          input.upstreamWorkId,
+          input.admissionDecisionId,
+          input.creditReservationId,
+        ],
+      )
+      const row = result.rows[0]
+      if (!row) throw new SharedFolderError('TASK_NOT_FOUND')
+      return {
+        key: String(row.idempotency_key),
+        folderId: String(row.folder_id),
+        principalId: String(row.principal_id),
+        sessionId: String(row.session_id),
+        requestHash: String(row.request_hash),
+        taskId: String(row.task_id),
+        runId: String(row.run_id),
+        codexTurnId: String(row.codex_turn_id),
+        upstreamWorkId: String(row.upstream_work_id),
+        admissionDecisionId: row.admission_decision_id
+          ? String(row.admission_decision_id)
+          : null,
+        usageDedupeKey: row.usage_dedupe_key
+          ? String(row.usage_dedupe_key)
+          : null,
+        creditReservationId: row.credit_reservation_id
+          ? String(row.credit_reservation_id)
+          : null,
+        billingSettlementId: row.billing_settlement_id
+          ? String(row.billing_settlement_id)
+          : null,
+        status: row.status,
+      }
+    })
+  }
+
   async settleTask(
-    input: FolderIdentity & { idempotencyKey: string; settlementKey: string },
+    input: FolderIdentity & {
+      taskId: string
+      status: import('./index.js').TaskReservation['status']
+      usageDedupeKey?: string | null
+      creditReservationId?: string | null
+      billingSettlementId?: string | null
+    },
   ) {
     return this.#transaction(input, async (client) => {
       const tasks = await client.query(
         `SELECT * FROM persistent_codex.folder_task_reservations
-         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND idempotency_key=$4
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND task_id=$4
          FOR UPDATE`,
-        [
-          input.tenantId,
-          input.organizationId,
-          input.workspaceId,
-          input.idempotencyKey,
-        ],
+        [input.tenantId, input.organizationId, input.workspaceId, input.taskId],
       )
       if (!tasks.rowCount) throw new SharedFolderError('TASK_NOT_FOUND')
       const task = tasks.rows[0]
       await this.#folder(client, input, String(task.folder_id), 'turn')
-      const settlementId = `set_${digest(input.settlementKey).slice(0, 24)}`
-      const result = await client.query(
-        `INSERT INTO persistent_codex.folder_billing_settlements
-         (tenant_id,organization_id,workspace_id,folder_id,principal_id,task_id,settlement_key,settlement_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         ON CONFLICT (tenant_id,organization_id,workspace_id,settlement_key)
-         DO UPDATE SET settlement_key=EXCLUDED.settlement_key RETURNING settlement_id`,
+      if (
+        input.billingSettlementId &&
+        input.usageDedupeKey &&
+        input.creditReservationId
+      )
+        await client.query(
+          `INSERT INTO persistent_codex.folder_billing_settlements (tenant_id,organization_id,workspace_id,folder_id,principal_id,task_id,usage_dedupe_key,credit_reservation_id,settlement_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (tenant_id,organization_id,workspace_id,usage_dedupe_key) DO NOTHING`,
+          [
+            input.tenantId,
+            input.organizationId,
+            input.workspaceId,
+            task.folder_id,
+            task.principal_id,
+            task.task_id,
+            input.usageDedupeKey,
+            input.creditReservationId,
+            input.billingSettlementId,
+          ],
+        )
+      await client.query(
+        `UPDATE persistent_codex.folder_task_reservations SET status=$5,usage_dedupe_key=coalesce(usage_dedupe_key,$6),credit_reservation_id=coalesce(credit_reservation_id,$7),billing_settlement_id=coalesce(billing_settlement_id,$8),version=version+1,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND task_id=$4`,
         [
           input.tenantId,
           input.organizationId,
           input.workspaceId,
-          task.folder_id,
-          input.principalId,
           task.task_id,
-          input.settlementKey,
-          settlementId,
+          input.status,
+          input.usageDedupeKey ?? null,
+          input.creditReservationId ?? null,
+          input.billingSettlementId ?? null,
         ],
       )
-      await client.query(
-        `UPDATE persistent_codex.folder_task_reservations SET status='completed',version=version+1,updated_at=now()
-         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND task_id=$4`,
-        [input.tenantId, input.organizationId, input.workspaceId, task.task_id],
-      )
       return {
-        key: input.idempotencyKey,
+        key: String(task.idempotency_key),
         folderId: String(task.folder_id),
         principalId: String(task.principal_id),
         taskId: String(task.task_id),
-        upstreamWorkId: String(task.upstream_work_id),
-        billingSettlementId: String(result.rows[0].settlement_id),
-        status: 'completed' as const,
+        sessionId: String(task.session_id),
+        requestHash: String(task.request_hash),
+        runId: task.run_id ? String(task.run_id) : null,
+        codexTurnId: task.codex_turn_id ? String(task.codex_turn_id) : null,
+        upstreamWorkId: task.upstream_work_id
+          ? String(task.upstream_work_id)
+          : null,
+        admissionDecisionId: task.admission_decision_id
+          ? String(task.admission_decision_id)
+          : null,
+        usageDedupeKey: input.usageDedupeKey ?? task.usage_dedupe_key ?? null,
+        creditReservationId:
+          input.creditReservationId ?? task.credit_reservation_id ?? null,
+        billingSettlementId:
+          input.billingSettlementId ?? task.billing_settlement_id ?? null,
+        status: input.status,
       }
     })
   }
@@ -1097,17 +1333,18 @@ export class PostgresSharedFolderRepository implements SharedFolderRepository {
       folderId: string
       approvalId: string
       expectedVersion: number
-      resolutionKey: string
+      durableEventId: string
+      codexTurnId: string | null
       decision: string
     },
   ) {
     return this.#transaction(input, async (client) => {
       await this.#folder(client, input, input.folderId, 'approval')
-      const resolutionId = `apr_${digest(input.resolutionKey).slice(0, 24)}`
+      const resolutionId = input.durableEventId
       const inserted = await client.query(
         `INSERT INTO persistent_codex.folder_approval_resolutions
-         (tenant_id,organization_id,workspace_id,folder_id,principal_id,approval_id,approval_version,resolution_id,decision)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         (tenant_id,organization_id,workspace_id,folder_id,principal_id,approval_id,approval_version,resolution_id,durable_event_id,codex_turn_id,decision)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          ON CONFLICT (tenant_id,organization_id,workspace_id,approval_id,approval_version) DO NOTHING
          RETURNING resolution_id`,
         [
@@ -1119,6 +1356,8 @@ export class PostgresSharedFolderRepository implements SharedFolderRepository {
           input.approvalId,
           input.expectedVersion,
           resolutionId,
+          input.durableEventId,
+          input.codexTurnId,
           input.decision,
         ],
       )
@@ -1142,6 +1381,25 @@ export class PostgresSharedFolderRepository implements SharedFolderRepository {
         resolutionId: String(current.resolution_id),
         created: Boolean(inserted.rowCount),
       }
+    })
+  }
+
+  async getApprovalResolution(identity: FolderIdentity, approvalId: string) {
+    return this.#transaction(identity, async (client) => {
+      const row = (
+        await client.query(
+          `SELECT resolution_id,folder_id FROM persistent_codex.folder_approval_resolutions WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND approval_id=$4 ORDER BY resolved_at DESC LIMIT 1`,
+          [
+            identity.tenantId,
+            identity.organizationId,
+            identity.workspaceId,
+            approvalId,
+          ],
+        )
+      ).rows[0]
+      if (!row) return null
+      await this.#folder(client, identity, String(row.folder_id), 'read')
+      return { resolutionId: String(row.resolution_id) }
     })
   }
 

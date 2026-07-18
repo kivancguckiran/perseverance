@@ -380,6 +380,40 @@ try {
     `Array.from(document.querySelectorAll('dt')).find(node=>node.textContent==='Realtime')?.nextElementSibling?.textContent==='canlı'`,
   )
 
+  const startExpression = `(async()=>{const r=await fetch(${JSON.stringify(`${apiUrl}/v1/sessions/${sessionId}/turns`)},{method:'POST',headers:{'content-type':'application/json','x-tenant-id':${JSON.stringify(tenantId)},'x-workspace-id':${JSON.stringify(workspaceId)},'idempotency-key':'wp25-browser-shared-turn'},body:JSON.stringify({prompt:'Run curl -I https://example.com and request approval.'})});return JSON.stringify({status:r.status,body:await r.json()})})()`
+  const browserTurnResults = await Promise.all([
+    evaluate('owner', startExpression),
+    evaluate('friend', startExpression),
+  ])
+  for (const result of browserTurnResults)
+    assert(result.includes('202'), result)
+  let browserApproval: { approvalId: string; version: number } | undefined
+  for (let attempt = 0; attempt < 200 && !browserApproval; attempt++) {
+    const pending = await app.inject({
+      method: 'GET',
+      url: '/v1/approvals?status=pending',
+      headers: apiHeaders('owner'),
+    })
+    browserApproval = pending.json().approvals?.[0]
+    if (!browserApproval)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  assert(browserApproval)
+  const decisionExpression = (device: string) =>
+    `(async()=>{const r=await fetch(${JSON.stringify(`${apiUrl}/v1/approvals/${browserApproval!.approvalId}/decision`)},{method:'POST',headers:{'content-type':'application/json','x-tenant-id':${JSON.stringify(tenantId)},'x-workspace-id':${JSON.stringify(workspaceId)},'idempotency-key':${JSON.stringify(`wp25-browser-${device}`)}},body:JSON.stringify({decision:'accept',expectedVersion:${browserApproval.version},clientContext:{deviceId:${JSON.stringify(device)},reason:null}})});return String(r.status)})()`
+  const browserApprovalStatuses = await Promise.all([
+    evaluate('owner', decisionExpression('owner')),
+    evaluate('friend', decisionExpression('friend')),
+  ])
+  assert.equal(
+    browserApprovalStatuses.filter((value) => value.includes('200')).length,
+    1,
+  )
+  assert.equal(
+    browserApprovalStatuses.filter((value) => value.includes('409')).length,
+    1,
+  )
+
   await evaluate(
     'owner',
     `(() => { const li=Array.from(document.querySelectorAll('.shared-member-list li')).find(li=>li.querySelector('select')?.value==='editor'); li?.querySelector('button')?.click(); return true })()`,
@@ -414,6 +448,8 @@ try {
     principals: [opaque(subjects.owner), opaque(subjects.friend)],
     folderId: sharedFolder.folder.folderId,
     sessionId,
+    taskContexts: ['owner', 'friend'],
+    approvalRace: browserApprovalStatuses,
     viewports,
     inviteAcceptedRole: 'viewer',
     promotedRole: 'editor',

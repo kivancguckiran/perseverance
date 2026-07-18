@@ -144,18 +144,36 @@ CREATE TABLE persistent_codex.folder_task_reservations (
   folder_id text NOT NULL,
   principal_id text NOT NULL,
   task_id text NOT NULL,
+  session_id text NOT NULL,
   idempotency_key text NOT NULL,
-  upstream_work_id text NOT NULL,
-  status text NOT NULL CHECK (status IN ('reserved','running','completed','failed')),
+  request_hash text NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+  run_id text,
+  codex_turn_id text,
+  upstream_work_id text,
+  admission_decision_id text,
+  usage_dedupe_key text,
+  credit_reservation_id text,
+  billing_settlement_id text,
+  status text NOT NULL CHECK (status IN ('reserved','running','completed','failed','interrupted','incomplete','admission_denied','start_failed','recovery_required')),
   version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, organization_id, workspace_id, folder_id, task_id),
   UNIQUE (tenant_id, organization_id, workspace_id, idempotency_key),
+  UNIQUE (tenant_id, organization_id, workspace_id, run_id),
+  UNIQUE (tenant_id, organization_id, workspace_id, codex_turn_id),
   UNIQUE (tenant_id, organization_id, workspace_id, upstream_work_id),
+  UNIQUE (tenant_id, organization_id, workspace_id, usage_dedupe_key),
+  UNIQUE (tenant_id, organization_id, workspace_id, billing_settlement_id),
   FOREIGN KEY (tenant_id, organization_id, workspace_id, folder_id)
     REFERENCES persistent_codex.folders
-      (tenant_id, organization_id, workspace_id, folder_id)
+      (tenant_id, organization_id, workspace_id, folder_id),
+  FOREIGN KEY (tenant_id, organization_id, workspace_id, credit_reservation_id)
+    REFERENCES persistent_codex.credit_reservations
+      (tenant_id, organization_id, workspace_id, reservation_id),
+  FOREIGN KEY (tenant_id, organization_id, workspace_id, billing_settlement_id)
+    REFERENCES persistent_codex.credit_settlements
+      (tenant_id, organization_id, workspace_id, settlement_id)
 );
 
 CREATE TABLE persistent_codex.folder_approval_resolutions (
@@ -167,6 +185,8 @@ CREATE TABLE persistent_codex.folder_approval_resolutions (
   approval_id text NOT NULL,
   approval_version bigint NOT NULL CHECK (approval_version > 0),
   resolution_id text NOT NULL,
+  durable_event_id text NOT NULL,
+  codex_turn_id text,
   decision text NOT NULL,
   resolved_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (tenant_id, organization_id, workspace_id, approval_id, approval_version),
@@ -183,15 +203,22 @@ CREATE TABLE persistent_codex.folder_billing_settlements (
   folder_id text NOT NULL,
   principal_id text NOT NULL,
   task_id text NOT NULL,
-  settlement_key text NOT NULL,
+  usage_dedupe_key text NOT NULL,
+  credit_reservation_id text NOT NULL,
   settlement_id text NOT NULL,
   settled_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (tenant_id, organization_id, workspace_id, settlement_key),
+  PRIMARY KEY (tenant_id, organization_id, workspace_id, usage_dedupe_key),
   UNIQUE (tenant_id, organization_id, workspace_id, task_id),
   UNIQUE (tenant_id, organization_id, workspace_id, settlement_id),
   FOREIGN KEY (tenant_id, organization_id, workspace_id, folder_id, task_id)
     REFERENCES persistent_codex.folder_task_reservations
-      (tenant_id, organization_id, workspace_id, folder_id, task_id)
+      (tenant_id, organization_id, workspace_id, folder_id, task_id),
+  FOREIGN KEY (tenant_id, organization_id, workspace_id, credit_reservation_id)
+    REFERENCES persistent_codex.credit_reservations
+      (tenant_id, organization_id, workspace_id, reservation_id),
+  FOREIGN KEY (tenant_id, organization_id, workspace_id, settlement_id)
+    REFERENCES persistent_codex.credit_settlements
+      (tenant_id, organization_id, workspace_id, settlement_id)
 );
 
 CREATE TABLE persistent_codex.folder_access_outbox (
@@ -284,7 +311,21 @@ AS $$
   )
 $$;
 
+CREATE OR REPLACE FUNCTION persistent_codex.shared_folder_task_for_turn(
+  p_tenant_id text, p_organization_id text, p_workspace_id text, p_codex_turn_id text
+) RETURNS TABLE(task_id text, principal_id text)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, persistent_codex
+AS $$
+  SELECT t.task_id,t.principal_id
+  FROM persistent_codex.folder_task_reservations t
+  WHERE t.tenant_id=p_tenant_id AND t.organization_id=p_organization_id
+    AND t.workspace_id=p_workspace_id AND t.codex_turn_id=p_codex_turn_id
+  LIMIT 1
+$$;
+
 REVOKE ALL ON FUNCTION persistent_codex.shared_folder_scope_exists(text,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION persistent_codex.shared_folder_task_for_turn(text,text,text,text) FROM PUBLIC;
 
 DO $$
 DECLARE table_name text;

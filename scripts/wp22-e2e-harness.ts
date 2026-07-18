@@ -120,7 +120,7 @@ GRANT EXECUTE ON FUNCTION persistent_codex.corpus_recoverable_scopes() TO corpus
 ${
   this.phase4
     ? `GRANT EXECUTE ON FUNCTION persistent_codex.billing_claim_webhooks(timestamptz,integer),persistent_codex.billing_recover_stale_webhooks(timestamptz,integer) TO corpus_runtime;
-GRANT EXECUTE ON FUNCTION persistent_codex.folder_role(text,text,text,text,text),persistent_codex.accept_folder_invitation(bytea,text,timestamptz),persistent_codex.authorize_folder_workload_resource(text,text,text,text,text),persistent_codex.shared_folder_scope_exists(text,text,text) TO corpus_runtime;`
+GRANT EXECUTE ON FUNCTION persistent_codex.folder_role(text,text,text,text,text),persistent_codex.accept_folder_invitation(bytea,text,timestamptz),persistent_codex.authorize_folder_workload_resource(text,text,text,text,text),persistent_codex.shared_folder_scope_exists(text,text,text),persistent_codex.shared_folder_task_for_turn(text,text,text,text) TO corpus_runtime;`
     : ''
 }
 ${this.phase4 ? `GRANT EXECUTE ON FUNCTION persistent_codex.push_enqueue_notification(text,text,text,text,jsonb),persistent_codex.push_claim_deliveries(timestamptz,integer),persistent_codex.push_complete_delivery(text,text,text,text,text,text,integer,text,text,timestamptz),persistent_codex.push_expire_subscriptions(timestamptz),persistent_codex.push_resolve_notification(text,text,timestamptz) TO corpus_runtime;` : ''}

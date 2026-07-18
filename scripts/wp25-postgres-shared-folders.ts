@@ -7,7 +7,7 @@ import { SharedFolderError } from '../packages/shared-folders/src/index.ts'
 
 const container = `persistent-wp25-${randomUUID()}`
 const volume = `${container}-data`
-const image = process.env.WP25_POSTGRES_IMAGE ?? 'postgres:17-alpine'
+const image = process.env.WP25_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg17'
 
 function docker(args: string[], input?: string) {
   const result = spawnSync('docker', args, { encoding: 'utf8', input })
@@ -73,6 +73,12 @@ try {
   if (!ready) throw new Error('PostgreSQL did not become ready')
   for (const migration of [
     '0018_oidc_authorization_rls.sql',
+    '0021_tenant_corpus_ingestion.sql',
+    '0022_hybrid_corpus_retrieval.sql',
+    '0023_pwa_push_multi_device.sql',
+    '0024_billing_plan_quota.sql',
+    '0025_billing_runtime_composition.sql',
+    '0026_prepaid_credit_financial_projection.sql',
     '0027_secure_shared_folders.sql',
   ])
     docker(
@@ -109,9 +115,10 @@ try {
       GRANT EXECUTE ON FUNCTION persistent_codex.accept_folder_invitation(bytea,text,timestamptz) TO folder_runtime;
       GRANT EXECUTE ON FUNCTION persistent_codex.authorize_folder_workload_resource(text,text,text,text,text) TO folder_runtime;
       GRANT EXECUTE ON FUNCTION persistent_codex.shared_folder_scope_exists(text,text,text) TO folder_runtime;
+      GRANT EXECUTE ON FUNCTION persistent_codex.shared_folder_task_for_turn(text,text,text,text) TO folder_runtime;
       INSERT INTO persistent_codex.organizations VALUES ('org_a','A','active'),('org_b','B','active');
-      INSERT INTO persistent_codex.workspaces (organization_id,workspace_id,name)
-        VALUES ('org_a','wsp_a','A'),('org_b','wsp_b','B');
+      INSERT INTO persistent_codex.workspaces (tenant_id,organization_id,workspace_id,name)
+        VALUES ('org_a','org_a','wsp_a','A'),('org_b','org_b','wsp_b','B');
     `,
   )
   const port = docker(['port', container, '5432/tcp']).split(':').at(-1)!
@@ -395,40 +402,42 @@ try {
     repository.reserveTask({
       ...executionIdentity,
       folderId: created.folder.folderId,
+      sessionId: 'session-race',
       idempotencyKey: 'race-key',
+      requestHash: 'a'.repeat(64),
     }),
     repository.reserveTask({
       ...executionIdentity,
       folderId: created.folder.folderId,
+      sessionId: 'session-race',
       idempotencyKey: 'race-key',
+      requestHash: 'a'.repeat(64),
     }),
   ])
-  assert.equal(
-    taskA.reservation.upstreamWorkId,
-    taskB.reservation.upstreamWorkId,
-  )
+  assert.equal(taskA.reservation.taskId, taskB.reservation.taskId)
   assert.equal([taskA.created, taskB.created].filter(Boolean).length, 1)
   const approvalInput = {
     ...executionIdentity,
     folderId: created.folder.folderId,
     approvalId: 'approval_wp25_postgres',
     expectedVersion: 1,
-    resolutionKey: 'resolution-a',
+    durableEventId: 'evt-resolution-a',
+    codexTurnId: 'turn-race',
     decision: 'accept',
   }
   const [approvalA, approvalB] = await Promise.all([
     repository.reserveApprovalResolution(approvalInput),
     repository.reserveApprovalResolution({
       ...approvalInput,
-      resolutionKey: 'resolution-b',
+      durableEventId: 'evt-resolution-b',
     }),
   ])
   assert.equal(approvalA.resolutionId, approvalB.resolutionId)
   assert.equal([approvalA.created, approvalB.created].filter(Boolean).length, 1)
   const settlementInput = {
     ...executionIdentity,
-    idempotencyKey: 'race-key',
-    settlementKey: 'settlement-wp25',
+    taskId: taskA.reservation.taskId,
+    status: 'completed' as const,
   }
   const [settlementA, settlementB] = await Promise.all([
     repository.settleTask(settlementInput),
