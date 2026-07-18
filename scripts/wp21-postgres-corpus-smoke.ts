@@ -19,7 +19,7 @@ import { buildControlPlane } from '../services/control-plane/src/server'
 const suffix = randomUUID()
 const container = `persistent-codex-wp21-${suffix}`
 const volume = `persistent-codex-wp21-${suffix}`
-const image = process.env.WP21_POSTGRES_IMAGE ?? 'postgres:17-alpine'
+const image = process.env.WP21_POSTGRES_IMAGE ?? 'pgvector/pgvector:pg17'
 const root = mkdtempSync(join(tmpdir(), 'wp21-postgres-'))
 const run = (...args: string[]) =>
   execFileSync('docker', args, {
@@ -113,7 +113,14 @@ try {
     ),
     'utf8',
   )
-  psql(`${migration18}\n${migration21}\n${migration21}`)
+  const migration22 = readFileSync(
+    new URL(
+      '../infra/postgres/migrations/0022_hybrid_corpus_retrieval.sql',
+      import.meta.url,
+    ),
+    'utf8',
+  )
+  psql(`${migration18}\n${migration21}\n${migration22}`)
   psql(`
     CREATE ROLE corpus_runtime LOGIN PASSWORD 'runtime' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
     GRANT USAGE ON SCHEMA persistent_codex TO corpus_runtime;
@@ -361,9 +368,14 @@ try {
     version: 1 as const,
     kind: 'production' as const,
     embeddingVersion: 'reported-token-test-v1',
-    async embed() {
+    dimensions: 384,
+    async embed(input: { texts: string[] }) {
+      const vectors = input.texts.map(() =>
+        Array.from({ length: 384 }, () => 0),
+      )
       return {
-        vector: null,
+        vectors,
+        vector: vectors[0] ?? null,
         tokenCount: 7,
         completeness: 'complete' as const,
         providerRequestId: 'reported-1',
@@ -422,6 +434,7 @@ try {
     version: 1 as const,
     kind: 'production' as const,
     embeddingVersion: 'interrupted-token-test-v1',
+    dimensions: 384,
     async embed() {
       throw new EmbeddingProviderError(3, 'interrupted-1')
     },

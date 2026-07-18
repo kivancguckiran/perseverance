@@ -98,7 +98,7 @@ try {
     '127.0.0.1::5432',
     '-v',
     `${volume}:/var/lib/postgresql/data`,
-    'postgres:17-alpine',
+    'pgvector/pgvector:pg17',
   )
   let consecutive = 0
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -139,7 +139,7 @@ try {
       'postgres',
     ],
     {
-      input: `${migration('0018_oidc_authorization_rls.sql')}\n${migration('0021_tenant_corpus_ingestion.sql')}
+      input: `${migration('0018_oidc_authorization_rls.sql')}\n${migration('0021_tenant_corpus_ingestion.sql')}\n${migration('0022_hybrid_corpus_retrieval.sql')}
       CREATE ROLE corpus_browser LOGIN PASSWORD 'runtime' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
       GRANT USAGE ON SCHEMA persistent_codex TO corpus_browser;
       GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA persistent_codex TO corpus_browser;
@@ -256,10 +256,15 @@ try {
     version: 1 as const,
     kind: 'fake-test' as const,
     embeddingVersion: 'browser-fake-test-v1',
-    async embed() {
+    dimensions: 384,
+    async embed(input: { texts: string[] }) {
       await new Promise((resolveWait) => setTimeout(resolveWait, 1300))
+      const vectors = input.texts.map(() =>
+        Array.from({ length: 384 }, () => 0),
+      )
       return {
-        vector: null,
+        vectors,
+        vector: vectors[0] ?? null,
         tokenCount: 5,
         completeness: 'complete' as const,
         providerRequestId: 'browser',

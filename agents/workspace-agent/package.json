@@ -14,9 +14,11 @@
     "smoke:auth-none": "tsx ../../services/control-plane/src/auth-none-smoke.ts",
     "smoke:poc-demo": "tsx ../../services/control-plane/src/poc-demo-smoke.ts",
     "smoke:unknown-replay": "tsx ../../services/control-plane/src/unknown-replay-smoke.ts",
+    "corpus:mcp": "tsx src/corpus-mcp-main.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@persistent-codex/control-plane-contracts": "workspace:*",
     "@persistent-codex/codex-event-adapter": "workspace:*",
     "@persistent-codex/codex-protocol-generated": "workspace:*",
     "@persistent-codex/domain-events": "workspace:*"

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { posix } from 'node:path'
 import type {
   CorpusChunk,
   ExtractionJob,
@@ -41,6 +42,21 @@ function safeName(value: string) {
   )
     throw new CorpusError('INVALID_SOURCE_NAME', 'Source name is invalid')
   return name
+}
+
+function safeWorkspacePath(value: string) {
+  const normalized = value.replace(/\\/g, '/')
+  if (
+    !normalized ||
+    normalized.startsWith('/') ||
+    normalized.includes('\0') ||
+    normalized.split('/').some((part) => !part || part === '.' || part === '..')
+  )
+    throw new CorpusError(
+      'INVALID_WORKSPACE_PATH',
+      'Workspace source path is invalid',
+    )
+  return normalized
 }
 
 function sourceKind(mediaType: SourceRevision['mediaType']): Source['kind'] {
@@ -267,10 +283,10 @@ export class CorpusIngestionService {
         bytes,
         limits: this.#limits,
       })
-      const chunks: CorpusChunk[] = extracted.map((entry, ordinal) => {
+      const chunkWrites = extracted.map((entry, ordinal) => {
         const contentHash = digest(entry.text)
         const chunkId = `chk_${createHash('sha256').update(`${context.revision.revisionId}\0${ordinal}\0${contentHash}`).digest('hex')}`
-        return {
+        const chunk: CorpusChunk = {
           version: 1,
           ...scope,
           chunkId,
@@ -290,6 +306,7 @@ export class CorpusIngestionService {
           },
           createdAt: this.#now().toISOString(),
         }
+        return { chunk, content: entry.text }
       })
       const embeddingKey = `embedding:${context.revision.revisionId}:${this.#embedding.embeddingVersion}`
       const controller = new AbortController()
@@ -327,22 +344,39 @@ export class CorpusIngestionService {
       } finally {
         clearTimeout(timer)
       }
-      const documents: IndexDocument[] = chunks.map((chunk) => ({
-        version: 1,
-        ...scope,
-        indexDocumentId: `idx_${chunk.chunkId.slice(4)}`,
-        chunkId: chunk.chunkId,
-        sourceId: chunk.sourceId,
-        revisionId: chunk.revisionId,
-        contentHash: chunk.contentHash,
-        embeddingVersion: this.#embedding.embeddingVersion,
-        embeddingTokenCount:
-          this.#embedding.embeddingVersion === 'unembedded-placeholder-v1'
-            ? 0
-            : embedding.tokenCount,
-        status: 'indexed',
-        derivedAt: this.#now().toISOString(),
-      }))
+      if (embedding.vectors.length !== chunkWrites.length)
+        throw new CorpusError(
+          'EMBEDDING_RESULT_INVALID',
+          'Embedding provider returned an invalid vector count',
+        )
+      const documents = chunkWrites.map(({ chunk }, index) => {
+        const vector = embedding.vectors[index] ?? null
+        if (
+          vector &&
+          (this.#embedding.dimensions !== 384 || vector.length !== 384)
+        )
+          throw new CorpusError(
+            'EMBEDDING_DIMENSION_MISMATCH',
+            'Embedding vector dimension does not match the active index',
+          )
+        const document: IndexDocument = {
+          version: 1,
+          ...scope,
+          indexDocumentId: `idx_${chunk.chunkId.slice(4)}`,
+          chunkId: chunk.chunkId,
+          sourceId: chunk.sourceId,
+          revisionId: chunk.revisionId,
+          contentHash: chunk.contentHash,
+          embeddingVersion: this.#embedding.embeddingVersion,
+          embeddingTokenCount:
+            this.#embedding.embeddingVersion === 'unembedded-placeholder-v1'
+              ? 0
+              : embedding.tokenCount,
+          status: 'indexed',
+          derivedAt: this.#now().toISOString(),
+        }
+        return { document, embedding: vector }
+      })
       const usage: EmbeddingUsageRecord | null =
         this.#embedding.kind === 'production' &&
         this.#embedding.embeddingVersion !== 'unembedded-placeholder-v1' &&
@@ -364,7 +398,7 @@ export class CorpusIngestionService {
         scope,
         jobId,
         workerId,
-        chunks,
+        chunks: chunkWrites,
         indexDocuments: documents,
         usage,
       })
@@ -404,6 +438,181 @@ export class CorpusIngestionService {
       }
     }
     return deleted
+  }
+
+  async upsertWorkspaceFile(input: {
+    scope: CorpusScope
+    workspacePath: string
+    chunks: AsyncIterable<Uint8Array>
+  }) {
+    const workspacePath = safeWorkspacePath(input.workspacePath)
+    const existing = await this.repository.sourceByWorkspacePath(
+      input.scope,
+      workspacePath,
+    )
+    if (!existing)
+      return this.createSource({
+        scope: input.scope,
+        name: safeName(posix.basename(workspacePath)),
+        chunks: input.chunks,
+        provenance: { kind: 'workspace_file', workspacePath },
+      })
+    const revisionId = `rev_${randomUUID()}`
+    const stored = await this.storage.put({
+      scope: input.scope,
+      revisionId,
+      chunks: input.chunks,
+      maxBytes: this.#limits.maxBytes,
+    })
+    if (stored.contentHash === existing.revision.contentHash) {
+      await this.storage.delete({
+        scope: input.scope,
+        storageKey: stored.storageKey,
+      })
+      const detail = await this.repository.sourceDetail(
+        input.scope,
+        existing.source.sourceId,
+      )
+      return {
+        source: existing.source,
+        revision: existing.revision,
+        job: detail.jobs.at(-1)!,
+      }
+    }
+    let registered = false
+    try {
+      const bytes = await this.storage.read({
+        scope: input.scope,
+        revisionId,
+        storageKey: stored.storageKey,
+        contentHash: stored.contentHash,
+        maxBytes: this.#limits.maxBytes,
+      })
+      const mediaType = sniffMediaType(
+        posix.basename(workspacePath),
+        bytes.subarray(0, 8192),
+      )
+      const timestamp = this.#now().toISOString()
+      const revision: SourceRevision = {
+        version: 1,
+        ...input.scope,
+        sourceId: existing.source.sourceId,
+        revisionId,
+        contentHash: stored.contentHash,
+        byteLength: stored.byteLength,
+        mediaType,
+        parserVersion:
+          mediaType === 'application/pdf'
+            ? PDF_PARSER_VERSION
+            : 'corpus-text-parser-v1',
+        language: language(mediaType),
+        provenance: {
+          kind: 'workspace_file',
+          originalName: posix.basename(workspacePath),
+          workspacePath,
+        },
+        rawSnapshot: {
+          immutable: true,
+          storageKey: stored.storageKey,
+          createdAt: stored.createdAt,
+        },
+        status: 'pending',
+        createdAt: timestamp,
+      }
+      const job: ExtractionJob = {
+        version: 1,
+        ...input.scope,
+        jobId: `job_${randomUUID()}`,
+        sourceId: existing.source.sourceId,
+        revisionId,
+        status: 'pending',
+        attempt: 1,
+        maxAttempts: this.#limits.maxAttempts,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        retryAt: null,
+        errorCode: null,
+        usageCompleteness: 'partial',
+        startedAt: null,
+        completedAt: null,
+        updatedAt: timestamp,
+      }
+      const result = await this.repository.registerRevision({
+        scope: input.scope,
+        sourceId: existing.source.sourceId,
+        revision,
+        job,
+        audit: {
+          version: 1,
+          ...input.scope,
+          auditId: `iaud_${randomUUID()}`,
+          sourceId: existing.source.sourceId,
+          revisionId,
+          jobId: job.jobId,
+          action: 'revision.registered',
+          outcome: 'success',
+          reasonCode: 'WORKSPACE_FILE_CHANGED',
+          occurredAt: timestamp,
+        },
+      })
+      registered = true
+      return result
+    } catch (error) {
+      if (!registered) {
+        try {
+          await this.storage.delete({
+            scope: input.scope,
+            storageKey: stored.storageKey,
+          })
+        } catch {
+          await this.repository.enqueueSnapshotCleanup(
+            input.scope,
+            stored.storageKey,
+            'WORKSPACE_REVISION_ROLLBACK',
+          )
+        }
+      }
+      throw error
+    }
+  }
+
+  async renameWorkspaceFile(
+    scope: CorpusScope,
+    fromPathInput: string,
+    toPathInput: string,
+  ) {
+    const fromPath = safeWorkspacePath(fromPathInput)
+    const toPath = safeWorkspacePath(toPathInput)
+    const existing = await this.repository.sourceByWorkspacePath(
+      scope,
+      fromPath,
+    )
+    if (!existing)
+      throw new CorpusError(
+        'SOURCE_NOT_FOUND',
+        'Workspace source was not found',
+      )
+    return this.repository.renameWorkspaceSource({
+      scope,
+      sourceId: existing.source.sourceId,
+      fromPath,
+      toPath,
+      displayName: safeName(posix.basename(toPath)),
+    })
+  }
+
+  async deleteWorkspaceFile(scope: CorpusScope, workspacePathInput: string) {
+    const workspacePath = safeWorkspacePath(workspacePathInput)
+    const existing = await this.repository.sourceByWorkspacePath(
+      scope,
+      workspacePath,
+    )
+    if (!existing)
+      throw new CorpusError(
+        'SOURCE_NOT_FOUND',
+        'Workspace source was not found',
+      )
+    return this.deleteSource(scope, existing.source.sourceId)
   }
 
   reindexSource(scope: CorpusScope, sourceId: string) {

@@ -133,6 +133,76 @@ describe('WP21 workspace source API', () => {
       expect(detail.statusCode).toBe(200)
       expect(detail.json()).not.toHaveProperty('content')
 
+      const searchBody = {
+        schemaVersion: 1,
+        tenantId: 'tenant_api',
+        organizationId: 'tenant_api',
+        workspaceId: 'workspace_api',
+        query: 'Tenant-aware Markdown extraction',
+        topK: 5,
+        tokenBudget: 512,
+        cursor: null,
+        rankingPolicyVersion: 'hybrid-rrf-v1',
+        queryTimeoutMs: 500,
+      }
+      const search = await app.inject({
+        method: 'POST',
+        url: '/v1/workspaces/workspace_api/search',
+        headers: { ...headers, 'content-type': 'application/json' },
+        payload: searchBody,
+      })
+      expect(search.statusCode, search.body).toBe(200)
+      expect(search.json()).toMatchObject({
+        rankingPolicyVersion: 'hybrid-rrf-v1',
+        results: [
+          {
+            sourceId: created.source.sourceId,
+            trust: 'untrusted_context',
+            citation: {
+              sourceId: created.source.sourceId,
+              locator: { kind: 'line' },
+            },
+          },
+        ],
+      })
+      const firstResult = search.json().results[0] as {
+        revisionId: string
+        chunkId: string
+      }
+      const citation = await app.inject({
+        method: 'POST',
+        url: '/v1/workspaces/workspace_api/citations/resolve',
+        headers: { ...headers, 'content-type': 'application/json' },
+        payload: {
+          schemaVersion: 1,
+          tenantId: 'tenant_api',
+          organizationId: 'tenant_api',
+          workspaceId: 'workspace_api',
+          sourceId: created.source.sourceId,
+          revisionId: firstResult.revisionId,
+          chunkId: firstResult.chunkId,
+        },
+      })
+      expect(citation.statusCode, citation.body).toBe(200)
+      expect(citation.json()).toMatchObject({ trust: 'untrusted_context' })
+
+      const crossTenantSearch = await app.inject({
+        method: 'POST',
+        url: '/v1/workspaces/workspace_api/search',
+        headers: {
+          'x-tenant-id': 'tenant_other',
+          'x-workspace-id': 'workspace_api',
+          'content-type': 'application/json',
+        },
+        payload: {
+          ...searchBody,
+          tenantId: 'tenant_other',
+          organizationId: 'tenant_other',
+        },
+      })
+      expect(crossTenantSearch.statusCode).toBe(200)
+      expect(crossTenantSearch.json().results).toEqual([])
+
       const reindex = await app.inject({
         method: 'POST',
         url: `/v1/workspaces/workspace_api/sources/${created.source.sourceId}/reindex`,
@@ -157,6 +227,29 @@ describe('WP21 workspace source API', () => {
         headers,
       })
       expect(deleted.statusCode).toBe(204)
+      const afterDelete = await app.inject({
+        method: 'POST',
+        url: '/v1/workspaces/workspace_api/search',
+        headers: { ...headers, 'content-type': 'application/json' },
+        payload: searchBody,
+      })
+      expect(afterDelete.statusCode, afterDelete.body).toBe(200)
+      expect(afterDelete.json().results).toEqual([])
+      const deletedCitation = await app.inject({
+        method: 'POST',
+        url: '/v1/workspaces/workspace_api/citations/resolve',
+        headers: { ...headers, 'content-type': 'application/json' },
+        payload: {
+          schemaVersion: 1,
+          tenantId: 'tenant_api',
+          organizationId: 'tenant_api',
+          workspaceId: 'workspace_api',
+          sourceId: created.source.sourceId,
+          revisionId: firstResult.revisionId,
+          chunkId: firstResult.chunkId,
+        },
+      })
+      expect(deletedCitation.statusCode).toBe(404)
     } finally {
       await app.close()
     }
