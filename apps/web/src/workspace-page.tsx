@@ -26,6 +26,12 @@ import {
   supportGrantSchema,
   securityAuditListResponseSchema,
   sourceListResponseSchema,
+  acceptFolderInvitationResponseSchema,
+  createFolderInvitationResponseSchema,
+  folderListResponseSchema,
+  folderMemberListResponseSchema,
+  folderMembershipSchema,
+  sharedFolderSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
@@ -45,6 +51,8 @@ import {
   type SupportGrant,
   type SupportAccessAction,
   type SecurityAuditRecord,
+  type FolderMembership,
+  type SharedFolder,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
@@ -388,6 +396,23 @@ async function readConversationFolders() {
   })
   if (!response.ok) throw await apiError(response)
   return conversationFolderListResponseSchema.parse(await response.json())
+}
+
+async function readSharedFolders() {
+  const response = await fetch(`${apiBaseUrl}/v1/folders`, {
+    headers: scopeHeaders,
+  })
+  if (!response.ok) throw await apiError(response)
+  return folderListResponseSchema.parse(await response.json())
+}
+
+async function readFolderMembers(folderId: string) {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/folders/${encodeURIComponent(folderId)}/members`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return folderMemberListResponseSchema.parse(await response.json())
 }
 
 async function readSources() {
@@ -2197,6 +2222,23 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryFn: readConversationFolders,
     enabled: online && identity.isSuccess,
   })
+  const sharedFolders = useQuery({
+    queryKey: ['shared-folders', cacheNamespace],
+    queryFn: readSharedFolders,
+    enabled: online && identity.isSuccess,
+    staleTime: 0,
+  })
+  const [managedFolderId, setManagedFolderId] = useState<string>()
+  const managedFolder = sharedFolders.data?.folders.find(
+    (entry) => entry.folder.folderId === managedFolderId,
+  )
+  const folderMembers = useQuery({
+    queryKey: ['shared-folder-members', cacheNamespace, managedFolderId],
+    queryFn: () => readFolderMembers(managedFolderId!),
+    enabled:
+      online && managedFolder?.membership.role === 'owner' && !!managedFolderId,
+    retry: false,
+  })
   const sources = useQuery({
     queryKey: ['corpus-sources', cacheNamespace],
     queryFn: readSources,
@@ -2253,6 +2295,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
   const [folderName, setFolderName] = useState('')
   const [folderPending, setFolderPending] = useState(false)
+  const [sharedFolderName, setSharedFolderName] = useState('')
+  const [sharingPending, setSharingPending] = useState(false)
+  const [invitationToken, setInvitationToken] = useState<string>()
+  const [folderAccessLost, setFolderAccessLost] = useState(false)
   const [folderActionPending, setFolderActionPending] = useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
@@ -2412,6 +2458,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   useEffect(() => {
     if (!session) return
     let active = true
+    let accessRevoked = false
     let socket: WebSocket | undefined
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -2504,7 +2551,19 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             }),
           )
         }
-        if (parsed.data.type === 'error') setError(parsed.data.message)
+        if (parsed.data.type === 'error') {
+          setError(parsed.data.message)
+          if (parsed.data.code === 'ACCESS_REVOKED') {
+            accessRevoked = true
+            setFolderAccessLost(true)
+            setReadOnly(true)
+            void Promise.all([
+              sharedFolders.refetch(),
+              recentSessions.refetch(),
+              sources.refetch(),
+            ])
+          }
+        }
         if (parsed.data.type === 'resync') {
           lastSequence.current = parsed.data.afterSequence
           setRealtimeState('yeniden eşitleniyor')
@@ -2518,8 +2577,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         }
       })
       socket.addEventListener('close', () => {
-        setRealtimeState('yeniden bağlanıyor')
-        if (active) reconnectTimer = setTimeout(connect, 750)
+        setRealtimeState(
+          accessRevoked ? 'erişim kaldırıldı' : 'yeniden bağlanıyor',
+        )
+        if (active && !accessRevoked) reconnectTimer = setTimeout(connect, 750)
       })
     }
     connect()
@@ -2771,6 +2832,128 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     } finally {
       setFolderPending(false)
     }
+  }
+
+  async function createSharedFolder() {
+    const name = sharedFolderName.trim()
+    if (!name || sharingPending) return
+    setSharingPending(true)
+    setError(undefined)
+    try {
+      const response = await fetch(`${apiBaseUrl}/v1/folders`, {
+        method: 'POST',
+        headers: scopeHeaders,
+        body: JSON.stringify({ schemaVersion: 1, name }),
+      })
+      if (!response.ok) throw await apiError(response)
+      const body = (await response.json()) as { folder: unknown }
+      const folder = sharedFolderSchema.parse(body.folder)
+      setManagedFolderId(folder.folderId)
+      setSelectedFolderId(folder.folderId)
+      setSharedFolderName('')
+      await sharedFolders.refetch()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSharingPending(false)
+    }
+  }
+
+  async function createShareInvitation(folder: SharedFolder) {
+    setSharingPending(true)
+    setInvitationToken(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/folders/${encodeURIComponent(folder.folderId)}/invitations`,
+        {
+          method: 'POST',
+          headers: scopeHeaders,
+          body: JSON.stringify({
+            schemaVersion: 1,
+            role: 'viewer',
+            expiresInSeconds: 86_400,
+          }),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      const created = createFolderInvitationResponseSchema.parse(
+        await response.json(),
+      )
+      setInvitationToken(created.token)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSharingPending(false)
+    }
+  }
+
+  async function acceptShareInvitation() {
+    const token = locationScope?.get('invite')
+    if (!token || sharingPending) return
+    setSharingPending(true)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/folder-invitations/accept`,
+        {
+          method: 'POST',
+          headers: scopeHeaders,
+          body: JSON.stringify({ schemaVersion: 1, token }),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      const accepted = acceptFolderInvitationResponseSchema.parse(
+        await response.json(),
+      )
+      setManagedFolderId(accepted.membership.folderId)
+      setSelectedFolderId(accepted.membership.folderId)
+      setFolderAccessLost(false)
+      await sharedFolders.refetch()
+      const url = new URL(window.location.href)
+      url.searchParams.delete('invite')
+      window.history.replaceState({}, '', url)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setSharingPending(false)
+    }
+  }
+
+  async function changeSharedFolderRole(
+    member: FolderMembership,
+    role: FolderMembership['role'],
+  ) {
+    const response = await fetch(
+      `${apiBaseUrl}/v1/folders/${encodeURIComponent(member.folderId)}/members/${encodeURIComponent(member.principalId)}`,
+      {
+        method: 'PATCH',
+        headers: scopeHeaders,
+        body: JSON.stringify({
+          schemaVersion: 1,
+          role,
+          expectedVersion: member.version,
+        }),
+      },
+    )
+    if (!response.ok) throw await apiError(response)
+    folderMembershipSchema.parse(await response.json())
+    await Promise.all([folderMembers.refetch(), sharedFolders.refetch()])
+  }
+
+  async function revokeSharedFolderMember(member: FolderMembership) {
+    const response = await fetch(
+      `${apiBaseUrl}/v1/folders/${encodeURIComponent(member.folderId)}/members/${encodeURIComponent(member.principalId)}`,
+      {
+        method: 'DELETE',
+        headers: scopeHeaders,
+        body: JSON.stringify({
+          schemaVersion: 1,
+          expectedVersion: member.version,
+        }),
+      },
+    )
+    if (!response.ok) throw await apiError(response)
+    folderMembershipSchema.parse(await response.json())
+    await folderMembers.refetch()
   }
 
   async function moveConversation(folderId: string | null) {
@@ -3060,6 +3243,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             'content-type': 'application/octet-stream',
             'x-source-name': encodeURIComponent(file.name),
             'x-source-media-type': mediaType,
+            ...(selectedFolderId?.startsWith('fld_')
+              ? { 'x-folder-id': selectedFolderId }
+              : {}),
           },
           body: file,
         },
@@ -3089,6 +3275,28 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           Oturum süresi dolmuş veya bu organization için erişim yasaklanmış.
           Yeniden giriş yapın.
         </p>
+      ) : null}
+      {folderAccessLost ? (
+        <p className="offline-banner access-lost" role="alert">
+          Bu klasöre erişimin kaldırıldı. Yerel görünüm temizlendi; güvenli
+          klasör listesine dönülüyor.
+        </p>
+      ) : null}
+      {locationScope?.has('invite') ? (
+        <div
+          className="invite-accept-banner"
+          role="region"
+          aria-label="Klasör daveti"
+        >
+          <span>Güvenli klasör davetin var.</span>
+          <button
+            type="button"
+            disabled={!online || sharingPending}
+            onClick={() => void acceptShareInvitation()}
+          >
+            {sharingPending ? 'Kabul ediliyor…' : 'Daveti kabul et'}
+          </button>
+        </div>
       ) : null}
       {!online ? (
         <p className="offline-banner" role="status">
@@ -3186,6 +3394,133 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               })
             }}
           />
+          <section
+            className="shared-folder-panel"
+            aria-label="Paylaşımlı klasörler"
+          >
+            <div className="shared-folder-heading">
+              <div>
+                <p className="section-label">Güvenli paylaşım</p>
+                <h2>Paylaşımlı klasörler</h2>
+              </div>
+              <span>{sharedFolders.data?.folders.length ?? 0}</span>
+            </div>
+            <form
+              className="shared-folder-create"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void createSharedFolder()
+              }}
+            >
+              <input
+                aria-label="Yeni paylaşımlı klasör adı"
+                value={sharedFolderName}
+                maxLength={80}
+                disabled={!online || sharingPending}
+                onChange={(event) => setSharedFolderName(event.target.value)}
+                placeholder="Özel klasör"
+              />
+              <button
+                type="submit"
+                disabled={!sharedFolderName.trim() || !online || sharingPending}
+              >
+                Oluştur
+              </button>
+            </form>
+            <ul className="shared-folder-list">
+              {(sharedFolders.data?.folders ?? []).map((entry) => (
+                <li key={entry.folder.folderId}>
+                  <button
+                    type="button"
+                    className={
+                      managedFolderId === entry.folder.folderId
+                        ? 'is-selected'
+                        : ''
+                    }
+                    onClick={() => {
+                      setManagedFolderId(entry.folder.folderId)
+                      setSelectedFolderId(entry.folder.folderId)
+                    }}
+                  >
+                    <span>{entry.folder.name}</span>
+                    <small>{entry.membership.role}</small>
+                  </button>
+                  {entry.membership.role === 'owner' ? (
+                    <button
+                      type="button"
+                      className="share-folder-button"
+                      disabled={sharingPending}
+                      onClick={() => void createShareInvitation(entry.folder)}
+                    >
+                      Paylaş
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            {invitationToken ? (
+              <div className="invite-token" role="status">
+                <strong>Tek kullanımlık davet</strong>
+                <code>{invitationToken}</code>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void navigator.clipboard.writeText(
+                      `${window.location.origin}${window.location.pathname}?organization=${encodeURIComponent(tenantId)}&workspace=${encodeURIComponent(workspaceId)}&invite=${encodeURIComponent(invitationToken)}`,
+                    )
+                  }
+                >
+                  Bağlantıyı kopyala
+                </button>
+              </div>
+            ) : null}
+            {managedFolder?.membership.role === 'owner' ? (
+              <ul className="shared-member-list" aria-label="Klasör üyeleri">
+                {(folderMembers.data?.members ?? []).map((member) => (
+                  <li key={member.principalId}>
+                    <span title={member.principalId}>
+                      {member.principalId.slice(0, 18)}…
+                    </span>
+                    <select
+                      aria-label={`${member.principalId} rolü`}
+                      value={member.role}
+                      onChange={(event) =>
+                        void changeSharedFolderRole(
+                          member,
+                          event.target.value as FolderMembership['role'],
+                        ).catch((cause) =>
+                          setError(
+                            cause instanceof Error
+                              ? cause.message
+                              : String(cause),
+                          ),
+                        )
+                      }
+                    >
+                      <option value="viewer">viewer</option>
+                      <option value="editor">editor</option>
+                      <option value="owner">owner</option>
+                    </select>
+                    <button
+                      type="button"
+                      disabled={member.role === 'owner'}
+                      onClick={() =>
+                        void revokeSharedFolderMember(member).catch((cause) =>
+                          setError(
+                            cause instanceof Error
+                              ? cause.message
+                              : String(cause),
+                          ),
+                        )
+                      }
+                    >
+                      Kaldır
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </section>
           <p className="section-label">Workspace</p>
           <h2>local-poc</h2>
           <dl className="metadata-list">
@@ -3695,6 +4030,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     disabled={Boolean(folder.archivedAt)}
                   >
                     {folder.archivedAt ? `[Arşiv] ${folder.name}` : folder.name}
+                  </option>
+                ))}
+                {(sharedFolders.data?.folders ?? []).map((entry) => (
+                  <option
+                    key={entry.folder.folderId}
+                    value={entry.folder.folderId}
+                  >
+                    {entry.folder.name} · {entry.membership.role}
                   </option>
                 ))}
               </select>

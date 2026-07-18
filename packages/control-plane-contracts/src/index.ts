@@ -119,6 +119,14 @@ export const authorizationActionSchema = z.enum([
   'metrics.read',
   'folder.read',
   'folder.manage',
+  'folder.create',
+  'folder.invite.create',
+  'folder.invite.accept',
+  'folder.invite.revoke',
+  'folder.membership.manage',
+  'folder.ownership.transfer',
+  'folder.resource.move',
+  'folder.export',
   'provider.catalog.read',
   'provider.readiness.read',
   'support.grant.create',
@@ -711,6 +719,147 @@ export const updateConversationRequestSchema = z
     },
   )
 
+export const SHARED_FOLDER_CONTRACT_VERSION = 1 as const
+const sharedFolderScopeSchema = z.object({
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  folderId: identifierSchema,
+})
+export const folderRoleSchema = z.enum(['owner', 'editor', 'viewer'])
+export const folderInvitationStatusSchema = z.enum([
+  'pending',
+  'accepted',
+  'expired',
+  'revoked',
+])
+export const sharedFolderSchema = sharedFolderScopeSchema.extend({
+  schemaVersion: z.literal(SHARED_FOLDER_CONTRACT_VERSION),
+  name: folderNameSchema,
+  visibility: z.literal('private'),
+  aclVersion: z.number().int().positive(),
+  cacheEpoch: z.number().int().nonnegative(),
+  version: z.number().int().positive(),
+  createdByPrincipalId: identifierSchema,
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  archivedAt: z.iso.datetime().nullable(),
+})
+export const folderMembershipSchema = sharedFolderScopeSchema.extend({
+  schemaVersion: z.literal(SHARED_FOLDER_CONTRACT_VERSION),
+  principalId: identifierSchema,
+  role: folderRoleSchema,
+  status: z.enum(['active', 'revoked']),
+  version: z.number().int().positive(),
+  acceptedInvitationId: identifierSchema.nullable(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+})
+export const folderInvitationSchema = sharedFolderScopeSchema.extend({
+  schemaVersion: z.literal(SHARED_FOLDER_CONTRACT_VERSION),
+  invitationId: identifierSchema,
+  invitedByPrincipalId: identifierSchema,
+  acceptedByPrincipalId: identifierSchema.nullable(),
+  role: z.enum(['editor', 'viewer']),
+  status: folderInvitationStatusSchema,
+  expiresAt: z.iso.datetime(),
+  acceptedAt: z.iso.datetime().nullable(),
+  revokedAt: z.iso.datetime().nullable(),
+  version: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
+})
+export const createSharedFolderRequestSchema = z
+  .object({ schemaVersion: z.literal(1), name: folderNameSchema })
+  .strict()
+export const createFolderInvitationRequestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    role: z.enum(['editor', 'viewer']),
+    expiresInSeconds: z.number().int().min(60).max(604_800),
+  })
+  .strict()
+export const createFolderInvitationResponseSchema = z.object({
+  invitation: folderInvitationSchema,
+  token: z.string().min(43).max(256),
+})
+export const acceptFolderInvitationRequestSchema = z
+  .object({ schemaVersion: z.literal(1), token: z.string().min(43).max(256) })
+  .strict()
+export const acceptFolderInvitationResponseSchema = z.object({
+  invitation: folderInvitationSchema,
+  membership: folderMembershipSchema,
+  idempotent: z.boolean(),
+})
+export const revokeFolderInvitationRequestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict()
+export const changeFolderRoleRequestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    role: folderRoleSchema,
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict()
+export const transferFolderOwnershipRequestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    targetPrincipalId: identifierSchema,
+    expectedVersion: z.number().int().positive(),
+    previousOwnerRole: z.enum(['owner', 'editor']).default('editor'),
+  })
+  .strict()
+export const folderResourceTypeSchema = z.enum([
+  'conversation',
+  'source',
+  'attachment',
+  'artifact',
+  'agent_task',
+])
+export const moveFolderResourceRequestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    resourceType: folderResourceTypeSchema,
+    resourceId: identifierSchema,
+    sourceFolderId: identifierSchema.nullable(),
+    targetFolderId: identifierSchema,
+    expectedVersion: z.number().int().positive(),
+  })
+  .strict()
+export const folderListResponseSchema = z.object({
+  folders: z.array(
+    z.object({
+      folder: sharedFolderSchema,
+      membership: folderMembershipSchema,
+    }),
+  ),
+})
+export const folderMemberListResponseSchema = z.object({
+  members: z.array(folderMembershipSchema),
+})
+export const folderInvitationListResponseSchema = z.object({
+  invitations: z.array(folderInvitationSchema),
+})
+export const folderAccessChangedSchema = sharedFolderScopeSchema.extend({
+  schemaVersion: z.literal(1),
+  type: z.literal('folder.access.changed'),
+  aclVersion: z.number().int().positive(),
+  cacheEpoch: z.number().int().nonnegative(),
+  reason: z.enum([
+    'accepted',
+    'revoked',
+    'role_changed',
+    'ownership_transferred',
+    'resource_moved',
+  ]),
+  affectedPrincipalId: identifierSchema.nullable(),
+  occurredAt: z.iso.datetime(),
+})
+
 export const auditActorSchema = z.enum(['user', 'system', 'runtime'])
 export const auditActionSchema = z.enum([
   'session.created',
@@ -1275,6 +1424,33 @@ export type UpdateConversationFolderRequest = z.infer<
 export type UpdateConversationRequest = z.infer<
   typeof updateConversationRequestSchema
 >
+export type SharedFolder = z.infer<typeof sharedFolderSchema>
+export type FolderRole = z.infer<typeof folderRoleSchema>
+export type FolderMembership = z.infer<typeof folderMembershipSchema>
+export type FolderInvitation = z.infer<typeof folderInvitationSchema>
+export type FolderInvitationStatus = z.infer<
+  typeof folderInvitationStatusSchema
+>
+export type CreateSharedFolderRequest = z.infer<
+  typeof createSharedFolderRequestSchema
+>
+export type CreateFolderInvitationRequest = z.infer<
+  typeof createFolderInvitationRequestSchema
+>
+export type AcceptFolderInvitationRequest = z.infer<
+  typeof acceptFolderInvitationRequestSchema
+>
+export type ChangeFolderRoleRequest = z.infer<
+  typeof changeFolderRoleRequestSchema
+>
+export type TransferFolderOwnershipRequest = z.infer<
+  typeof transferFolderOwnershipRequestSchema
+>
+export type MoveFolderResourceRequest = z.infer<
+  typeof moveFolderResourceRequestSchema
+>
+export type FolderResourceType = z.infer<typeof folderResourceTypeSchema>
+export type FolderAccessChanged = z.infer<typeof folderAccessChangedSchema>
 export type GitSnapshot = z.infer<typeof gitSnapshotSchema>
 export type GitSnapshotListResponse = z.infer<
   typeof gitSnapshotListResponseSchema
