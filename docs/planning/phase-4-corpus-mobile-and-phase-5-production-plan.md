@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP23
+- Aktif iş paketi: WP24
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -21,17 +21,17 @@ production rollout seviyesine taşır.
 
 ## 2. İş paketi özeti
 
-| Paket | Faz | Durum                      | Hedef                                                                    |
-| ----- | --- | -------------------------- | ------------------------------------------------------------------------ |
-| WP21  | 4   | Tamamlandı                 | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
-| WP22  | 4   | Tamamlandı                 | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
-| WP23  | 4   | Uygulandı / kabul bekliyor | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Planlandı                  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
-| WP25  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP26  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP27  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP28  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP29  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| Paket | Faz | Durum      | Hedef                                                                    |
+| ----- | --- | ---------- | ------------------------------------------------------------------------ |
+| WP21  | 4   | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
+| WP22  | 4   | Tamamlandı | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
+| WP23  | 4   | Tamamlandı | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
+| WP24  | 4   | Aktif      | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
+| WP25  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP26  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP27  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP28  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP29  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; Faz 4
 tamamlanmadan WP25; WP28 tamamlanmadan nihai WP29 aktive edilmez.
@@ -215,8 +215,7 @@ WP22 tamamlandı. WP23 tek aktif iş paketidir; WP23 tamamlanmadan WP24'e geçil
 
 ### WP23 — Mobil/PWA approval, push ve çoklu cihaz sürekliliği
 
-Durum: **Uygulandı / kabul bekliyor**. WP24 planlanmış durumda kalır ve aktive
-edilmemiştir.
+Durum: **Tamamlandı**. WP23 bağımsız kabul edildi; WP24 tek aktif iş paketidir.
 
 #### Hedef
 
@@ -290,6 +289,18 @@ session'a geri dönme açısından private-beta ürün seviyesine taşımak.
 - Push provider ayrımı: Web Push provider emulator kullanıldı. Gerçek VAPID/provider
   credential'ı bulunmadığı için gerçek opt-in/delivery smoke'u çalıştırılmadı; emulator
   production delivery kanıtı sayılmaz.
+
+Bağımsız kabulte `pnpm wp23:accept` bütünüyle geçti: 99 hedefli test, gerçek
+PostgreSQL/forced RLS push lifecycle, iki cihazlı approval CAS/realtime reconciliation,
+background completion, high-water replay, offline read-only shell ve üç viewport PWA
+browser doğrulandı. `pnpm verify` 29 test dosyasında 299 test, typecheck, production
+build ve SSR HTTP smoke'u tamamladı. Container, volume, browser context, service worker
+ve geçici dosya cleanup'ı geçti.
+
+Uygulama commit'i: `3962844`.
+
+WP23 tamamlandı. WP24 tek aktif iş paketidir; Faz 4 WP24 bağımsız kabul edilmeden
+kapatılamaz ve WP25 aktive edilemez.
 
 ### WP24 — Billing, plan/kota ve Faz 4 birleşik kabul
 

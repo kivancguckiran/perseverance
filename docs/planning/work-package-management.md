@@ -76,8 +76,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP20 — Security beta kabulü                  | Tamamlandı | Durable support grant/JIT/break-glass ve birleşik adversarial Faz 3 kabulü bağımsız doğrulandı              |
 | WP21 — Corpus ingestion temeli               | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index omurgası bağımsız kabul edildi             |
 | WP22 — Hybrid retrieval ve MCP               | Tamamlandı | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP bağımsız kabul edildi          |
-| WP23 — Mobil approval ve push                | Aktif      | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği tamamlanacak                                   |
-| WP24 — Billing ve Faz 4 kabulü               | Planlandı  | Plan/kota/billing entegrasyonu ile corpus-mobil ürün fazı uçtan uca kapatılacak                             |
+| WP23 — Mobil approval ve push                | Tamamlandı | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği bağımsız kabul edildi                          |
+| WP24 — Billing ve Faz 4 kabulü               | Aktif      | Plan/kota/billing entegrasyonu ile corpus-mobil ürün fazı uçtan uca kapatılacak                             |
 | WP25 — HA topology ve kapasite               | Planlandı  | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
 | WP26 — SLO ve DR                             | Planlandı  | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
 | WP27 — Enterprise lifecycle                  | Planlandı  | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
@@ -1063,3 +1063,33 @@ Doğrulananlar:
 Uygulama commit'leri: `e7b9b40`, `cd24e14`.
 
 WP22 tamamlandı. Aktif iş paketi WP23'tür; WP23 tamamlanmadan WP24'e geçilemez.
+
+## WP23 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- PWA manifest, versioned service worker, kontrollü update ve tenant/principal scoped
+  offline read-only history production build'e bağlandı; offline turn veya approval
+  kuyruğu oluşturulmadı.
+- Migration 23 ve PostgreSQL push repository forced RLS, encrypted subscription,
+  rotate/revoke/expiry, outbox retry, invalid endpoint ve duplicate/out-of-order
+  delivery idempotency kontrollerini geçti.
+- Notification payload allowlist ve secret/content scan'i sıfır sızıntıyla geçti;
+  notification deep link auth/authorization sonrasında session/approval'ı çözüyor.
+- İki bağımsız cihazın approval yarışında tek CAS kazananı ve tek upstream response
+  oluştu; diğer cihaz realtime ile aynı terminal sonucu gösterdi.
+- Browser kapalıyken server-side task tamamlandı; reopen/reconnect high-water replay
+  ile çıktıyı geri getirdi. Scroll lock, keyboard, screen-reader label, reduced motion
+  ve 44px touch target kontrolleri geçti.
+- `pnpm wp23:accept` 99 hedefli test, gerçek PostgreSQL ve 390x844, 768x1024,
+  1280x720 browser/PWA kapılarını geçti. `pnpm verify` 29 test dosyasında 299 test,
+  typecheck, build ve SSR HTTP smoke ile tamamlandı.
+- Gerçek VAPID/provider credential bulunmadığından opt-in/delivery smoke'u
+  çalıştırılmadı; emulator production delivery kanıtı sayılmadı.
+
+Uygulama commit'i: `3962844`.
+
+WP23 tamamlandı. Aktif iş paketi WP24'tür; WP24 tamamlanmadan Faz 4 kapatılamaz ve WP25
+başlatılamaz.
