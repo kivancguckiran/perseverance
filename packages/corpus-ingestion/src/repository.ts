@@ -31,6 +31,15 @@ export interface IndexDocumentWrite {
   embedding: number[] | null
 }
 
+export interface DurableCorpusWatchJob {
+  watchJobId: string
+  operation: 'create' | 'update' | 'rename' | 'delete'
+  workspacePath: string
+  previousWorkspacePath: string | null
+  contentHash: string | null
+  idempotencyKey: string
+}
+
 export interface CorpusRepository extends CorpusRetrievalRepository {
   readonly version: typeof CORPUS_REPOSITORY_VERSION
   readonly adapter: 'postgresql'
@@ -118,6 +127,20 @@ export interface CorpusRepository extends CorpusRetrievalRepository {
     scope: CorpusScope,
   ): Promise<Array<{ cleanupId: string; storageKey: string }>>
   completeCleanup(scope: CorpusScope, cleanupId: string): Promise<void>
+  enqueueWatchJobs(
+    scope: CorpusScope,
+    jobs: DurableCorpusWatchJob[],
+  ): Promise<void>
+  recoverWatchJobs(scope: CorpusScope): Promise<void>
+  claimWatchJobs(
+    scope: CorpusScope,
+    limit: number,
+  ): Promise<DurableCorpusWatchJob[]>
+  completeWatchJob(
+    scope: CorpusScope,
+    watchJobId: string,
+    outcome: 'completed' | 'failed',
+  ): Promise<void>
   close(): Promise<void>
 }
 
@@ -1200,6 +1223,92 @@ export class PostgresCorpusRepository implements CorpusRepository {
       await client.query(
         `UPDATE persistent_codex.corpus_storage_cleanup SET status='completed',completed_at=now() WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND cleanup_id=$4`,
         [scope.tenantId, scope.organizationId, scope.workspaceId, cleanupId],
+      )
+    })
+  }
+
+  async enqueueWatchJobs(scope: CorpusScope, jobs: DurableCorpusWatchJob[]) {
+    await this.#transaction(scope, async (client) => {
+      for (const item of jobs)
+        await client.query(
+          `INSERT INTO persistent_codex.corpus_watch_jobs
+           (tenant_id,organization_id,workspace_id,watch_job_id,operation,workspace_path,
+            previous_workspace_path,content_hash,status,idempotency_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)
+           ON CONFLICT (tenant_id,organization_id,workspace_id,idempotency_key) DO NOTHING`,
+          [
+            scope.tenantId,
+            scope.organizationId,
+            scope.workspaceId,
+            item.watchJobId,
+            item.operation,
+            item.workspacePath,
+            item.previousWorkspacePath,
+            item.contentHash,
+            item.idempotencyKey,
+          ],
+        )
+    })
+  }
+
+  async recoverWatchJobs(scope: CorpusScope) {
+    await this.#transaction(scope, async (client) => {
+      await client.query(
+        `UPDATE persistent_codex.corpus_watch_jobs
+         SET status='pending',updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND status IN ('processing','failed')`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId],
+      )
+    })
+  }
+
+  async claimWatchJobs(scope: CorpusScope, limit: number) {
+    return this.#transaction(scope, async (client) => {
+      const result = await client.query(
+        `WITH claimed AS (
+           SELECT watch_job_id FROM persistent_codex.corpus_watch_jobs
+           WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND status='pending'
+           ORDER BY created_at,watch_job_id FOR UPDATE SKIP LOCKED LIMIT $4
+         )
+         UPDATE persistent_codex.corpus_watch_jobs j
+         SET status='processing',updated_at=now()
+         FROM claimed WHERE j.tenant_id=$1 AND j.organization_id=$2 AND j.workspace_id=$3
+           AND j.watch_job_id=claimed.watch_job_id
+         RETURNING j.*`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId, limit],
+      )
+      return result.rows.map((row) => ({
+        watchJobId: String(row.watch_job_id),
+        operation: row.operation as DurableCorpusWatchJob['operation'],
+        workspacePath: String(row.workspace_path),
+        previousWorkspacePath:
+          row.previous_workspace_path == null
+            ? null
+            : String(row.previous_workspace_path),
+        contentHash: row.content_hash == null ? null : String(row.content_hash),
+        idempotencyKey: String(row.idempotency_key),
+      }))
+    })
+  }
+
+  async completeWatchJob(
+    scope: CorpusScope,
+    watchJobId: string,
+    outcome: 'completed' | 'failed',
+  ) {
+    await this.#transaction(scope, async (client) => {
+      await client.query(
+        `UPDATE persistent_codex.corpus_watch_jobs SET status=$5,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND watch_job_id=$4 AND status='processing'`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          watchJobId,
+          outcome,
+        ],
       )
     })
   }

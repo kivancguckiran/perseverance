@@ -91,7 +91,7 @@ try {
     `${volume}:/var/lib/postgresql/data`,
     image,
   )
-  let ready = false
+  let consecutive = 0
   for (let attempt = 0; attempt < 60; attempt++) {
     const probe = spawnSync('docker', [
       'exec',
@@ -102,13 +102,15 @@ try {
       '-tAc',
       'SELECT 1',
     ])
-    if (probe.status === 0 && probe.stdout.toString().trim() === '1') {
-      ready = true
-      break
-    }
+    consecutive =
+      probe.status === 0 && probe.stdout.toString().trim() === '1'
+        ? consecutive + 1
+        : 0
+    if (consecutive >= 3) break
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
   }
-  if (!ready) throw new Error('pgvector PostgreSQL readiness timed out')
+  if (consecutive < 3)
+    throw new Error('pgvector PostgreSQL readiness timed out')
   process.stdout.write('wp22-postgres: pgvector ready\n')
   const portText = docker('port', container, '5432/tcp').trim()
   const port = Number(portText.slice(portText.lastIndexOf(':') + 1))

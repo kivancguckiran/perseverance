@@ -63,6 +63,7 @@ import {
   type WorkspaceRuntime,
   type WorkspaceRuntimeClient,
   type WorkspaceRuntimeIdentity,
+  type WorkspaceRuntimeServices,
   type WorkspaceRuntimeRegistryOptions,
 } from '@persistent-codex/workspace-agent'
 
@@ -124,6 +125,9 @@ export interface SessionOrchestratorOptions {
   sessionIdFactory?: () => string
   runIdFactory?: () => string
   runtimeInstanceIdFactory?: () => string
+  runtimeServicesFactory?: (
+    identity: WorkspaceRuntimeIdentity,
+  ) => WorkspaceRuntimeServices
   sourceVersion?: string
   onDeliveryError?: WorkspaceRuntimeRegistryOptions['onDeliveryError']
   approvalPolicy?: ThreadStartParams['approvalPolicy']
@@ -383,6 +387,9 @@ export class SessionOrchestrator {
         : {}),
       ...(options.runtimeInstanceIdFactory
         ? { runtimeInstanceIdFactory: options.runtimeInstanceIdFactory }
+        : {}),
+      ...(options.runtimeServicesFactory
+        ? { runtimeServicesFactory: options.runtimeServicesFactory }
         : {}),
       ...(options.onDeliveryError
         ? { onDeliveryError: options.onDeliveryError }

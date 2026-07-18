@@ -88,6 +88,7 @@ export const authorizationActionSchema = z.enum([
   'source.delete',
   'source.reindex',
   'source.search',
+  'citation.read',
   'artifact.metadata.read',
   'artifact.read',
   'artifact.download',

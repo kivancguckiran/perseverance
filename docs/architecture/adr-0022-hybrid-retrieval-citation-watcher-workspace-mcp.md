@@ -57,6 +57,29 @@ doğruluk kaynağından ayrışır.
   Tenant/organization/workspace tool argümanı değildir; server başlangıcında fixed
   workload identity'den alınır. Tool annotations read-only/non-destructive'dir;
   request/output byte ve token limitlidir. Unknown method/tool safe JSON-RPC error olur.
+- MCP, normal session bootstrap sırasında `WorkspaceRuntimeRegistry` tarafından
+  required server olarak provision edilir. Server-owned workspace Codex home içindeki
+  managed config, kullanıcının provisioning source config'ini değiştirmez; yalnız
+  allowlisted environment variable adlarını forward eder ve credential değerlerini
+  config'e yazmaz. App-server launch/restart generation'ı credential rotation yapar;
+  shutdown eski credential'ı revoke eder, watcher'ı durdurur ve managed config'i
+  temizleyip önceki source link'ini geri kurar. Provision/handshake başarısızsa session
+  `CORPUS_MCP_UNAVAILABLE`/upstream required-MCP hatasıyla fail-closed olur; sessiz
+  retrieval'sız çalışma yoktur.
+- Corpus workload credential kısa ömürlü HMAC-signed scope claim'i ile ayrı proof
+  key'den oluşur. Audience `urn:persistent-codex:workspace-corpus`, actions yalnız
+  `source.search` ve `citation.read`, tenant/organization/workspace immutable claim'dir.
+  Her HTTP çağrısı timestamp + nonce + action proof'u taşır. Server signature,
+  audience, expiry, revoke, scope, action, proof-key binding ve nonce replay'i
+  doğrular; token substitution ve tekrar kullanım fail-closed olur. Token/proof key
+  log, event, timeline, error veya config snapshot'a girmez.
+- Runtime watcher startup full scan yapar; gerçek filesystem sinyali ve bounded
+  periyodik reconciliation aynı deterministic snapshot diff'ini tetikler. Symlink ve
+  canonical-root escape indexlenmez. Event önce forced-RLS korumalı
+  `corpus_watch_jobs` tablosuna idempotent yazılır, sonra bounded claim/apply/complete
+  hattından WP21 source/revision/chunk/index zincirine uygulanır. Restart sırasında
+  yarım `processing` işleri pending'e alınır; shutdown yeni scan'i kesip in-flight
+  uygulamayı bounded biçimde tamamlar.
 - MCP initialize instructions ve her tool output'u corpus içeriğini açıkça
   `untrusted_context` olarak işaretler. Corpus metni system/developer/tool instruction
   değildir. Query/source/raw model output/credential log, trace veya error mesajına
@@ -84,5 +107,8 @@ drain edilmelidir.
   yapılamaz.
 - Local registry development/test kolaylığı sağlar; production RLS, durability veya
   semantic kalite kanıtı değildir.
+- Test E2E snapshot encryption için explicit local KMS fixture kullanır; bu production
+  KMS kanıtı değildir. PostgreSQL/pgvector, workload proof, Codex 0.144.2 ve browser
+  akışları gerçektir.
 - Billing entitlement/kota, push/mobile ve production HA WP23+ kapsamına taşınmaz;
   WP23 bu kararla aktive edilmez.

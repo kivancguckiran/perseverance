@@ -88,7 +88,8 @@ export class DeterministicIgnorePolicy {
     codexignore?: string
     indexIgnore?: string
   }) {
-    const defaults = '.git/\nnode_modules/\n.runtime/\n.env\n.env.*\n'
+    const defaults =
+      '.git/\nnode_modules/\n.runtime/\n.env\n.env.*\n.gitignore\n.codexignore\nindex.ignore\n'
     this.#rules = [
       ...compileIgnore(defaults),
       ...compileIgnore(input.gitignore ?? ''),
@@ -149,6 +150,7 @@ export class WorkspaceCorpusWatcher {
     { event: WorkspaceFileEvent; dueAt: number }
   >()
   readonly #emitted = new Set<string>()
+  readonly #emittedOrder: string[] = []
 
   constructor(input: {
     root: string
@@ -256,6 +258,11 @@ export class WorkspaceCorpusWatcher {
         .digest('hex')}`
       if (this.#emitted.has(idempotencyKey)) continue
       this.#emitted.add(idempotencyKey)
+      this.#emittedOrder.push(idempotencyKey)
+      while (this.#emittedOrder.length > this.#maxBacklog * 4) {
+        const expired = this.#emittedOrder.shift()
+        if (expired) this.#emitted.delete(expired)
+      }
       jobs.push({ version: 1, ...pending.event, idempotencyKey })
     }
     return jobs
