@@ -1111,9 +1111,18 @@ plan ve quota kapsamına ek olarak şunları zorunlu kabul kriteri sayar:
 - Payment/settlement replay, concurrent double-spend ve cross-tenant RLS/browser
   adversarial testleri.
 
-Mevcut WP24 billing/quota ve birleşik E2E kanıtı bu genişletmeyi kapsamadığı için WP24
-halen aktiftir. Bu kriterler bağımsız doğrulanmadan WP24 tamamlanamaz, Faz 4 kapatılamaz
-ve WP25 aktive edilemez.
+WP24 billing/quota ve birleşik E2E kanıtı bu genişletmeyi kapsayacak şekilde
+güncellendi; WP24 yine de bağımsız kabul görevi tamamlanmadığı için aktiftir. İki
+browser context'inin aynı `Accept once` kararını verdiği yarış kontrollü request
+barrier üzerinden çalışır. Pinli Codex `0.144.2` ile üç ardışık browser koşusu ve tam
+`phase4:accept` geçti. Son kanıt session
+`ses_6392d8a4-df8d-445e-8b50-c05300c750ea`, approval
+`apr_576a4699f8fc5922a7b9985b`, resolved event sequence `252`, CAS sonucu `a=200` /
+`b=409`, settlement `cset_bfbcff8794d7da7aca9c91b6cd9c9b27` ve ledger watermark
+`clw_30` değerlerini bağladı. Durable timeline'da bir resolution/upstream completion,
+usage dedupe başına bir settlement ve iki context'te aynı resolved state doğrulandı.
+Emulator sonucu production tahsilat veya delivery kanıtı değildir. Bağımsız kabul
+olmadan WP24 tamamlanamaz, Faz 4 kapatılamaz ve WP25 aktive edilemez.
 
 ## WP25 paylaşımlı klasör kapsamı
 
