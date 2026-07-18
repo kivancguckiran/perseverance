@@ -57,7 +57,7 @@ provider köprüsü ile yeniden numaralanan Faz 3 Multi-tenant Security Beta tas
 `docs/planning/phase-3-security-and-cursor-plan.md` içinde tamamlanmıştır. Faz 4 Corpus
 ve mobil ürün WP21–WP24, Faz 5 Production hardening WP25–WP29 olarak
 `docs/planning/phase-4-corpus-mobile-and-phase-5-production-plan.md` içinde planlanmış;
-WP21 tek aktif iş paketi olarak açılmıştır.
+WP21 bağımsız kabul edilmiş; WP22 tek aktif iş paketi olarak açılmıştır.
 
 ## Uygulama sırası
 

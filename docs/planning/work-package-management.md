@@ -74,8 +74,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP18 — Tenant kimliği ve data isolation      | Tamamlandı | OIDC, deny-by-default authorization, RLS/object/cache tenant sınırı bağımsız kabul edildi                   |
 | WP19 — Runtime ve encryption isolation       | Tamamlandı | Kata runtime, egress, secret lease, KMS envelope encryption ve restore sınırı bağımsız kabul edildi         |
 | WP20 — Security beta kabulü                  | Tamamlandı | Durable support grant/JIT/break-glass ve birleşik adversarial Faz 3 kabulü bağımsız doğrulandı              |
-| WP21 — Corpus ingestion temeli               | Aktif      | Tenant-aware source registry, extraction, chunk ve derived index omurgası kurulacak                         |
-| WP22 — Hybrid retrieval ve MCP               | Planlandı  | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP tamamlanacak                   |
+| WP21 — Corpus ingestion temeli               | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index omurgası bağımsız kabul edildi             |
+| WP22 — Hybrid retrieval ve MCP               | Aktif      | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP tamamlanacak                   |
 | WP23 — Mobil approval ve push                | Planlandı  | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği tamamlanacak                                   |
 | WP24 — Billing ve Faz 4 kabulü               | Planlandı  | Plan/kota/billing entegrasyonu ile corpus-mobil ürün fazı uçtan uca kapatılacak                             |
 | WP25 — HA topology ve kapasite               | Planlandı  | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
@@ -1009,3 +1009,29 @@ observability/DR, enterprise lifecycle, supply-chain/canary ve nihai production
 kabulünü bağımsız doğrulanabilir sınırlara ayırır.
 
 WP21 tek aktif iş paketidir. WP21 bağımsız kabul edilmeden WP22'ye geçilemez.
+
+## WP21 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- PostgreSQL corpus repository, forced RLS, durable restart recovery, concurrent
+  claim, duplicate upload dedupe, deterministic rebuild ve append-only embedding
+  usage muhasebesi gerçek PostgreSQL smoke'unda iki kez geçti.
+- Immutable snapshot storage, workspace-security KMS/envelope encryption altyapısını
+  kullanıyor. Tenant/workspace/revision/storage-key/content-hash context substitution,
+  ciphertext/tag/wrapped-key değişikliği, key revoke ve crypto-erasure fail-closed
+  testlerle doğrulandı.
+- Gerçek Poppler extraction ve bounded parser limitleri; malformed, oversized,
+  timeout ve poison source senaryoları geçti.
+- Gerçek browser kabulü iki ardışık kez 1280x720 ve 390x844 görünümde geçti;
+  pending/extracting/indexed/failed/delete-reindex, reload durability ve cross-tenant
+  gizleme doğrulandı.
+- `pnpm verify` 23 dosyada 283 test, typecheck, production build ve SSR HTTP smoke ile
+  geçti. Test cleanup çıktıları container, volume ve temp dizin sızıntısı olmadığını
+  gösterdi.
+
+Uygulama commit'leri: `f843b35`, `3afad1a`, `98d5f88`, `94a7a77`.
+
+WP21 tamamlandı. Aktif iş paketi WP22'dir; WP22 tamamlanmadan WP23'e geçilemez.

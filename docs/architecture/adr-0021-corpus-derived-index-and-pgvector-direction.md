@@ -1,6 +1,6 @@
 # ADR-0021: Corpus doğruluk kaynağı ve MVP vector backend yönü
 
-- Durum: Kabul önerisi
+- Durum: Kabul edildi
 - Tarih: 17 Temmuz 2026
 - Kapsam: WP21 source registry, extraction, chunk ve derived index temeli
 
