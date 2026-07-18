@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP22
+- Aktif iş paketi: WP23
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -21,17 +21,17 @@ production rollout seviyesine taşır.
 
 ## 2. İş paketi özeti
 
-| Paket | Faz | Durum                      | Hedef                                                                    |
-| ----- | --- | -------------------------- | ------------------------------------------------------------------------ |
-| WP21  | 4   | Tamamlandı                 | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
-| WP22  | 4   | Uygulandı / kabul bekliyor | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
-| WP23  | 4   | Planlandı                  | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Planlandı                  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
-| WP25  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP26  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP27  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP28  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP29  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| Paket | Faz | Durum      | Hedef                                                                    |
+| ----- | --- | ---------- | ------------------------------------------------------------------------ |
+| WP21  | 4   | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
+| WP22  | 4   | Tamamlandı | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
+| WP23  | 4   | Aktif      | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
+| WP24  | 4   | Planlandı  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
+| WP25  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP26  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP27  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP28  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP29  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; Faz 4
 tamamlanmadan WP25; WP28 tamamlanmadan nihai WP29 aktive edilmez.
@@ -144,9 +144,9 @@ silme/reindex semantiği deterministik bir retrieval hizmetine dönüştürmek.
 
 `feat: add hybrid corpus retrieval and workspace MCP`
 
-#### Uygulama ve kabul bekleyen doğrulama kaydı
+#### Uygulama ve bağımsız kabul kaydı
 
-Durum: **Uygulandı / kabul bekliyor**. WP23 aktive edilmedi; aktif kabul yüzeyi WP22'dir.
+Durum: **Tamamlandı**. WP22 bağımsız kabul edildi; WP23 tek aktif iş paketidir.
 
 - Contract/repository: search/citation schema v1, repository v2, ranking policy
   `hybrid-rrf-v1`, `corpus-index-v1`, bounded cursor/top-k/token/timeout ve immutable
@@ -199,8 +199,19 @@ Durum: **Uygulandı / kabul bekliyor**. WP23 aktive edilmedi; aktif kabul yüzey
 Production runtime wiring düzeltme commit'i:
 `fix: integrate WP22 retrieval into workspace runtime`.
 
-Bağımsız kabul task'ı bu evidence'i tekrar doğrulayıp sonucu kaydetmeden WP23
-`Aktif` yapılamaz.
+Bağımsız kabulte `WP22_CODEX_BIN=<pinned-0.144.2> pnpm wp22:accept` bütünüyle geçti:
+24 hedefli test, gerçek PostgreSQL/pgvector ve forced RLS, normal session bootstrap,
+managed MCP provisioning, proof-bound workload credential, watcher
+create/update/rename/delete lifecycle, gerçek Codex tool/citation turn'ü ve browser
+timeline doğrulandı. Browser 1280x720, 768x1024 ve 390x844 görünümde reconnect,
+keyboard/screen-reader label, sıfır yatay taşma/page error/credential leak ile geçti.
+`pnpm verify` 27 test dosyasında 294 test, typecheck, build ve SSR HTTP smoke'u
+tamamladı. Geçici Codex kurulumu, PostgreSQL container/volume, browser session ve test
+dizinleri temizlendi.
+
+Uygulama commit'leri: `e7b9b40`, `cd24e14`.
+
+WP22 tamamlandı. WP23 tek aktif iş paketidir; WP23 tamamlanmadan WP24'e geçilemez.
 
 ### WP23 — Mobil/PWA approval, push ve çoklu cihaz sürekliliği
 

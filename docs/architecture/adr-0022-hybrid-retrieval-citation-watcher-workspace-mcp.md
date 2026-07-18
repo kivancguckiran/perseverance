@@ -1,6 +1,6 @@
 # ADR-0022: Hybrid corpus retrieval, citation, watcher ve workspace-local MCP
 
-- Durum: Kabul önerisi
+- Durum: Kabul edildi
 - Tarih: 18 Temmuz 2026
 - Kapsam: WP22
 
