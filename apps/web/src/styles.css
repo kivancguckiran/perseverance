@@ -347,6 +347,34 @@ select {
   color: #8ca299;
   font-size: 0.7rem;
 }
+.billing-status {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid #315847;
+  border-radius: 8px;
+  background: #10221b;
+}
+.billing-status div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+}
+.billing-status small {
+  color: #9db5ab;
+  overflow-wrap: anywhere;
+}
+.billing-status .quota-warn {
+  color: #f2ce75;
+}
+.billing-status .quota-deny {
+  color: #ff9f94;
+}
+.billing-status .quota-allow {
+  color: #8ee0bd;
+}
 .usage-breakdown ul {
   display: grid;
   gap: 8px;

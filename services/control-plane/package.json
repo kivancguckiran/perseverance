@@ -12,6 +12,7 @@
   "dependencies": {
     "@persistent-codex/artifact-storage": "workspace:*",
     "@persistent-codex/authz": "workspace:*",
+    "@persistent-codex/billing-platform": "workspace:*",
     "@fastify/cors": "^11.3.0",
     "@fastify/websocket": "^11.3.0",
     "@persistent-codex/control-plane-contracts": "workspace:*",

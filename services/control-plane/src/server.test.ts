@@ -26,6 +26,7 @@ import {
   buildControlPlane,
   type ControlPlaneOptions,
 } from './server'
+import type { CommercialPolicySnapshot } from '@persistent-codex/billing-platform'
 
 const scope: StoreScope = {
   tenantId: 'ten_test',
@@ -231,6 +232,131 @@ describe('WP13 scoped usage and cost API', () => {
         headers: { ...headers, 'x-tenant-id': 'ten_other' },
       })
       expect(hidden.statusCode).toBe(404)
+    } finally {
+      await app.close()
+    }
+  })
+})
+
+describe('WP24 commercial admission and billing API', () => {
+  it('audits soft warnings, denies hard quota before provider work, and exposes no credentials', async () => {
+    const store = new SqliteEventStore(':memory:')
+    store.createSession(scope)
+    const policyScope = {
+      tenantId: scope.tenantId,
+      organizationId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+    }
+    const snapshot: CommercialPolicySnapshot = {
+      plan: {
+        ...policyScope,
+        schemaVersion: 1,
+        planId: 'beta',
+        planVersion: 24,
+        displayName: 'Beta',
+        currency: 'USD',
+        effectiveAt: '2026-07-18T00:00:00.000Z',
+        retiredAt: null,
+        billingMode: 'hybrid',
+        taxBehavior: 'unknown',
+      },
+      entitlements: (
+        [
+          'turn.start',
+          'source.upload',
+          'source.index',
+          'source.retrieval',
+          'workspace.concurrency',
+        ] as const
+      ).map((key, index) => ({
+        ...policyScope,
+        schemaVersion: 1 as const,
+        entitlementId: `ent-${index}`,
+        planId: 'beta',
+        planVersion: 24,
+        key,
+        enabled: true,
+        effectiveAt: '2026-07-18T00:00:00.000Z',
+        expiresAt: null,
+        sourceWebhookEventId: null,
+      })),
+      budgets: [],
+      quotas: [
+        {
+          ...policyScope,
+          schemaVersion: 1,
+          quotaId: 'spend',
+          policyVersion: 3,
+          meter: 'provider_spend_micros',
+          softLimit: 80,
+          hardLimit: 100,
+          inFlightPolicy: 'continue',
+          effectiveAt: '2026-07-18T00:00:00.000Z',
+          expiresAt: null,
+        },
+      ],
+    }
+    let spend = 80
+    const decisions: string[] = []
+    const app = await buildControlPlane({
+      eventStore: store,
+      commercialPolicy: {
+        snapshot: () => snapshot,
+        measurements: () => ({
+          values: { provider_spend_micros: spend },
+          watermark: `ledger-${spend}`,
+          measuredAt: '2026-07-18T10:00:00.000Z',
+        }),
+        recordDecision: (decision) => {
+          decisions.push(decision.outcome)
+        },
+        productionBillingVerified: false,
+      },
+    })
+    try {
+      const warned = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/turns`,
+        headers: { ...headers, 'idempotency-key': 'soft-warning' },
+        payload: { prompt: 'test' },
+      })
+      expect(warned.headers['x-usage-warning']).toBe(
+        'SOFT_LIMIT_PROVIDER_SPEND_MICROS',
+      )
+      spend = 100
+      const denied = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/turns`,
+        headers: { ...headers, 'idempotency-key': 'hard-limit' },
+        payload: { prompt: 'must not reach provider' },
+      })
+      expect(denied.statusCode).toBe(429)
+      expect(denied.json()).toMatchObject({
+        code: 'USAGE_LIMIT_REACHED',
+        message: 'HARD_LIMIT_PROVIDER_SPEND_MICROS',
+        policyVersion: 3,
+        measurementWatermark: 'ledger-100',
+      })
+      const billing = await app.inject({
+        method: 'GET',
+        url: `/v1/workspaces/${scope.workspaceId}/billing?sessionId=${scope.sessionId}`,
+        headers,
+      })
+      expect(billing.statusCode).toBe(200)
+      expect(billing.json()).toMatchObject({
+        plan: { planId: 'beta', planVersion: 24, billingMode: 'hybrid' },
+        latestDecision: { outcome: 'deny' },
+        productionBillingVerified: false,
+      })
+      expect(billing.body).not.toMatch(
+        /api.?key|webhook.?secret|credential|payload/i,
+      )
+      expect(decisions).toEqual(['warn', 'deny'])
+      expect(store.listAudit(scope).records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ action: 'quota.decided' }),
+        ]),
+      )
     } finally {
       await app.close()
     }

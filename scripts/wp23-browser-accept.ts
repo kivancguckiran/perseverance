@@ -218,6 +218,7 @@ const apiPort = await freePort()
 const webPort = await freePort()
 const apiUrl = `http://127.0.0.1:${apiPort}`
 const webUrl = `http://127.0.0.1:${webPort}`
+const wp24Billing = process.env.WP24_BROWSER === '1'
 const tenantId = 'tenant_wp23'
 const workspaceId = 'workspace_wp23'
 const client = new MobileRuntimeClient()
@@ -272,6 +273,72 @@ try {
     pushRepository,
     allowLocalCorpus: true,
     allowInMemorySupportAccess: true,
+    ...(wp24Billing
+      ? {
+          commercialPolicy: {
+            snapshot: () => ({
+              plan: {
+                schemaVersion: 1 as const,
+                tenantId,
+                organizationId: tenantId,
+                workspaceId,
+                planId: 'phase4-beta',
+                planVersion: 24,
+                displayName: 'Phase 4 Beta',
+                currency: 'USD',
+                effectiveAt: '2026-07-18T00:00:00.000Z',
+                retiredAt: null,
+                billingMode: 'hybrid' as const,
+                taxBehavior: 'unknown' as const,
+              },
+              entitlements: (
+                [
+                  'turn.start',
+                  'source.upload',
+                  'source.index',
+                  'source.retrieval',
+                  'workspace.concurrency',
+                ] as const
+              ).map((key, index) => ({
+                schemaVersion: 1 as const,
+                tenantId,
+                organizationId: tenantId,
+                workspaceId,
+                entitlementId: `wp24-ent-${index}`,
+                planId: 'phase4-beta',
+                planVersion: 24,
+                key,
+                enabled: true,
+                effectiveAt: '2026-07-18T00:00:00.000Z',
+                expiresAt: null,
+                sourceWebhookEventId: null,
+              })),
+              budgets: [
+                {
+                  schemaVersion: 1 as const,
+                  tenantId,
+                  organizationId: tenantId,
+                  workspaceId,
+                  budgetId: 'wp24-monthly',
+                  period: 'month' as const,
+                  currency: 'USD',
+                  softLimitMicros: 8_000_000,
+                  hardLimitMicros: 10_000_000,
+                  effectiveAt: '2026-07-18T00:00:00.000Z',
+                  expiresAt: null,
+                },
+              ],
+              quotas: [],
+            }),
+            measurements: () => ({
+              values: {},
+              watermark: 'ledger-browser-24',
+              measuredAt: '2026-07-18T10:00:00.000Z',
+            }),
+            productionBillingVerified: false,
+          },
+        }
+      : {}),
   })
   await app.listen({ host: '127.0.0.1', port: apiPort })
   const headers = { 'x-tenant-id': tenantId, 'x-workspace-id': workspaceId }
@@ -495,6 +562,27 @@ try {
     ),
     'true',
   )
+  if (wp24Billing) {
+    await evaluate(
+      'a',
+      `document.querySelector('.usage-summary > summary')?.click()`,
+    )
+    await waitFor(
+      'billing overview',
+      async () =>
+        (await evaluate(
+          'a',
+          `document.body.innerText.includes('Phase 4 Beta') && document.body.innerText.includes('Billing emulator') && document.body.innerText.includes('currency USD') && document.body.innerText.includes('Kota uygun')`,
+        )) === 'true',
+    )
+    assert.equal(
+      await evaluate(
+        'a',
+        `!document.body.innerText.match(/webhook secret|api key|payment credential|Bearer\s|sk-/i)`,
+      ),
+      'true',
+    )
+  }
   await browser('a', 'set', 'viewport', '1280', '720')
   assert.equal(
     await evaluate(
@@ -542,6 +630,9 @@ try {
       pageErrors: 0,
       offline: 'read-only-shell',
       serviceWorker: 'production-build',
+      billing: wp24Billing
+        ? 'plan-budget-usage-emulator-visible'
+        : 'not-requested',
     }),
   )
 } finally {
