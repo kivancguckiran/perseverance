@@ -78,8 +78,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP22 — Hybrid retrieval ve MCP               | Tamamlandı | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP bağımsız kabul edildi          |
 | WP23 — Mobil approval ve push                | Tamamlandı | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği bağımsız kabul edildi                          |
 | WP24 — Billing, kredi ve gelir/marj kabulü   | Tamamlandı | Prepaid kredi, reservation, gelir/COGS/marj ve billing kabulü bağımsız doğrulandı                           |
-| WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Aktif      | Davet, rol/ACL, güvenli ortak kullanım ve birleşik Faz 4 kabulü tamamlanacak                                |
-| WP26 — HA topology ve kapasite               | Planlandı  | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
+| WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Tamamlandı | Davet, rol/ACL, durable ortak task/billing ve birleşik Faz 4 kabulü bağımsız doğrulandı                     |
+| WP26 — HA topology ve kapasite               | Aktif      | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
 | WP27 — SLO ve DR                             | Planlandı  | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
 | WP28 — Enterprise lifecycle                  | Planlandı  | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
 | WP29 — Supply-chain ve canary                | Planlandı  | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
@@ -1143,7 +1143,7 @@ WP24 tamamlandı. Aktif iş paketi WP25'tir; WP25 tamamlanmadan Faz 4 kapatılam
 
 ## WP25 paylaşımlı klasör kapsamı
 
-WP25, Faz 4'ün yeni ve son iş paketi olarak aktive edildi. WP25 tek aktif iş paketidir.
+WP25, Faz 4'ün yeni ve son iş paketi olarak tamamlandı.
 
 WP25'in hedefi, bir kullanıcının klasörü arkadaşına davet ederek paylaşması ve iki
 kullanıcının yalnız bu klasöre bağlı conversation, source, attachment/artifact ve
@@ -1161,5 +1161,25 @@ kaynaklarını ve agent işlerini ortak kullanmayı kapsar; Google Docs benzeri 
 içeriğini canlı ortak düzenleme kapsam dışıdır. Son kabulde `pnpm phase4:accept`,
 WP21–WP25 kapılarını birlikte çalıştırır.
 
-WP25 bağımsız kabul edilmeden Faz 4 kapatılamaz ve Faz 5'in ilk paketi WP26 aktive
-edilemez.
+## WP25 nihai kabul sonucu ve Faz 4 kapanışı
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `5b4a026`, `e47f1f9` ve `93185a3` kabul edildi.
+- Shared-folder contract ve PostgreSQL adapter aynı async port altında tamamlandı;
+  production composition durable repository yokluğunda fail-closed davranıyor.
+- Forced RLS, invitation/ownership/resource/audit/restart ve cross-instance access
+  invalidation testleri gerçek PostgreSQL üzerinde geçti.
+- Pinli Codex `0.144.2` E2E'sinde iki principal aynı shared task için tek gerçek
+  `runId/codexTurnId`; tek durable approval resolution; aynı usage dedupe, credit
+  reservation ve gerçek billing settlement zincirini üretti.
+- Retrieval/MCP citation, attachment, artifact, viewer/editor ayrımı, private sibling,
+  interrupted/start-failed/admission-denied task ve realtime revoke doğrulandı.
+- İki browser context'i invite/accept, role promotion, ortak task/approval ve erişim
+  kaybını 390x844, 768x1024 ve 1280x720 görünümlerinde geçti.
+- Birleşik `phase4:accept`, WP21–WP25 kapılarını; repo-wide verify ise 34 test dosyasında
+  327 testi, typecheck, build ve SSR HTTP smoke'u başarıyla tamamladı. Cleanup geçti.
+- Credential gerektiren gerçek billing/Web Push kontrolleri `not-run` kaldı; emulator
+  production kanıtı sayılmadı.
+
+WP25 ve Faz 4 tamamlandı. Tek aktif iş paketi Faz 5'in ilk paketi WP26'dır.
