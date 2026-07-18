@@ -48,7 +48,16 @@ import {
   corpusSearchResponseSchema,
   corpusCitationLookupRequestSchema,
   corpusCitationLookupResponseSchema,
+  pushSubscriptionRequestSchema,
+  pushSubscriptionSchema,
+  pushSubscriptionListResponseSchema,
+  pushSubscriptionRevokeRequestSchema,
+  pushNotificationResolutionSchema,
 } from '@persistent-codex/control-plane-contracts'
+import type {
+  PushProvider,
+  PushRepository,
+} from '@persistent-codex/push-notifications'
 import {
   InMemorySupportAccessRepository,
   SupportAccessError,
@@ -229,6 +238,8 @@ export interface ControlPlaneOptions {
     sessionId: string | null
     objectId: string | null
   }) => Promise<string> | string
+  pushRepository?: PushRepository
+  pushProvider?: PushProvider
 }
 
 export interface PublicRouteAuthorizationEntry {
@@ -371,6 +382,36 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/approvals/:approvalId/decision',
       action: 'approval.decide',
       resourceType: 'approval',
+    },
+    {
+      method: 'GET',
+      route: '/v1/push-subscriptions',
+      action: 'notification.read',
+      resourceType: 'push_subscription',
+    },
+    {
+      method: 'GET',
+      route: '/v1/notifications/:notificationId',
+      action: 'notification.read',
+      resourceType: 'notification',
+    },
+    {
+      method: 'POST',
+      route: '/v1/push-subscriptions',
+      action: 'notification.subscribe',
+      resourceType: 'push_subscription',
+    },
+    {
+      method: 'POST',
+      route: '/v1/push-subscriptions/:subscriptionId/revoke',
+      action: 'notification.revoke',
+      resourceType: 'push_subscription',
+    },
+    {
+      method: 'POST',
+      route: '/v1/push-devices/:deviceId/revoke',
+      action: 'notification.revoke',
+      resourceType: 'push_device',
     },
     {
       method: 'POST',
@@ -1331,6 +1372,22 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           headers: request.headers,
           now: now(),
         })
+    if (coverage.route === '/v1/notifications/:notificationId') {
+      if (workloadRequest || !endUserPrincipal)
+        throw new AuthenticationError('PRINCIPAL_KIND_MISMATCH')
+      const resolvedMemberships =
+        endUserPrincipal.memberships.length > 0
+          ? endUserPrincipal.memberships
+          : memberships.membershipsFor(
+              endUserPrincipal.subject,
+              endUserPrincipal.issuer,
+            )
+      authContexts.set(request, {
+        principal: endUserPrincipal,
+        memberships: resolvedMemberships,
+      })
+      return
+    }
     const organizationId = headerValue(request.headers['x-tenant-id'])
     const workspaceId = headerValue(request.headers['x-workspace-id'])
     if (!organizationId || !workspaceId)
@@ -2604,6 +2661,186 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
     },
   )
+
+  function pushScope(request: {
+    headers: Record<string, string | string[] | undefined>
+  }) {
+    const workspace = workspaceScope(request.headers)
+    const context = authContexts.get(request as object)
+    if (!workspace || !context) return undefined
+    return {
+      tenantId: workspace.tenantId,
+      organizationId: workspace.tenantId,
+      workspaceId: workspace.workspaceId,
+      principalId: opaquePrincipalId(context.principal),
+    }
+  }
+
+  app.get('/v1/push-subscriptions', async (request, reply) => {
+    const scope = pushScope(request)
+    if (!scope || !options.pushRepository)
+      return reply.code(options.pushRepository ? 400 : 503).send({
+        code: options.pushRepository ? 'MISSING_SCOPE' : 'PUSH_UNAVAILABLE',
+        message: 'Push subscription service is unavailable',
+      })
+    await options.pushRepository.expire(now())
+    return pushSubscriptionListResponseSchema.parse({
+      subscriptions: await options.pushRepository.list(scope),
+    })
+  })
+
+  app.get<{ Params: { notificationId: string } }>(
+    '/v1/notifications/:notificationId',
+    async (request, reply) => {
+      if (!options.pushRepository)
+        return reply.code(503).send({
+          code: 'PUSH_UNAVAILABLE',
+          message: 'Push notification service is unavailable',
+        })
+      const context = authContexts.get(request)
+      if (!context)
+        return reply.code(401).send({
+          code: 'AUTH_REQUIRED',
+          message: 'Authentication is required',
+        })
+      const resolution = await options.pushRepository.resolveNotification(
+        opaquePrincipalId(context.principal),
+        request.params.notificationId,
+        now(),
+      )
+      if (!resolution)
+        return reply.code(404).send({
+          code: 'NOTIFICATION_NOT_FOUND',
+          message: 'Notification is unavailable',
+        })
+      const decision = authorize({
+        principal: context.principal,
+        action: 'notification.read',
+        memberships: context.memberships,
+        resource: {
+          organizationId: resolution.organizationId,
+          workspaceId: resolution.workspaceId,
+          sessionId: resolution.sessionId,
+          resourceType: 'notification',
+          resourceId: resolution.notificationId,
+        },
+      })
+      if (!decision.allow)
+        return reply
+          .code(403)
+          .send({ code: 'ACCESS_DENIED', message: 'Access is denied' })
+      return pushNotificationResolutionSchema.parse(resolution)
+    },
+  )
+
+  app.post('/v1/push-subscriptions', async (request, reply) => {
+    const scope = pushScope(request)
+    if (!scope || !options.pushRepository)
+      return reply.code(options.pushRepository ? 400 : 503).send({
+        code: options.pushRepository ? 'MISSING_SCOPE' : 'PUSH_UNAVAILABLE',
+        message: 'Push subscription service is unavailable',
+      })
+    const body = pushSubscriptionRequestSchema.safeParse(request.body)
+    if (!body.success)
+      return reply.code(400).send({
+        code: 'VALIDATION_ERROR',
+        message: 'Push subscription is invalid',
+      })
+    return pushSubscriptionSchema.parse(
+      await options.pushRepository.upsert(scope, body.data),
+    )
+  })
+
+  app.post<{ Params: { subscriptionId: string } }>(
+    '/v1/push-subscriptions/:subscriptionId/revoke',
+    async (request, reply) => {
+      const scope = pushScope(request)
+      if (!scope || !options.pushRepository)
+        return reply.code(options.pushRepository ? 400 : 503).send({
+          code: 'PUSH_UNAVAILABLE',
+          message: 'Push subscription service is unavailable',
+        })
+      const body = pushSubscriptionRevokeRequestSchema.safeParse(request.body)
+      if (!body.success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Expected version is required',
+        })
+      try {
+        return pushSubscriptionSchema.parse(
+          await options.pushRepository.revoke(
+            scope,
+            request.params.subscriptionId,
+            body.data.expectedVersion,
+          ),
+        )
+      } catch (error) {
+        const code =
+          error instanceof Error && 'code' in error
+            ? String(error.code)
+            : 'PUSH_REVOKE_FAILED'
+        return reply
+          .code(code.endsWith('NOT_FOUND') ? 404 : 409)
+          .send({ code, message: 'Push subscription could not be revoked' })
+      }
+    },
+  )
+
+  app.post<{ Params: { deviceId: string } }>(
+    '/v1/push-devices/:deviceId/revoke',
+    async (request, reply) => {
+      const scope = pushScope(request)
+      if (!scope || !options.pushRepository)
+        return reply.code(options.pushRepository ? 400 : 503).send({
+          code: 'PUSH_UNAVAILABLE',
+          message: 'Push subscription service is unavailable',
+        })
+      return {
+        revoked: await options.pushRepository.revokeDevice(
+          scope,
+          request.params.deviceId,
+        ),
+      }
+    },
+  )
+
+  const unsubscribePushApprovals = options.pushRepository
+    ? store.onApprovalChanged((approval) => {
+        const status =
+          approval.status === 'pending'
+            ? 'approval_required'
+            : 'approval_resolved'
+        void options
+          .pushRepository!.enqueue(
+            {
+              tenantId: approval.tenantId,
+              organizationId: approval.tenantId,
+              workspaceId: approval.workspaceId,
+            },
+            {
+              notificationId: `approval:${approval.approvalId}:${approval.version}`,
+              sessionId: approval.sessionId,
+              approvalId: approval.approvalId,
+              status,
+            },
+          )
+          .then(async () => {
+            if (options.pushProvider)
+              await options.pushRepository!.drain(options.pushProvider, now())
+          })
+          .catch((error: unknown) =>
+            app.log.error(
+              { err: error instanceof Error ? error.message : 'push failure' },
+              'push outbox delivery failed',
+            ),
+          )
+      })
+    : () => {}
+
+  app.addHook('onClose', async () => {
+    unsubscribePushApprovals()
+    await options.pushRepository?.close()
+  })
 
   app.get<{ Params: { approvalId: string } }>(
     '/v1/approvals/:approvalId',

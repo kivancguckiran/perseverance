@@ -46,7 +46,7 @@ import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { useOnlineStatus } from './pwa-runtime'
+import { PushNotificationControl, useOnlineStatus } from './pwa-runtime'
 import {
   offlineConversationKey,
   offlineHistoryKey,
@@ -1702,6 +1702,8 @@ function ApprovalCard({
   const networkContext = context.networkApprovalContext
   return (
     <aside
+      id={`approval-${approval.approvalId}`}
+      tabIndex={-1}
       className={`approval-card approval-${approval.status}`}
       aria-live="assertive"
     >
@@ -1725,6 +1727,40 @@ function ApprovalCard({
         </p>
       ) : null}
       {context.reason ? <p>{String(context.reason)}</p> : null}
+      <dl className="approval-safety-summary">
+        <div>
+          <dt>Risk</dt>
+          <dd>
+            {String(
+              context.risk ??
+                (networkContext
+                  ? 'Yüksek · ağ erişimi'
+                  : approval.kind === 'file_change'
+                    ? 'Orta · dosya yazma'
+                    : 'Komut çalıştırma'),
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Scope</dt>
+          <dd>
+            {String(
+              context.scope ??
+                context.grantRoot ??
+                context.cwd ??
+                'Yalnız bu istek',
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>Expiry</dt>
+          <dd>
+            {approval.expiresAt
+              ? new Date(approval.expiresAt).toLocaleString('tr-TR')
+              : 'Turn veya runtime değişimine kadar'}
+          </dd>
+        </div>
+      </dl>
       {commandActions.length ? (
         <div className="approval-context">
           <b>Command actions</b>
@@ -2189,6 +2225,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [approvalErrors, setApprovalErrors] = useState<Map<string, string>>(
     new Map(),
   )
+  const deepLinkedApprovalId = locationScope?.get('approval') ?? undefined
   const [readOnly, setReadOnly] = useState(false)
   const [masterExpanded, setMasterExpanded] = useState(true)
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
@@ -2470,6 +2507,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       socket?.close()
     }
   }, [session?.sessionId])
+
+  useEffect(() => {
+    if (!deepLinkedApprovalId || !session) return
+    const approval = approvals.get(deepLinkedApprovalId)
+    if (!approval) return
+    const element = document.getElementById(`approval-${deepLinkedApprovalId}`)
+    element?.scrollIntoView({ block: 'center' })
+    element?.focus({ preventScroll: true })
+  }, [approvals, deepLinkedApprovalId, session])
 
   async function decideApproval(
     approval: Approval,
@@ -3057,6 +3103,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             </label>
           ) : null}
         </div>
+        <PushNotificationControl
+          apiBaseUrl={apiBaseUrl}
+          headers={scopeHeaders}
+          namespace={cacheNamespace}
+          online={online && identity.isSuccess}
+        />
         <div className={`status-pill status-${meta.status}`}>
           <span className="status-dot" aria-hidden="true" />
           {!online

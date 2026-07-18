@@ -33,6 +33,7 @@ function serviceWorkerHarness(
   const listeners = new Map<string, (event: Record<string, unknown>) => void>()
   const put = vi.fn(async () => undefined)
   const skipWaiting = vi.fn()
+  const showNotification = vi.fn(async () => undefined)
   const cache = {
     addAll: vi.fn(async () => undefined),
     put,
@@ -51,6 +52,7 @@ function serviceWorkerHarness(
         listener: (event: Record<string, unknown>) => void,
       ) => listeners.set(type, listener),
       skipWaiting,
+      registration: { showNotification },
       clients: { claim: vi.fn(async () => undefined) },
     },
     caches,
@@ -63,7 +65,7 @@ function serviceWorkerHarness(
     Promise,
   }
   runInNewContext(serviceWorkerSource, context)
-  return { listeners, caches, cache, put, skipWaiting }
+  return { listeners, caches, cache, put, skipWaiting, showNotification }
 }
 
 describe('production PWA assets and cache boundary', () => {
@@ -101,8 +103,8 @@ describe('production PWA assets and cache boundary', () => {
   })
 
   it('uses one explicit version and waits for user-approved activation', async () => {
-    expect(serviceWorkerUrl).toContain('phase2-v2')
-    expect(serviceWorkerSource).toContain('phase2-v2')
+    expect(serviceWorkerUrl).toContain('wp23-v1')
+    expect(serviceWorkerSource).toContain('wp23-v1')
     const harness = serviceWorkerHarness()
     let installPromise: Promise<unknown> | undefined
     harness.listeners.get('install')?.({
@@ -116,6 +118,48 @@ describe('production PWA assets and cache boundary', () => {
     expect(harness.skipWaiting).not.toHaveBeenCalled()
     harness.listeners.get('message')?.({ data: { type: 'SKIP_WAITING' } })
     expect(harness.skipWaiting).toHaveBeenCalledOnce()
+  })
+
+  it('accepts only opaque content-free push payloads', async () => {
+    const harness = serviceWorkerHarness()
+    let pushPromise: Promise<unknown> | undefined
+    harness.listeners.get('push')?.({
+      data: {
+        json: () => ({
+          version: 1,
+          notificationId: 'not_opaque',
+          sessionId: 'ses_opaque',
+          approvalId: 'apr_opaque',
+          status: 'approval_required',
+        }),
+      },
+      waitUntil: (promise: Promise<unknown>) => {
+        pushPromise = promise
+      },
+    })
+    await pushPromise
+    expect(harness.showNotification).toHaveBeenCalledWith(
+      'Güvenli onay gerekiyor',
+      expect.objectContaining({
+        tag: 'pcw:not_opaque',
+        requireInteraction: true,
+      }),
+    )
+
+    harness.listeners.get('push')?.({
+      data: {
+        json: () => ({
+          version: 1,
+          notificationId: 'not_leaky',
+          sessionId: 'ses_leaky',
+          approvalId: null,
+          status: 'turn_completed',
+          command: 'secret command',
+        }),
+      },
+      waitUntil: vi.fn(),
+    })
+    expect(harness.showNotification).toHaveBeenCalledTimes(1)
   })
 
   it('does not pre-cache HTML or private install responses', async () => {

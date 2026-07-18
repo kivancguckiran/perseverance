@@ -21,6 +21,7 @@ export const METRIC_DEFINITIONS = {
         'sessions',
         'turns',
         'approvals',
+        'notifications',
         'audit',
         'artifacts',
         'git',
@@ -42,6 +43,7 @@ export const METRIC_DEFINITIONS = {
         'sessions',
         'turns',
         'approvals',
+        'notifications',
         'audit',
         'artifacts',
         'git',
@@ -125,6 +127,7 @@ export const METRIC_DEFINITIONS = {
         'provider',
         'support',
         'break_glass',
+        'notification',
       ],
       outcome: ['allow', 'deny'],
       reason: [
@@ -224,6 +227,7 @@ export function metricRoute(url: string): string {
   if (url === '/metrics') return 'metrics'
   if (url.includes('/audit')) return 'audit'
   if (url.includes('/approvals')) return 'approvals'
+  if (url.includes('/push-')) return 'notifications'
   if (url.includes('/turns')) return 'turns'
   if (url.includes('/artifacts')) return 'artifacts'
   if (url.includes('/git-snapshots')) return 'git'
