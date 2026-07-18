@@ -98,6 +98,7 @@ import {
   InMemorySharedFolderRepository,
   SharedFolderError,
   type FolderIdentity,
+  type SharedFolderRepository,
 } from '@persistent-codex/shared-folders'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import {
@@ -352,7 +353,8 @@ export interface ControlPlaneOptions {
   }) => Promise<string> | string
   pushRepository?: PushRepository
   pushProvider?: PushProvider
-  sharedFolderRepository?: InMemorySharedFolderRepository
+  sharedFolderRepository?: SharedFolderRepository
+  allowInMemorySharedFolders?: boolean
 }
 
 export interface PublicRouteAuthorizationEntry {
@@ -1210,8 +1212,6 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const supportAccess =
     options.supportAccessRepository ??
     new InMemorySupportAccessRepository({ explicitUsage: 'test', now })
-  const sharedFolders =
-    options.sharedFolderRepository ?? new InMemorySharedFolderRepository()
   const ownsStore = options.eventStore === undefined
   const artifacts = new LocalArtifactStorage(
     options.artifactRoot ?? '.runtime/artifacts',
@@ -1241,6 +1241,13 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       'PRODUCTION_CORPUS_KMS_REQUIRED',
       'Production requires corpus snapshot storage backed by a production-capable KMS',
     )
+  const allowInMemorySharedFolders =
+    options.allowInMemorySharedFolders === true ||
+    process.env.NODE_ENV === 'test'
+  if (!options.sharedFolderRepository && !allowInMemorySharedFolders)
+    throw new SharedFolderError('SHARED_FOLDER_REPOSITORY_REQUIRED')
+  const sharedFolders =
+    options.sharedFolderRepository ?? new InMemorySharedFolderRepository()
   const corpus = options.corpusRepository
     ? new CorpusIngestionService({
         repository: options.corpusRepository,
@@ -1966,6 +1973,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   app.addHook('onClose', async () => {
     await orchestrator.close()
     await supportAccess.close()
+    await sharedFolders.close()
     if ('close' in corpus && typeof corpus.close === 'function')
       await corpus.close()
     await options.commercialPolicy?.close?.()
@@ -2379,8 +2387,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         const folderId = headerValue(request.headers['x-folder-id'])
         if (folderId) {
           if (!identity) throw new SharedFolderError('FOLDER_ACCESS_DENIED')
-          sharedFolders.getFolder(identity, folderId, 'mutate')
-        } else if (identity && sharedFolders.listFolders(identity).length > 0) {
+          await sharedFolders.getFolder(identity, folderId, 'mutate')
+        } else if (
+          identity &&
+          (await sharedFolders.listFolders(identity)).length > 0
+        ) {
           throw new SharedFolderError('FOLDER_SCOPE_REQUIRED')
         }
         admission = await admitCommercialOperation({
@@ -2416,7 +2427,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           chunks: singleChunk(request.body),
         })
         if (folderId)
-          sharedFolders.bindResource({
+          await sharedFolders.bindResource({
             ...identity!,
             folderId,
             resourceType: 'source',
@@ -2483,12 +2494,13 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           code: 'MISSING_SCOPE',
           message: 'Workspace scope is required',
         })
-      return sourceListResponseSchema.parse({
-        sources: (await corpus.listSources(scope)).filter((source) => {
+      const sources = await corpus.listSources(scope)
+      const visible = await Promise.all(
+        sources.map(async (source) => {
           const identity = sharedFolderIdentity(request)
           if (!identity) return false
           try {
-            sharedFolders.authorizeResource(
+            await sharedFolders.authorizeResource(
               identity,
               'source',
               source.sourceId,
@@ -2499,10 +2511,13 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             return (
               error instanceof SharedFolderError &&
               error.code === 'RESOURCE_NOT_FOUND' &&
-              sharedFolders.listFolders(identity).length === 0
+              (await sharedFolders.listFolders(identity)).length === 0
             )
           }
         }),
+      )
+      return sourceListResponseSchema.parse({
+        sources: sources.filter((_, index) => visible[index]),
       })
     },
   )
@@ -2517,7 +2532,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Workspace scope is required',
         })
       try {
-        enforceFolderResource(
+        await enforceFolderResource(
           request,
           'source',
           request.params.sourceId,
@@ -2546,7 +2561,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Workspace scope is required',
         })
       try {
-        enforceFolderResource(
+        await enforceFolderResource(
           request,
           'source',
           request.params.sourceId,
@@ -2575,7 +2590,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       let admission: AdmissionDecision | null = null
       try {
-        enforceFolderResource(
+        await enforceFolderResource(
           request,
           'source',
           request.params.sourceId,
@@ -2686,11 +2701,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             request.id,
           )
         }
-        return corpusSearchResponseSchema.parse({
-          ...result,
-          results: result.results.filter((candidate) => {
+        const visibility = await Promise.all(
+          result.results.map(async (candidate) => {
             try {
-              enforceFolderResource(
+              await enforceFolderResource(
                 request,
                 'source',
                 candidate.sourceId,
@@ -2701,6 +2715,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
               return false
             }
           }),
+        )
+        return corpusSearchResponseSchema.parse({
+          ...result,
+          results: result.results.filter((_, index) => visibility[index]),
         })
       } catch (error) {
         if (admission)
@@ -2733,7 +2751,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       try {
         const body = corpusCitationLookupRequestSchema.parse(request.body)
         const context = authContexts.get(request)!
-        enforceFolderResource(request, 'source', body.sourceId, 'read')
+        await enforceFolderResource(request, 'source', body.sourceId, 'read')
         return corpusCitationLookupResponseSchema.parse(
           await corpusRetrieval.getCitation(
             { ...scope, principalId: opaquePrincipalId(context.principal) },
@@ -3245,7 +3263,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
     try {
       const metadata = store.getArtifact(scope, request.params.artifactId)
-      enforceSessionFolder(
+      await enforceSessionFolder(
         request,
         { ...scope, sessionId: metadata.sessionId },
         'read',
@@ -3346,14 +3364,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       try {
         const metadata = store.getArtifact(scope, request.params.artifactId)
-        const session = enforceSessionFolder(
+        const session = await enforceSessionFolder(
           request,
           { ...scope, sessionId: metadata.sessionId },
           'read',
         )
         const identity = sharedFolderIdentity(request)!
         const sharedFolder = session.folderId?.startsWith('fld_')
-          ? sharedFolders.getFolder(identity, session.folderId, 'read')
+          ? await sharedFolders.getFolder(identity, session.folderId, 'read')
           : null
         const token = randomBytes(32).toString('base64url')
         const expiresAt = now().getTime() + 60_000
@@ -3391,7 +3409,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .send({ code: 'RANGE_NOT_GRANTED', message: 'Range was not granted' })
       try {
         if (grant.folderId) {
-          const current = sharedFolders.getFolder(
+          const current = await sharedFolders.getFolder(
             {
               tenantId: grant.tenantId,
               organizationId: grant.tenantId,
@@ -3458,21 +3476,23 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           code: 'VALIDATION_ERROR',
           message: 'Invalid approval status',
         })
+      const approvals = store.listApprovals(scope, status as never)
+      const visibility = await Promise.all(
+        approvals.map(async (approval) => {
+          try {
+            await enforceSessionFolder(
+              request,
+              { ...scope, sessionId: approval.sessionId },
+              'read',
+            )
+            return true
+          } catch {
+            return false
+          }
+        }),
+      )
       return approvalListResponseSchema.parse({
-        approvals: store
-          .listApprovals(scope, status as never)
-          .filter((approval) => {
-            try {
-              enforceSessionFolder(
-                request,
-                { ...scope, sessionId: approval.sessionId },
-                'read',
-              )
-              return true
-            } catch {
-              return false
-            }
-          }),
+        approvals: approvals.filter((_, index) => visibility[index]),
       })
     },
   )
@@ -3668,7 +3688,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       try {
         const approval = store.getApproval(scope, request.params.approvalId)
-        enforceSessionFolder(
+        await enforceSessionFolder(
           request,
           { ...scope, sessionId: approval.sessionId },
           'read',
@@ -3714,11 +3734,20 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           scope,
           request.params.approvalId,
         )
-        enforceSessionFolder(
+        const approvalSession = await enforceSessionFolder(
           request,
           { ...scope, sessionId: pendingApproval.sessionId },
           'approval',
         )
+        if (approvalSession.folderId?.startsWith('fld_'))
+          await sharedFolders.reserveApprovalResolution({
+            ...sharedFolderIdentity(request)!,
+            folderId: approvalSession.folderId,
+            approvalId: request.params.approvalId,
+            expectedVersion: body.data.expectedVersion,
+            resolutionKey: key,
+            decision: body.data.decision,
+          })
         const reservation = store.reserveIdempotencyKey({
           ...scope,
           scope: `approval:${request.params.approvalId}`,
@@ -3793,7 +3822,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         let shared = false
         if (identity) {
           try {
-            sharedFolders.getFolder(identity, body.data.folderId, 'mutate')
+            await sharedFolders.getFolder(
+              identity,
+              body.data.folderId,
+              'mutate',
+            )
             shared = true
           } catch (error) {
             if (
@@ -3828,7 +3861,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
       if (created.folderId?.startsWith('fld_')) {
         const identity = sharedFolderIdentity(request)!
-        sharedFolders.bindResource({
+        await sharedFolders.bindResource({
           ...identity,
           folderId: created.folderId,
           resourceType: 'conversation',
@@ -3896,7 +3929,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     }
   }
 
-  function enforceSessionFolder(
+  async function enforceSessionFolder(
     request: { headers: Record<string, string | string[] | undefined> },
     scope: StoreScope,
     capability: 'read' | 'mutate' | 'turn' | 'approval',
@@ -3906,7 +3939,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     const identity = sharedFolderIdentity(request)
     if (!identity) throw new SharedFolderError('FOLDER_ACCESS_DENIED')
     try {
-      sharedFolders.getFolder(identity, session.folderId, capability)
+      await sharedFolders.getFolder(identity, session.folderId, capability)
     } catch (error) {
       // Legacy conversation folders remain available until their data migration;
       // every WP25 shared-folder id is authoritative and never falls through.
@@ -3921,17 +3954,45 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     return session
   }
 
-  function enforceFolderResource(
+  async function enforceFolderResource(
     request: { headers: Record<string, string | string[] | undefined> },
     resourceType:
       'conversation' | 'source' | 'attachment' | 'artifact' | 'agent_task',
     resourceId: string,
     capability: 'read' | 'mutate' | 'turn' | 'approval',
   ) {
+    const context = authContexts.get(request as object)
+    const scope = workspaceScope(request.headers)
+    if (
+      context?.principal.kind === 'internal_service' &&
+      context.principal.subject.startsWith('workspace-corpus:')
+    ) {
+      if (!scope || capability !== 'read')
+        throw new SharedFolderError('FOLDER_ACCESS_DENIED')
+      const folderScope = {
+        tenantId: scope.tenantId,
+        organizationId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+      }
+      try {
+        return await sharedFolders.authorizeWorkloadResource(
+          folderScope,
+          resourceType,
+          resourceId,
+        )
+      } catch (error) {
+        if (
+          error instanceof SharedFolderError &&
+          !(await sharedFolders.hasSharedFolders(folderScope))
+        )
+          return null
+        throw error
+      }
+    }
     const identity = sharedFolderIdentity(request)
     if (!identity) throw new SharedFolderError('FOLDER_ACCESS_DENIED')
     try {
-      return sharedFolders.authorizeResource(
+      return await sharedFolders.authorizeResource(
         identity,
         resourceType,
         resourceId,
@@ -3941,7 +4002,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       if (
         error instanceof SharedFolderError &&
         error.code === 'RESOURCE_NOT_FOUND' &&
-        sharedFolders.listFolders(identity).length === 0
+        (await sharedFolders.listFolders(identity)).length === 0
       )
         return null
       throw error
@@ -3955,7 +4016,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         .code(400)
         .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
     return folderListResponseSchema.parse({
-      folders: sharedFolders.listFolders(identity),
+      folders: await sharedFolders.listFolders(identity),
     })
   })
 
@@ -3967,10 +4028,16 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         code: 'VALIDATION_ERROR',
         message: 'Folder request is invalid',
       })
-    const created = sharedFolders.createFolder({
+    const created = await sharedFolders.createFolder({
       ...identity,
       name: body.data.name,
       now: now(),
+    })
+    store.createConversationFolder({
+      tenantId: identity.tenantId,
+      workspaceId: identity.workspaceId,
+      folderId: created.folder.folderId,
+      name: created.folder.name,
     })
     return reply.code(201).send({
       folder: sharedFolderSchema.parse(created.folder),
@@ -3987,7 +4054,10 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .code(400)
           .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
       return folderMemberListResponseSchema.parse({
-        members: sharedFolders.listMembers(identity, request.params.folderId),
+        members: await sharedFolders.listMembers(
+          identity,
+          request.params.folderId,
+        ),
       })
     },
   )
@@ -4001,7 +4071,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .code(400)
           .send({ code: 'MISSING_SCOPE', message: 'Scope is required' })
       return folderInvitationListResponseSchema.parse({
-        invitations: sharedFolders.listInvitations(
+        invitations: await sharedFolders.listInvitations(
           identity,
           request.params.folderId,
           now(),
@@ -4022,7 +4092,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         })
       return reply.code(201).send(
         createFolderInvitationResponseSchema.parse(
-          sharedFolders.createInvitation({
+          await sharedFolders.createInvitation({
             ...identity,
             folderId: request.params.folderId,
             role: body.data.role,
@@ -4043,7 +4113,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         message: 'Invitation acceptance is invalid',
       })
     return acceptFolderInvitationResponseSchema.parse(
-      sharedFolders.acceptInvitation({
+      await sharedFolders.acceptInvitation({
         ...identity,
         token: body.data.token,
         now: now(),
@@ -4062,7 +4132,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Invitation revoke is invalid',
         })
       return folderInvitationSchema.parse(
-        sharedFolders.revokeInvitation({
+        await sharedFolders.revokeInvitation({
           ...identity,
           folderId: request.params.folderId,
           invitationId: request.params.invitationId,
@@ -4083,7 +4153,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .code(400)
           .send({ code: 'VALIDATION_ERROR', message: 'Role change is invalid' })
       return folderMembershipSchema.parse(
-        sharedFolders.changeRole({
+        await sharedFolders.changeRole({
           ...identity,
           folderId: request.params.folderId,
           targetPrincipalId: request.params.principalId,
@@ -4106,7 +4176,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Membership revoke is invalid',
         })
       return folderMembershipSchema.parse(
-        sharedFolders.revokeMembership({
+        await sharedFolders.revokeMembership({
           ...identity,
           folderId: request.params.folderId,
           targetPrincipalId: request.params.principalId,
@@ -4127,7 +4197,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           code: 'VALIDATION_ERROR',
           message: 'Ownership transfer is invalid',
         })
-      const result = sharedFolders.transferOwnership({
+      const result = await sharedFolders.transferOwnership({
         ...identity,
         folderId: request.params.folderId,
         ...body.data,
@@ -4148,7 +4218,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       return reply
         .code(400)
         .send({ code: 'VALIDATION_ERROR', message: 'Resource move is invalid' })
-    return sharedFolders.moveResource({ ...identity, ...body.data, now: now() })
+    return await sharedFolders.moveResource({
+      ...identity,
+      ...body.data,
+      now: now(),
+    })
   })
 
   app.get('/v1/conversation-folders', async (request, reply) => {
@@ -4159,7 +4233,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         message: 'x-tenant-id and x-workspace-id headers are required',
       })
     return conversationFolderListResponseSchema.parse({
-      folders: store.listConversationFolders(scope),
+      folders: store
+        .listConversationFolders(scope)
+        .filter((folder) => !folder.folderId.startsWith('fld_')),
     })
   })
 
@@ -4266,11 +4342,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Conversation update is invalid',
         })
       try {
-        const current = enforceSessionFolder(request, scope, 'mutate')
+        const current = await enforceSessionFolder(request, scope, 'mutate')
         const identity = sharedFolderIdentity(request)
         if (body.data.folderId?.startsWith('fld_')) {
           if (!identity) throw new SharedFolderError('FOLDER_ACCESS_DENIED')
-          sharedFolders.getFolder(identity, body.data.folderId, 'mutate')
+          await sharedFolders.getFolder(identity, body.data.folderId, 'mutate')
         } else if (
           body.data.folderId &&
           !store
@@ -4300,13 +4376,13 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           body.data.folderId !== current.folderId
         ) {
           if (current.folderId?.startsWith('fld_')) {
-            const binding = sharedFolders.authorizeResource(
+            const binding = await sharedFolders.authorizeResource(
               identity,
               'conversation',
               scope.sessionId,
               'mutate',
             )
-            sharedFolders.moveResource({
+            await sharedFolders.moveResource({
               ...identity,
               sourceFolderId: current.folderId,
               targetFolderId: body.data.folderId,
@@ -4316,7 +4392,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
               now: now(),
             })
           } else {
-            sharedFolders.bindResource({
+            await sharedFolders.bindResource({
               ...identity,
               folderId: body.data.folderId,
               resourceType: 'conversation',
@@ -4360,18 +4436,23 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .send({ code: 'INVALID_CURSOR', message: 'cursor is invalid' })
       const page = store.listRecentSessions(scope, limit, cursor)
       const identity = sharedFolderIdentity(request)
-      const visible = page.sessions.filter((session) => {
-        if (!session.folderId)
-          return sharedFolders.listFolders(identity!).length === 0
-        if (!session.folderId.startsWith('fld_')) return true
-        if (!identity) return false
-        try {
-          sharedFolders.getFolder(identity, session.folderId, 'read')
-          return true
-        } catch {
-          return false
-        }
-      })
+      const visibility = await Promise.all(
+        page.sessions.map(async (session) => {
+          if (!session.folderId)
+            return identity
+              ? (await sharedFolders.listFolders(identity)).length === 0
+              : false
+          if (!session.folderId.startsWith('fld_')) return true
+          if (!identity) return false
+          try {
+            await sharedFolders.getFolder(identity, session.folderId, 'read')
+            return true
+          } catch {
+            return false
+          }
+        }),
+      )
+      const visible = page.sessions.filter((_, index) => visibility[index])
       const last = visible.at(-1)
       return sessionListResponseSchema.parse({
         sessions: visible,
@@ -4396,7 +4477,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'x-tenant-id and x-workspace-id headers are required',
         })
       try {
-        enforceSessionFolder(request, scope, 'read')
+        await enforceSessionFolder(request, scope, 'read')
         return sessionResponseSchema.parse(orchestrator.getSession(scope))
       } catch (error) {
         if (error instanceof StoreNotFoundError)
@@ -4805,13 +4886,13 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'Attachment name, media type, and binary body are required',
         })
       try {
-        const session = enforceSessionFolder(request, scope, 'mutate')
+        const session = await enforceSessionFolder(request, scope, 'mutate')
         const name = decodeURIComponent(encodedName)
         const attachment = conversationAttachmentSchema.parse(
           attachments.store({ scope, name, mediaType, data: request.body }),
         )
         if (session.folderId?.startsWith('fld_'))
-          sharedFolders.bindResource({
+          await sharedFolders.bindResource({
             ...sharedFolderIdentity(request)!,
             folderId: session.folderId,
             resourceType: 'attachment',
@@ -4850,7 +4931,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           message: 'x-tenant-id and x-workspace-id headers are required',
         })
       try {
-        enforceSessionFolder(request, scope, 'mutate')
+        await enforceSessionFolder(request, scope, 'mutate')
         attachments.remove(scope, request.params.attachmentId)
         return reply.code(204).send()
       } catch (error) {
@@ -4894,9 +4975,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       }
       let admission: AdmissionDecision | null = null
       try {
-        const session = enforceSessionFolder(request, scope, 'turn')
+        const session = await enforceSessionFolder(request, scope, 'turn')
         if (session.folderId?.startsWith('fld_'))
-          sharedFolders.reserveTask({
+          await sharedFolders.reserveTask({
             ...sharedFolderIdentity(request)!,
             folderId: session.folderId,
             idempotencyKey,
@@ -5013,7 +5094,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     }
 
     try {
-      enforceSessionFolder(request, scope, 'read')
+      await enforceSessionFolder(request, scope, 'read')
       return replayResponseSchema.parse(
         store.replaySessionEvents(scope, after, limit),
       )
@@ -5032,7 +5113,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     }
   })
 
-  app.get('/v1/realtime', { websocket: true }, (socket, request) => {
+  app.get('/v1/realtime', { websocket: true }, async (socket, request) => {
     metrics.record('realtime_reconnects_total', 1, { reason: 'client' })
     let subscription: SubscriptionState | undefined
     let connectionAuth:
@@ -5045,14 +5126,14 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     let expiryTimer: ReturnType<typeof setTimeout> | undefined
     const outbound = senderFor(socket)
 
-    const realtimeFolderAllowed = () => {
+    const realtimeFolderAllowed = async () => {
       const current = subscription
       const authenticated = connectionAuth
       if (!current || !authenticated) return false
       const session = store.getSession(current)
       if (!session.folderId?.startsWith('fld_')) return true
       try {
-        sharedFolders.getFolder(
+        await sharedFolders.getFolder(
           {
             tenantId: current.tenantId,
             organizationId: current.tenantId,
@@ -5071,55 +5152,65 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     const unsubscribe = store.onCommitted((event) => {
       const current = subscription
       if (!current || !sameScope(current, event)) return
-      if (!realtimeFolderAllowed()) {
-        sendError(socket, 'ACCESS_REVOKED', 'Folder access was revoked')
-        socket.close?.(4403, 'access revoked')
-        return
-      }
-      if (event.sequence <= current.highWaterSequence) return
-      if (current.replaying) {
-        const bytes = Buffer.byteLength(JSON.stringify(event))
-        if (
-          current.buffer.length >= REALTIME_MAX_QUEUE_EVENTS ||
-          current.bufferBytes + bytes > REALTIME_MAX_QUEUE_BYTES
-        ) {
-          const disposable = current.buffer.findIndex(
-            (candidate) => candidate.type === 'command.output.delta',
-          )
-          if (disposable >= 0) {
-            const [removed] = current.buffer.splice(disposable, 1)
-            current.bufferBytes -= Buffer.byteLength(JSON.stringify(removed))
-            current.droppedEventCount++
-          } else if (!isAuthoritative(event)) {
-            current.droppedEventCount++
-            return
-          } else {
-            send(socket, {
-              type: 'resync',
-              ...current,
-              reason: 'queue_overflow',
-              afterSequence: current.ackSequence,
-              highWaterSequence: store.getHighWaterSequence(current),
-              droppedEventCount: current.droppedEventCount,
-            })
-            current.buffer = []
-            current.bufferBytes = 0
-            return
+      const deliver = () => {
+        if (event.sequence <= current.highWaterSequence) return
+        if (current.replaying) {
+          const bytes = Buffer.byteLength(JSON.stringify(event))
+          if (
+            current.buffer.length >= REALTIME_MAX_QUEUE_EVENTS ||
+            current.bufferBytes + bytes > REALTIME_MAX_QUEUE_BYTES
+          ) {
+            const disposable = current.buffer.findIndex(
+              (candidate) => candidate.type === 'command.output.delta',
+            )
+            if (disposable >= 0) {
+              const [removed] = current.buffer.splice(disposable, 1)
+              current.bufferBytes -= Buffer.byteLength(JSON.stringify(removed))
+              current.droppedEventCount++
+            } else if (!isAuthoritative(event)) {
+              current.droppedEventCount++
+              return
+            } else {
+              send(socket, {
+                type: 'resync',
+                ...current,
+                reason: 'queue_overflow',
+                afterSequence: current.ackSequence,
+                highWaterSequence: store.getHighWaterSequence(current),
+                droppedEventCount: current.droppedEventCount,
+              })
+              current.buffer = []
+              current.bufferBytes = 0
+              return
+            }
           }
+          current.buffer.push(event)
+          current.bufferBytes += bytes
+          return
         }
-        current.buffer.push(event)
-        current.bufferBytes += bytes
+        if (event.sequence <= current.lastSentSequence) return
+        send(socket, {
+          type: 'event',
+          tenantId: current.tenantId,
+          workspaceId: current.workspaceId,
+          sessionId: current.sessionId,
+          event,
+        })
+        current.lastSentSequence = event.sequence
+      }
+      const session = store.getSession(current)
+      if (!session.folderId?.startsWith('fld_')) {
+        deliver()
         return
       }
-      if (event.sequence <= current.lastSentSequence) return
-      send(socket, {
-        type: 'event',
-        tenantId: current.tenantId,
-        workspaceId: current.workspaceId,
-        sessionId: current.sessionId,
-        event,
+      void realtimeFolderAllowed().then((allowed) => {
+        if (!allowed) {
+          sendError(socket, 'ACCESS_REVOKED', 'Folder access was revoked')
+          socket.close?.(4403, 'access revoked')
+        } else {
+          deliver()
+        }
       })
-      current.lastSentSequence = event.sequence
     })
     const unsubscribeApprovals = store.onApprovalChanged((approval) => {
       const current = subscription
@@ -5254,7 +5345,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       }
       if (subscribedSession.folderId?.startsWith('fld_')) {
         try {
-          sharedFolders.getFolder(
+          await sharedFolders.getFolder(
             {
               tenantId: scope.tenantId,
               organizationId: scope.tenantId,
@@ -5358,7 +5449,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       }
     }
 
-    socket.on('message', (buffer: { toString(): string }) => {
+    socket.on('message', async (buffer: { toString(): string }) => {
       let value: unknown
       try {
         value = JSON.parse(buffer.toString())
@@ -5460,8 +5551,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
       send(socket, ack)
     })
-    const unsubscribeAccess = sharedFolders.onAccessChanged(() => {
-      if (subscription && !realtimeFolderAllowed()) {
+    const unsubscribeAccess = await sharedFolders.onAccessChanged(async () => {
+      if (subscription && !(await realtimeFolderAllowed())) {
         sendError(socket, 'ACCESS_REVOKED', 'Folder access was revoked')
         socket.close?.(4403, 'access revoked')
       }

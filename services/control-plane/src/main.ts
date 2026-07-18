@@ -42,6 +42,8 @@ import {
   type DevelopmentCommercialSeed,
 } from '@persistent-codex/billing-platform'
 import { resolveBillingBootstrap } from './billing-composition'
+import { InMemorySharedFolderRepository } from '@persistent-codex/shared-folders'
+import { createPostgresSharedFolderRepository } from '@persistent-codex/shared-folders/postgres'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -187,6 +189,14 @@ const supportAccessRepository = supportDatabaseUrl
       connectionString: supportDatabaseUrl,
     })
   : new InMemorySupportAccessRepository({ explicitUsage: 'development' })
+const sharedFolderDatabaseUrl = process.env.SHARED_FOLDER_DATABASE_URL
+if (!localAlpha && !sharedFolderDatabaseUrl)
+  throw new Error(
+    'Production requires SHARED_FOLDER_DATABASE_URL for durable shared-folder collaboration',
+  )
+const sharedFolderRepository = sharedFolderDatabaseUrl
+  ? createPostgresSharedFolderRepository(sharedFolderDatabaseUrl)
+  : new InMemorySharedFolderRepository()
 const legacyCorpusEncryptionKey = process.env.CORPUS_SNAPSHOT_KEY_BASE64
 const localCorpusEncryptionKey =
   process.env.CORPUS_SNAPSHOT_LOCAL_KEY_BASE64 ??
@@ -347,6 +357,7 @@ const app = await buildControlPlane({
   logger: true,
   authenticationAdapter,
   supportAccessRepository,
+  sharedFolderRepository,
   pushRepository,
   pushProvider,
   commercialPolicy: billingRepository,
@@ -386,6 +397,7 @@ const app = await buildControlPlane({
     ? {
         allowExplicitDevAuthentication: true,
         allowInMemorySupportAccess: true,
+        allowInMemorySharedFolders: true,
       }
     : {}),
   ...(approvalPolicy
@@ -396,3 +408,12 @@ const app = await buildControlPlane({
 })
 
 await app.listen({ host: '127.0.0.1', port })
+
+let closing = false
+const close = async () => {
+  if (closing) return
+  closing = true
+  await app.close()
+}
+process.once('SIGTERM', () => void close())
+process.once('SIGINT', () => void close())
