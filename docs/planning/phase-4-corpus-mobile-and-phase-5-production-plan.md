@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP24
+- Aktif iş paketi: WP25
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -21,18 +21,18 @@ lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine 
 
 ## 2. İş paketi özeti
 
-| Paket | Faz | Durum                      | Hedef                                                                    |
-| ----- | --- | -------------------------- | ------------------------------------------------------------------------ |
-| WP21  | 4   | Tamamlandı                 | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
-| WP22  | 4   | Tamamlandı                 | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
-| WP23  | 4   | Tamamlandı                 | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Uygulandı / kabul bekliyor | Billing, prepaid kredi ve gelir/COGS/marj kabulü                         |
-| WP25  | 4   | Planlandı                  | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
-| WP26  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP27  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP28  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP29  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP30  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| Paket | Faz | Durum      | Hedef                                                                    |
+| ----- | --- | ---------- | ------------------------------------------------------------------------ |
+| WP21  | 4   | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
+| WP22  | 4   | Tamamlandı | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
+| WP23  | 4   | Tamamlandı | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
+| WP24  | 4   | Tamamlandı | Billing, prepaid kredi ve gelir/COGS/marj kabulü                         |
+| WP25  | 4   | Aktif      | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
+| WP26  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP27  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP28  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP29  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP30  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; WP24 kabul
 edilmeden WP25; Faz 4 tamamlanmadan WP26; WP29 tamamlanmadan nihai WP30 aktive edilmez.
@@ -508,13 +508,31 @@ terminal answer ve usage dedupe başına bir billing settlement assertion ile
 doğrulandı. Deterministic billing ve Web Push emulator sonuçları production
 tahsilat/delivery kanıtı değildir.
 
-Bu uygulama kaydı WP24'ü `Tamamlandı` yapmaz; bağımsız kabul olmadan Faz 4 kapatılamaz
-ve WP25 aktive edilemez.
+#### Bağımsız kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `133d547`, `be0c74f`, `dac703c` ve browser yarışını
+  deterministik yapan `3dff308` birlikte kabul edildi.
+- Pinli Codex `0.144.2` ile üç bağımsız ardışık `wp24:browser` koşusu geçti. Her
+  koşuda iki browser context'i kontrollü barrier'a ulaştı; CAS sonucu tam bir `200`
+  ve bir `409`, durable timeline'da tek resolution/upstream completion ve usage
+  dedupe başına tek billing settlement oldu.
+- `WP24_CODEX_BIN=<codex-cli-0.144.2> pnpm phase4:accept`; 164 hedefli WP24 testi,
+  10 prepaid testi, gerçek PostgreSQL/forced-RLS smoke'u, birleşik runtime/browser
+  E2E, WP22/WP23 regresyonları ve repo-wide verify ile geçti.
+- Repo-wide doğrulamada 32 test dosyasında 319 test, typecheck, production build ve
+  SSR HTTP smoke geçti. PostgreSQL container/volume, browser context, managed Codex
+  config, service worker ve geçici dosya cleanup'ı doğrulandı.
+- Billing ve Web Push emulator sonuçları production tahsilat veya delivery kanıtı
+  sayılmadı; gerçek credential gerektiren kanıtlar açıkça `not-run` kaldı.
+
+WP24 tamamlandı. WP25 tek aktif iş paketidir; Faz 4, WP25 bağımsız kabul edilmeden
+kapatılamaz.
 
 ### WP25 — Paylaşımlı klasör, güvenli ortak çalışma ve Faz 4 kabulü
 
-Durum: **Planlandı**. WP24 tek aktif iş paketidir; WP24 bağımsız kabul edilmeden WP25
-başlatılamaz.
+Durum: **Aktif**. WP24 bağımsız kabul edildi; WP25 Faz 4'ün tek aktif iş paketidir.
 
 #### Hedef
 
