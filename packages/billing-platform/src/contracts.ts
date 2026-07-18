@@ -120,6 +120,58 @@ export const billingWebhookEventSchema = billingScopeSchema.extend({
   attempt: z.number().int().nonnegative(),
   lastErrorCode: id.nullable(),
 })
+export const billingWebhookPayloadSchema = billingScopeSchema
+  .extend({
+    schemaVersion: z.literal(1),
+    eventId: id,
+    eventType: id,
+    providerSequence: z.number().int().nonnegative(),
+    effectiveAt: z.iso.datetime(),
+    data: z.unknown().optional(),
+  })
+  .strict()
+export const billingWebhookSubscriptionDataSchema = z
+  .object({
+    subscriptionId: id,
+    billingCustomerId: id,
+    providerCustomerReference: id,
+    plan: commercialPlanSchema.omit({
+      tenantId: true,
+      organizationId: true,
+      workspaceId: true,
+    }),
+    state: subscriptionStateSchema.shape.state,
+    entitlements: z.array(
+      entitlementSchema.omit({
+        tenantId: true,
+        organizationId: true,
+        workspaceId: true,
+        sourceWebhookEventId: true,
+      }),
+    ),
+    budgets: z.array(
+      budgetSchema.omit({
+        tenantId: true,
+        organizationId: true,
+        workspaceId: true,
+      }),
+    ),
+    quotas: z.array(
+      quotaPolicySchema.omit({
+        tenantId: true,
+        organizationId: true,
+        workspaceId: true,
+      }),
+    ),
+  })
+  .strict()
+export const billingWebhookResponseSchema = z.object({
+  schemaVersion: z.literal(1),
+  eventId: id,
+  state: webhookProcessingStateSchema,
+  duplicate: z.boolean(),
+  productionEvidence: z.boolean(),
+})
 export const invoiceReconciliationSchema = billingScopeSchema.extend({
   schemaVersion: z.literal(1),
   reconciliationId: id,
@@ -192,12 +244,20 @@ export const admissionDecisionSchema = billingScopeSchema.extend({
   inFlightPolicy: z.enum(['continue', 'interrupt']),
 })
 export type CommercialPlan = z.infer<typeof commercialPlanSchema>
+export type BillingScope = z.infer<typeof billingScopeSchema>
 export type Entitlement = z.infer<typeof entitlementSchema>
 export type SubscriptionState = z.infer<typeof subscriptionStateSchema>
 export type Budget = z.infer<typeof budgetSchema>
 export type QuotaPolicy = z.infer<typeof quotaPolicySchema>
 export type BillingCustomer = z.infer<typeof billingCustomerSchema>
 export type BillingWebhookEvent = z.infer<typeof billingWebhookEventSchema>
+export type BillingWebhookPayload = z.infer<typeof billingWebhookPayloadSchema>
+export type BillingWebhookSubscriptionData = z.infer<
+  typeof billingWebhookSubscriptionDataSchema
+>
+export type BillingWebhookResponse = z.infer<
+  typeof billingWebhookResponseSchema
+>
 export type InvoiceReconciliation = z.infer<typeof invoiceReconciliationSchema>
 export type CommercialUsageEntry = z.infer<typeof commercialUsageEntrySchema>
 export type AdmissionRequest = z.infer<typeof admissionRequestSchema>

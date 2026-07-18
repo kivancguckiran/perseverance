@@ -18,9 +18,10 @@ const run = (script: string, env: NodeJS.ProcessEnv = process.env) => {
 
 run('wp24:test')
 run('wp24:postgres')
+run('wp24:e2e', { ...process.env, WP24_CODEX_BIN: codexBin })
+run('wp24:browser', { ...process.env, WP24_CODEX_BIN: codexBin })
 run('wp22:accept', { ...process.env, WP22_CODEX_BIN: codexBin })
 run('wp23:accept')
-run('wp24:browser')
 run('verify')
 
 process.stdout.write(
@@ -29,20 +30,6 @@ process.stdout.write(
     gate: 'phase4:accept',
     codexVersion: '0.144.2',
     completed,
-    scenario: [
-      'pdf-upload',
-      'extract-index-pgvector',
-      'workspace-mcp-retrieval',
-      'citation-timeline',
-      'mobile-approval-cas',
-      'session-resume',
-      'terminal-usage-cost',
-      'plan-budget-view',
-      'delete-reindex',
-      'failed-interrupted-accounting',
-      'hard-quota-denial',
-      'cross-tenant-zero-visibility',
-    ],
     billingProvider: 'deterministic-billing-emulator',
     realBillingProvider: 'not-run-no-provider-selected-or-credential',
     webPushProvider: 'emulator',

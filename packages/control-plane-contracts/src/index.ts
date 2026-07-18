@@ -1,6 +1,8 @@
 import { timelineEventSchema } from '@persistent-codex/domain-events'
 import {
   admissionDecisionSchema,
+  billingWebhookPayloadSchema,
+  billingWebhookResponseSchema,
   budgetSchema,
   commercialPlanSchema,
   quotaPolicySchema,
@@ -106,6 +108,7 @@ export const authorizationActionSchema = z.enum([
   'usage.read',
   'usage.reconcile',
   'billing.read',
+  'billing.webhook.receive',
   'audit.read',
   'metrics.read',
   'folder.read',
@@ -896,11 +899,16 @@ export const billingOverviewSchema = z.object({
   quotas: z.array(quotaPolicySchema),
   latestDecision: admissionDecisionSchema.nullable(),
   usage: usageCostSummarySchema,
+  usageStates: z.array(
+    z.enum(['measured', 'estimated', 'reconciled', 'incomplete']),
+  ),
   usageFreshnessAt: z.iso.datetime(),
   lastReconciledAt: z.iso.datetime().nullable(),
   providerMode: z.enum(['platform_managed', 'byok', 'hybrid']),
   productionBillingVerified: z.boolean(),
 })
+
+export { billingWebhookPayloadSchema, billingWebhookResponseSchema }
 
 export const approvalListResponseSchema = z.object({
   approvals: z.array(approvalSchema),

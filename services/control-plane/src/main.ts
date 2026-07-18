@@ -36,6 +36,12 @@ import {
   InMemoryPushRepository,
   PushProviderEmulator,
 } from '@persistent-codex/push-notifications'
+import {
+  createBillingPostgresRepository,
+  DeterministicBillingEmulator,
+  type DevelopmentCommercialSeed,
+} from '@persistent-codex/billing-platform'
+import { resolveBillingBootstrap } from './billing-composition'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -45,7 +51,78 @@ if (
 ) {
   throw new Error('APPROVAL_POLICY must be untrusted, on-request, or never')
 }
-const localAlpha = process.env.PERSISTENT_CODEX_LOCAL_ALPHA === '1'
+const billingBootstrap = resolveBillingBootstrap(process.env)
+const localAlpha = billingBootstrap.localAlpha
+const billingDatabaseUrl = billingBootstrap.databaseUrl
+const billingSeed: DevelopmentCommercialSeed = {
+  plan: {
+    schemaVersion: 1,
+    planId: 'local-alpha',
+    planVersion: 24,
+    displayName: 'Local Alpha',
+    currency: 'USD',
+    effectiveAt: '2026-01-01T00:00:00.000Z',
+    retiredAt: null,
+    billingMode: 'platform_managed',
+    taxBehavior: 'unknown',
+  },
+  entitlements: (
+    [
+      'turn.start',
+      'source.upload',
+      'source.index',
+      'source.retrieval',
+      'workspace.concurrency',
+    ] as const
+  ).map((key, index) => ({
+    schemaVersion: 1,
+    entitlementId: `local-alpha-entitlement-${index}`,
+    planId: 'local-alpha',
+    planVersion: 24,
+    key,
+    enabled: true,
+    effectiveAt: '2026-01-01T00:00:00.000Z',
+    expiresAt: null,
+    sourceWebhookEventId: null,
+  })),
+  budgets: [
+    {
+      schemaVersion: 1,
+      budgetId: 'local-alpha-monthly',
+      period: 'month',
+      currency: 'USD',
+      softLimitMicros: 8_000_000,
+      hardLimitMicros: 10_000_000,
+      effectiveAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: null,
+    },
+  ],
+  quotas: [
+    {
+      schemaVersion: 1,
+      quotaId: 'local-alpha-tenant-concurrency',
+      policyVersion: 24,
+      meter: 'tenant_concurrent_turn',
+      softLimit: 3,
+      hardLimit: 4,
+      inFlightPolicy: 'continue',
+      effectiveAt: '2026-01-01T00:00:00.000Z',
+      expiresAt: null,
+    },
+  ],
+}
+const billingRepository = createBillingPostgresRepository(billingDatabaseUrl, {
+  developmentSeed: billingSeed,
+  productionBillingVerified: false,
+})
+const billingProvider = new DeterministicBillingEmulator({
+  secret: createHash('sha256')
+    .update(
+      process.env.BILLING_EMULATOR_SEED ??
+        'persistent-codex-explicit-local-billing-emulator',
+    )
+    .digest(),
+})
 const pushDatabaseUrl = process.env.PUSH_DATABASE_URL
 if (!localAlpha && !pushDatabaseUrl)
   throw new Error(
@@ -244,6 +321,11 @@ const app = await buildControlPlane({
   supportAccessRepository,
   pushRepository,
   pushProvider,
+  commercialPolicy: billingRepository,
+  billingWebhook: {
+    provider: billingProvider,
+    repository: billingRepository,
+  },
   ...(corpusRepository && corpusSnapshotStorage
     ? {
         corpusRepository,
@@ -254,6 +336,7 @@ const app = await buildControlPlane({
         },
       }
     : { allowLocalCorpus: true }),
+  ...(localAlpha ? { allowLocalCorpus: true } : {}),
   securityReadiness: {
     runtimeBackend:
       runtimeBackend === 'kata-kubernetes'

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DeterministicBillingEmulator,
   evaluateAdmission,
+  normalizeBillingWebhookPayload,
   type CommercialPolicySnapshot,
 } from './index.js'
 
@@ -117,6 +118,24 @@ describe('commercial admission', () => {
 })
 
 describe('billing webhook emulator', () => {
+  it('normalizes known commands and discards unknown provider payload fields', () => {
+    const base = {
+      schemaVersion: 1 as const,
+      ...scope,
+      eventId: 'evt_future',
+      eventType: 'future.payment.event',
+      providerSequence: 1,
+      effectiveAt: '2026-07-18T10:00:00.000Z',
+      data: { paymentCredential: 'must-not-persist' },
+    }
+    expect(normalizeBillingWebhookPayload(base)).toEqual({
+      envelope: base,
+      command: { kind: 'unknown' },
+    })
+    expect(
+      JSON.stringify(normalizeBillingWebhookPayload(base).command),
+    ).not.toContain('must-not-persist')
+  })
   it('verifies signature, timestamp, bounded payload and replay protection without claiming production evidence', () => {
     const emulator = new DeterministicBillingEmulator({
       secret: Buffer.alloc(32, 7),
