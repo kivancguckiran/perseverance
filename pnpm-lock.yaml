@@ -191,6 +191,22 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
 
+  packages/push-notifications:
+    dependencies:
+      '@persistent-codex/control-plane-contracts':
+        specifier: workspace:*
+        version: link:../control-plane-contracts
+      '@persistent-codex/workspace-security':
+        specifier: workspace:*
+        version: link:../workspace-security
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
+
   packages/support-access:
     dependencies:
       '@persistent-codex/control-plane-contracts':
@@ -244,6 +260,9 @@ importers:
       '@persistent-codex/provider-platform':
         specifier: workspace:*
         version: link:../../packages/provider-platform
+      '@persistent-codex/push-notifications':
+        specifier: workspace:*
+        version: link:../../packages/push-notifications
       '@persistent-codex/support-access':
         specifier: workspace:*
         version: link:../../packages/support-access

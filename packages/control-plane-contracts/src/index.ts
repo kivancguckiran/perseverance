@@ -80,6 +80,9 @@ export const authorizationActionSchema = z.enum([
   'event.subscribe',
   'approval.read',
   'approval.decide',
+  'notification.subscribe',
+  'notification.read',
+  'notification.revoke',
   'attachment.upload',
   'attachment.read',
   'attachment.delete',
@@ -533,6 +536,7 @@ export const approvalSchema = z.object({
   context: z.record(z.string(), z.unknown()),
   availableDecisions: z.array(approvalDecisionSchema),
   requestedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime().nullable().default(null),
   resolvedAt: z.iso.datetime().nullable(),
   resolvingUserId: z.string().nullable(),
   selectedDecision: approvalDecisionSchema.nullable(),
@@ -889,6 +893,99 @@ export const approvalDecisionRequestSchema = z.object({
     .optional(),
 })
 
+export const PUSH_CONTRACT_VERSION = 1 as const
+export const pushSubscriptionStatusSchema = z.enum([
+  'active',
+  'expired',
+  'revoked',
+  'invalid',
+])
+export const pushNotificationStatusSchema = z.enum([
+  'approval_required',
+  'approval_resolved',
+  'turn_completed',
+  'turn_failed',
+])
+export const pushSubscriptionRequestSchema = z
+  .object({
+    version: z.literal(PUSH_CONTRACT_VERSION),
+    deviceId: identifierSchema.max(160),
+    endpoint: z.url().max(4_096),
+    keys: z.object({
+      p256dh: z.string().min(16).max(512),
+      auth: z.string().min(8).max(256),
+    }),
+    expiresAt: z.iso.datetime().nullable(),
+  })
+  .strict()
+export const pushSubscriptionSchema = z.object({
+  version: z.literal(PUSH_CONTRACT_VERSION),
+  subscriptionId: identifierSchema,
+  deviceId: identifierSchema,
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  principalId: identifierSchema,
+  status: pushSubscriptionStatusSchema,
+  revision: z.number().int().positive(),
+  endpointFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  expiresAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+  rotatedAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+})
+export const pushSubscriptionListResponseSchema = z.object({
+  subscriptions: z.array(pushSubscriptionSchema),
+})
+export const pushSubscriptionRevokeRequestSchema = z
+  .object({ expectedVersion: z.number().int().positive() })
+  .strict()
+export const pushNotificationPayloadSchema = z
+  .object({
+    version: z.literal(PUSH_CONTRACT_VERSION),
+    notificationId: identifierSchema,
+    sessionId: identifierSchema,
+    approvalId: identifierSchema.nullable(),
+    status: pushNotificationStatusSchema,
+  })
+  .strict()
+export const pushOutboxRecordSchema = z.object({
+  version: z.literal(PUSH_CONTRACT_VERSION),
+  outboxId: identifierSchema,
+  notificationId: identifierSchema,
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  principalId: identifierSchema,
+  deviceId: identifierSchema,
+  subscriptionId: identifierSchema,
+  payload: pushNotificationPayloadSchema,
+  status: z.enum(['pending', 'delivering', 'delivered', 'retry', 'discarded']),
+  attempt: z.number().int().nonnegative(),
+  availableAt: z.iso.datetime(),
+  deliveredAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+})
+export const pushDeliveryReceiptSchema = z.object({
+  version: z.literal(PUSH_CONTRACT_VERSION),
+  deliveryId: identifierSchema,
+  outboxId: identifierSchema,
+  providerMessageId: identifierSchema.nullable(),
+  outcome: z.enum(['delivered', 'retry', 'invalid_endpoint']),
+  attempt: z.number().int().positive(),
+  occurredAt: z.iso.datetime(),
+})
+export const pushNotificationResolutionSchema = z.object({
+  version: z.literal(PUSH_CONTRACT_VERSION),
+  notificationId: identifierSchema,
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+  sessionId: identifierSchema,
+  approvalId: identifierSchema.nullable(),
+  status: pushNotificationStatusSchema,
+})
+
 export const apiErrorResponseSchema = z.object({
   code: identifierSchema,
   message: identifierSchema,
@@ -1181,6 +1278,18 @@ export type Approval = z.infer<typeof approvalSchema>
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 export type ApprovalDecisionRequest = z.infer<
   typeof approvalDecisionRequestSchema
+>
+export type PushSubscription = z.infer<typeof pushSubscriptionSchema>
+export type PushSubscriptionRequest = z.infer<
+  typeof pushSubscriptionRequestSchema
+>
+export type PushNotificationPayload = z.infer<
+  typeof pushNotificationPayloadSchema
+>
+export type PushOutboxRecord = z.infer<typeof pushOutboxRecordSchema>
+export type PushDeliveryReceipt = z.infer<typeof pushDeliveryReceiptSchema>
+export type PushNotificationResolution = z.infer<
+  typeof pushNotificationResolutionSchema
 >
 export type ReadinessStatus = z.infer<typeof readinessStatusSchema>
 export type ReadinessResponse = z.infer<typeof readinessResponseSchema>

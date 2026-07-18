@@ -21,6 +21,7 @@
     "@persistent-codex/domain-events": "workspace:*",
     "@persistent-codex/event-store": "workspace:*",
     "@persistent-codex/provider-platform": "workspace:*",
+    "@persistent-codex/push-notifications": "workspace:*",
     "@persistent-codex/provider-cli-adapters": "workspace:*",
     "@persistent-codex/support-access": "workspace:*",
     "@persistent-codex/workspace-security": "workspace:*",

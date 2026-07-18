@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'persistent-workspace-shell-'
-const CACHE_VERSION = `${CACHE_PREFIX}phase2-v2`
+const CACHE_VERSION = `${CACHE_PREFIX}wp23-v1`
 const SHELL = [
   '/manifest.webmanifest',
   '/icon-192.png',
@@ -60,6 +60,99 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting()
+})
+
+const PUSH_STATUSES = new Set([
+  'approval_required',
+  'approval_resolved',
+  'turn_completed',
+  'turn_failed',
+])
+
+function safePushPayload(event) {
+  try {
+    const value = event.data?.json()
+    const keys = Object.keys(value ?? {})
+      .sort()
+      .join(',')
+    if (
+      keys !== 'approvalId,notificationId,sessionId,status,version' ||
+      value.version !== 1 ||
+      typeof value.notificationId !== 'string' ||
+      typeof value.sessionId !== 'string' ||
+      !(value.approvalId === null || typeof value.approvalId === 'string') ||
+      !PUSH_STATUSES.has(value.status)
+    )
+      return null
+    return value
+  } catch {
+    return null
+  }
+}
+
+self.addEventListener('push', (event) => {
+  const payload = safePushPayload(event)
+  if (!payload) return
+  const approval = payload.status === 'approval_required'
+  event.waitUntil(
+    self.registration.showNotification(
+      approval ? 'Güvenli onay gerekiyor' : 'Görev durumu güncellendi',
+      {
+        body: approval
+          ? 'Bağlamı görmek ve karar vermek için çalışma alanını açın.'
+          : 'Güncel durumu güvenli çalışma alanında görüntüleyin.',
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: `pcw:${payload.notificationId}`,
+        renotify: approval,
+        requireInteraction: approval,
+        data: payload,
+      },
+    ),
+  )
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const payload = event.notification.data
+  if (!payload || typeof payload.sessionId !== 'string') return
+  const target = new URL(
+    `/sessions/${encodeURIComponent(payload.sessionId)}`,
+    self.location.origin,
+  )
+  target.searchParams.set('notification', payload.notificationId)
+  if (payload.approvalId)
+    target.searchParams.set('approval', payload.approvalId)
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      })
+      const existing = windows.find(
+        (client) => new URL(client.url).origin === self.location.origin,
+      )
+      if (existing) {
+        await existing.navigate(target.href)
+        return existing.focus()
+      }
+      return self.clients.openWindow(target.href)
+    })(),
+  )
+})
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windows) =>
+        Promise.all(
+          windows.map((client) =>
+            client.postMessage({ type: 'PUSH_SUBSCRIPTION_CHANGED' }),
+          ),
+        ),
+      ),
+  )
 })
 
 self.addEventListener('fetch', (event) => {

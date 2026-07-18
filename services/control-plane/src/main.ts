@@ -1,5 +1,6 @@
 import { buildControlPlane } from './server'
 import { homedir } from 'node:os'
+import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import {
   runAlphaPreflight,
@@ -27,8 +28,14 @@ import {
 } from '@persistent-codex/corpus-ingestion'
 import {
   ChunkedEnvelopeEncryption,
+  EnvelopeEncryption,
   LocalKmsProvider,
 } from '@persistent-codex/workspace-security'
+import {
+  createPostgresPushRepository,
+  InMemoryPushRepository,
+  PushProviderEmulator,
+} from '@persistent-codex/push-notifications'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -39,6 +46,32 @@ if (
   throw new Error('APPROVAL_POLICY must be untrusted, on-request, or never')
 }
 const localAlpha = process.env.PERSISTENT_CODEX_LOCAL_ALPHA === '1'
+const pushDatabaseUrl = process.env.PUSH_DATABASE_URL
+if (!localAlpha && !pushDatabaseUrl)
+  throw new Error(
+    'Production requires PUSH_DATABASE_URL for durable push delivery',
+  )
+const pushKms = localAlpha
+  ? new LocalKmsProvider(
+      createHash('sha256')
+        .update(
+          process.env.PUSH_LOCAL_KMS_SEED ?? 'persistent-codex-local-push',
+        )
+        .digest(),
+    )
+  : undefined
+if (!pushKms && pushDatabaseUrl)
+  throw new Error(
+    'Production push startup requires an injected production-capable KmsProvider',
+  )
+const pushEncryption = new EnvelopeEncryption(pushKms!)
+const pushRepository = pushDatabaseUrl
+  ? createPostgresPushRepository({
+      connectionString: pushDatabaseUrl,
+      encryption: pushEncryption,
+    })
+  : new InMemoryPushRepository(pushEncryption)
+const pushProvider = new PushProviderEmulator()
 const supportDatabaseUrl = process.env.SUPPORT_DATABASE_URL
 if (!localAlpha && !supportDatabaseUrl)
   throw new Error(
@@ -209,6 +242,8 @@ const app = await buildControlPlane({
   logger: true,
   authenticationAdapter,
   supportAccessRepository,
+  pushRepository,
+  pushProvider,
   ...(corpusRepository && corpusSnapshotStorage
     ? {
         corpusRepository,

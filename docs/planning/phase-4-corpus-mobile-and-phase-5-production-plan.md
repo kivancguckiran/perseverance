@@ -21,17 +21,17 @@ production rollout seviyesine taşır.
 
 ## 2. İş paketi özeti
 
-| Paket | Faz | Durum      | Hedef                                                                    |
-| ----- | --- | ---------- | ------------------------------------------------------------------------ |
-| WP21  | 4   | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
-| WP22  | 4   | Tamamlandı | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
-| WP23  | 4   | Aktif      | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
-| WP24  | 4   | Planlandı  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
-| WP25  | 5   | Planlandı  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP26  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP27  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP28  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP29  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| Paket | Faz | Durum                      | Hedef                                                                    |
+| ----- | --- | -------------------------- | ------------------------------------------------------------------------ |
+| WP21  | 4   | Tamamlandı                 | Tenant-aware source registry, extraction, chunk ve derived index temeli  |
+| WP22  | 4   | Tamamlandı                 | Hybrid retrieval, citation, watcher/reindex ve workspace-local MCP       |
+| WP23  | 4   | Uygulandı / kabul bekliyor | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
+| WP24  | 4   | Planlandı                  | Billing/plan/kota entegrasyonu ve birleşik Faz 4 ürün kabulü             |
+| WP25  | 5   | Planlandı                  | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP26  | 5   | Planlandı                  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP27  | 5   | Planlandı                  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP28  | 5   | Planlandı                  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP29  | 5   | Planlandı                  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; Faz 4
 tamamlanmadan WP25; WP28 tamamlanmadan nihai WP29 aktive edilmez.
@@ -215,6 +215,9 @@ WP22 tamamlandı. WP23 tek aktif iş paketidir; WP23 tamamlanmadan WP24'e geçil
 
 ### WP23 — Mobil/PWA approval, push ve çoklu cihaz sürekliliği
 
+Durum: **Uygulandı / kabul bekliyor**. WP24 planlanmış durumda kalır ve aktive
+edilmemiştir.
+
 #### Hedef
 
 Mevcut PWA'yı, uzun süren agent işlerini telefondan güvenle izleme, approval verme ve
@@ -253,6 +256,40 @@ session'a geri dönme açısından private-beta ürün seviyesine taşımak.
 #### Teslimat commit'i
 
 `feat: complete secure mobile approval and push experience`
+
+#### Uygulama kabul adayı kaydı
+
+- ADR-0023 PWA-first yönünü doğrular; native shell açılmadı. Production manifest,
+  installability iconları, versioned service worker, kullanıcı kontrollü update,
+  notification click deep link ve offline read-only shell production build'e bağlıdır.
+- Push contract version 1 device/subscription/outbox/receipt lifecycle'ını; subscribe,
+  rotation, expiry, CAS revoke, sign-out cleanup, invalid endpoint, bounded retry ve
+  duplicate/out-of-order idempotency ile tanımlar. Endpoint ve Web Push key materyali
+  KMS envelope içinde tenant/organization/workspace/subscription/principal AAD ile
+  saklanır; public response yalnız fingerprint döndürür.
+- Migration `0023_pwa_push_multi_device.sql`; workspace tenant scope genişletmesi,
+  composite tenant/organization/workspace foreign key zinciri, principal-bound forced
+  RLS, `SKIP LOCKED` outbox claim ve idempotent delivery receipt ekler.
+- Notification payload exact allowlist'tir: opaque notification/session/approval ID ve
+  genel durum. Service worker unknown alan içeren payload'ı reddeder. Emulator secret/
+  content taraması prompt, output, reasoning, command, diff, filename, citation,
+  bearer ve API key için sıfır sızıntıyla geçti.
+- Mobil approval 390x844 görünümde exact command/cwd/network context, risk, scope ve
+  expiry gösterir. Keyboard focus, screen-reader label, reduced motion ve en az 44 px
+  touch target kontrolleri eklendi.
+- `pnpm wp23:accept`: 99 hedefli unit/contract test; gerçek PostgreSQL forced-RLS,
+  rotation/revoke/expiry, delivered/retry/invalid endpoint, duplicate outbox/receipt ve
+  cross-tenant/principal zero visibility smoke'u; iki bağımsız browser context CAS
+  yarışı; realtime reconciliation, browser kapalıyken server-side completion,
+  high-water replay, offline read-only shell ve cleanup kapılarını çalıştırdı.
+- İki cihaz yarışında bir CAS kazananı, bir upstream response, sıfır duplicate karar ve
+  iki cihazda aynı terminal sonuç görüldü. 390x844, 768x1024 ve 1280x720 görünümde sıfır
+  yatay taşma/page error; service worker production build ve offline reload geçti.
+- `pnpm verify`: 29 test dosyasında 299 test, typecheck, production build ve SSR HTTP
+  smoke geçti.
+- Push provider ayrımı: Web Push provider emulator kullanıldı. Gerçek VAPID/provider
+  credential'ı bulunmadığı için gerçek opt-in/delivery smoke'u çalıştırılmadı; emulator
+  production delivery kanıtı sayılmaz.
 
 ### WP24 — Billing, plan/kota ve Faz 4 birleşik kabul
 

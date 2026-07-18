@@ -754,6 +754,12 @@ select {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
   .chat-work.is-running > summary strong,
   .chat-work-loading i,
   .chat-work.is-running .chat-work-icon {
@@ -1849,6 +1855,29 @@ h2 {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.approval-card:focus-visible {
+  outline: 3px solid #e6b85c;
+  outline-offset: 3px;
+}
+.approval-safety-summary {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+.approval-safety-summary div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+}
+.approval-safety-summary dt {
+  color: #e6b85c;
+  font-weight: 700;
+}
+.approval-safety-summary dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1856,11 +1885,17 @@ h2 {
   margin-top: 14px;
 }
 .approval-actions button {
+  min-width: 44px;
+  min-height: 44px;
   padding: 9px 12px;
   border: 1px solid #765f38;
   border-radius: 9px;
   color: #f0ddba;
   background: #302617;
+}
+.push-control {
+  min-width: 44px;
+  min-height: 44px;
 }
 .approval-actions button:disabled {
   opacity: 0.5;
