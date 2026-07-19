@@ -359,6 +359,15 @@ describe('provider-specific effort and readiness', () => {
         reasoningEffort: 'xhigh',
       }),
     ).toContain('max')
+    expect(
+      adapter.args({
+        sessionId: null,
+        prompt: 'x',
+        cwd: '.',
+        modelId: 'm',
+        reasoningEffort: 'max',
+      }),
+    ).toEqual(expect.arrayContaining(['--effort', 'max']))
     for (const effort of ['low', 'medium', 'high'] as const)
       expect(
         adapter.args({
@@ -549,7 +558,7 @@ describe('Cursor Agent adapter', () => {
       if (input?.args[0] === '--version')
         return {
           exitCode: 0,
-          stdout: '2026.07.09-a3815c0',
+          stdout: '2026.07.16-899851b',
           stderr: '',
         }
       return {
@@ -646,7 +655,7 @@ describe('Cursor Agent adapter', () => {
         session_id: 'cursor-session-2026-fixture',
       },
       context: context(),
-      sourceVersion: '2026.07.09-a3815c0',
+      sourceVersion: '2026.07.16-899851b',
     })
     const completed = normalizeCliEnvelope({
       provider: 'cursor',
@@ -669,7 +678,7 @@ describe('Cursor Agent adapter', () => {
         session_id: 'cursor-session-2026-fixture',
       },
       context: context(),
-      sourceVersion: '2026.07.09-a3815c0',
+      sourceVersion: '2026.07.16-899851b',
     })
     expect(started.normalized.event.type).toBe('file.change.proposed')
     expect(completed.normalized.event.type).toBe('file.change.completed')
@@ -697,12 +706,49 @@ describe('Cursor Agent adapter', () => {
         '--output-format',
         'stream-json',
         '--model',
-        'cursor-fixture-model',
+        'cursor-fixture-model-none',
         '--resume',
         'chat-id',
         '--force',
       ])
       expect(args).not.toContain('next')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves catalogued Cursor efforts and encodes an exact model override', async () => {
+    const workspace = cursorWorkspace()
+    try {
+      const cursorCatalog = catalog('cursor')
+      cursorCatalog.models[0]!.modelId = 'claude-opus-4-8'
+      const adapter = new CursorAgentRuntimeAdapter({
+        catalog: cursorCatalog,
+        context: context(),
+        runner: new CursorRunner([]),
+      })
+      expect((await adapter.discoverModelCatalog()).models[0]).toMatchObject({
+        reasoningEfforts: ['none', 'medium'],
+        defaultReasoningEffort: 'medium',
+      })
+      expect(
+        adapter.args({
+          sessionId: null,
+          prompt: 'not-in-argv',
+          cwd: workspace,
+          modelId: 'claude-opus-4-8',
+          reasoningEffort: 'medium',
+        }),
+      ).toEqual(expect.arrayContaining(['--model', 'claude-opus-4-8-medium']))
+      expect(
+        adapter.args({
+          sessionId: null,
+          prompt: 'not-in-argv',
+          cwd: workspace,
+          modelId: 'claude-opus-4-8',
+          reasoningEffort: 'none',
+        }),
+      ).toEqual(expect.arrayContaining(['--model', 'claude-opus-4-8-none']))
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }
@@ -750,7 +796,7 @@ describe('Cursor Agent adapter', () => {
                 ? 'Cursor beta'
                 : this.mode === 'mismatch'
                   ? '2026.07.09-unverified'
-                  : '2026.07.09-a3815c0',
+                  : '2026.07.16-899851b',
             stderr: '',
           }
         }
@@ -853,7 +899,7 @@ describe('Cursor Agent adapter', () => {
         },
       },
       context: context(),
-      sourceVersion: '2026.07.09-a3815c0',
+      sourceVersion: '2026.07.16-899851b',
     })
     expect(normalized.spill?.data.byteLength).toBeGreaterThan(64 * 1024)
     expect(normalized.normalized.event).toMatchObject({

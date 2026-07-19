@@ -1,6 +1,8 @@
 import { buildControlPlane } from './server'
 import { homedir } from 'node:os'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
 import {
   runAlphaPreflight,
@@ -44,6 +46,10 @@ import {
 import { resolveBillingBootstrap } from './billing-composition'
 import { InMemorySharedFolderRepository } from '@persistent-codex/shared-folders'
 import { createPostgresSharedFolderRepository } from '@persistent-codex/shared-folders/postgres'
+import {
+  createProductionTopologyReadiness,
+  resolveProductionTopology,
+} from './topology-composition'
 
 const port = Number.parseInt(process.env.PORT ?? '3100', 10)
 const approvalPolicy = process.env.APPROVAL_POLICY
@@ -55,8 +61,10 @@ if (
 }
 const billingBootstrap = resolveBillingBootstrap(process.env)
 const localAlpha = billingBootstrap.localAlpha
+const productionTopology = resolveProductionTopology(process.env)
 const billingDatabaseUrl = billingBootstrap.databaseUrl
 const billingSeed: DevelopmentCommercialSeed = {
+  initialPromotionalCreditsMicros: 10_000_000,
   plan: {
     schemaVersion: 1,
     planId: 'local-alpha',
@@ -276,18 +284,41 @@ const config: AlphaConfig = {
   ...(provisioningSource ? { provisioningSource } : {}),
 }
 const preflightChecks = runAlphaPreflight(config)
+const repositoryRoot = resolve(
+  fileURLToPath(new URL('../../..', import.meta.url)),
+)
+function readJsonConfig(
+  environmentName: string,
+  fileEnvironmentName: string,
+  localDefault: string,
+) {
+  const inline = process.env[environmentName]
+  if (inline) return JSON.parse(inline) as unknown
+  const configuredFile = process.env[fileEnvironmentName]
+  if (configuredFile)
+    return JSON.parse(readFileSync(resolve(configuredFile), 'utf8')) as unknown
+  if (localAlpha)
+    return JSON.parse(readFileSync(resolve(localDefault), 'utf8')) as unknown
+  return undefined
+}
 const providerCatalogs = (() => {
-  const raw = process.env.PERSISTENT_PROVIDER_CATALOGS_JSON
-  if (!raw) return []
-  const parsed = JSON.parse(raw) as unknown
+  const parsed = readJsonConfig(
+    'PERSISTENT_PROVIDER_CATALOGS_JSON',
+    'PERSISTENT_PROVIDER_CATALOGS_FILE',
+    join(repositoryRoot, 'config/provider-catalogs.local.json'),
+  )
+  if (!parsed) return []
   if (!Array.isArray(parsed))
-    throw new Error('PERSISTENT_PROVIDER_CATALOGS_JSON must be a JSON array')
+    throw new Error('Provider catalogs config must be a JSON array')
   return parsed.map((catalog) => providerModelCatalogSchema.parse(catalog))
 })()
-const priceCatalog = process.env.PERSISTENT_PRICE_CATALOG_JSON
-  ? priceCatalogSchema.parse(
-      JSON.parse(process.env.PERSISTENT_PRICE_CATALOG_JSON) as unknown,
-    )
+const priceCatalogInput = readJsonConfig(
+  'PERSISTENT_PRICE_CATALOG_JSON',
+  'PERSISTENT_PRICE_CATALOG_FILE',
+  join(repositoryRoot, 'config/provider-prices.standard.json'),
+)
+const priceCatalog = priceCatalogInput
+  ? priceCatalogSchema.parse(priceCatalogInput)
   : undefined
 const costReconciliationPorts = (() => {
   const ports: Partial<Record<ProviderId, ProviderCostReconciliationPort>> = {}
@@ -355,6 +386,12 @@ const app = await buildControlPlane({
       }
     : {}),
   logger: true,
+  ...(productionTopology
+    ? {
+        topologyReadiness:
+          createProductionTopologyReadiness(productionTopology),
+      }
+    : {}),
   authenticationAdapter,
   supportAccessRepository,
   sharedFolderRepository,

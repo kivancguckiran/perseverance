@@ -314,6 +314,7 @@ export interface DevelopmentCommercialSeed {
   budgets: Array<Omit<Budget, keyof BillingScope>>
   quotas: Array<Omit<QuotaPolicy, keyof BillingScope>>
   retailPriceCatalog?: Omit<RetailPriceCatalog, keyof BillingScope>
+  initialPromotionalCreditsMicros?: number
 }
 
 export interface DurableAdmissionInput extends BillingScope {
@@ -1615,6 +1616,66 @@ export class BillingPostgresRepository {
         )
       }
     })
+    if (seed.initialPromotionalCreditsMicros !== undefined)
+      await this.seedDevelopmentCredits(
+        scope,
+        seed.initialPromotionalCreditsMicros,
+      )
+  }
+
+  private async seedDevelopmentCredits(
+    scopeInput: BillingScope,
+    creditsMicros: number,
+  ) {
+    const scope = billingScopeSchema.parse(scopeInput)
+    if (!Number.isSafeInteger(creditsMicros) || creditsMicros <= 0)
+      throw new Error('DEVELOPMENT_CREDIT_SEED_INVALID')
+    const amount = creditsMicros
+    const idempotencyKey = 'development-seed:promotional-credit-v1'
+    const lotId = deterministicId(
+      'clt',
+      scope.tenantId,
+      scope.organizationId,
+      scope.workspaceId,
+      idempotencyKey,
+    )
+    const occurredAt = this.#developmentSeed!.plan.effectiveAt
+    const currency = this.#developmentSeed!.plan.currency
+    await this.withScope(scope, async (client) => {
+      await client.query(
+        `INSERT INTO persistent_codex.credit_lots
+          (tenant_id,organization_id,workspace_id,lot_id,lot_kind,currency,original_credits_micros,original_cash_micros,idempotency_key,payment_reference,usage_dedupe_key,run_id,operation_reference,occurred_at,expires_at,source_webhook_event_id,consumption_policy_version)
+         VALUES ($1,$2,$3,$4,'promotional',$5,$6,0,$7,NULL,NULL,NULL,'development-seed',$8,NULL,NULL,1)
+         ON CONFLICT DO NOTHING`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          lotId,
+          currency,
+          amount,
+          idempotencyKey,
+          occurredAt,
+        ],
+      )
+      await client.query(
+        `INSERT INTO persistent_codex.credit_ledger_entries
+          (tenant_id,organization_id,workspace_id,ledger_entry_id,lot_id,entry_type,currency,credit_amount_micros,cash_amount_micros,idempotency_key,payment_reference,usage_dedupe_key,run_id,operation_reference,reservation_id,settlement_id,source_webhook_event_id,occurred_at)
+         VALUES ($1,$2,$3,$4,$5,'promotional_grant',$6,$7,0,$8,NULL,NULL,NULL,'development-seed',NULL,NULL,NULL,$9)
+         ON CONFLICT DO NOTHING`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          deterministicId('cle', lotId, idempotencyKey),
+          lotId,
+          currency,
+          amount,
+          idempotencyKey,
+          occurredAt,
+        ],
+      )
+    })
   }
 
   async snapshot(scopeInput: BillingScope): Promise<CommercialPolicySnapshot> {
@@ -1724,8 +1785,13 @@ export class BillingPostgresRepository {
         }
       })
     let value = await load()
-    if (!value && this.#developmentSeed) {
-      await this.seedDevelopmentScope(scope)
+    if (this.#developmentSeed) {
+      if (!value) await this.seedDevelopmentScope(scope)
+      else if (this.#developmentSeed.initialPromotionalCreditsMicros)
+        await this.seedDevelopmentCredits(
+          scope,
+          this.#developmentSeed.initialPromotionalCreditsMicros,
+        )
       value = await load()
     }
     if (!value) throw new Error('BILLING_POLICY_MISSING')

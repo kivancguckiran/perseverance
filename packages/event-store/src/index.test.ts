@@ -87,6 +87,58 @@ describe('SqliteEventStore sessions', () => {
     })
   })
 
+  it('atomically rebinds only a pristine Codex conversation', () => {
+    withStore((store) => {
+      store.bindCodexThread(scope, 'thr_unpersisted')
+      const rebound = store.rebindPristineCodexThreadWithAudit(
+        scope,
+        {
+          expectedCodexThreadId: 'thr_unpersisted',
+          codexThreadId: 'thr_recreated',
+          runtimeGeneration: 2,
+        },
+        {
+          ...scope,
+          actor: 'system',
+          action: 'recovery.completed',
+          outcome: 'success',
+          idempotencyKey: 'rebind-pristine',
+          metadata: { operation: 'rebind_pristine_thread' },
+        },
+      )
+      expect(rebound).toMatchObject({
+        codexThreadId: 'thr_recreated',
+        status: 'active',
+        runtimeGeneration: 2,
+      })
+
+      store.recordDurableUserMessage({
+        ...scope,
+        messageId: 'msg_existing',
+        idempotencyKey: 'existing-message',
+        content: 'Korunması gereken geçmiş',
+      })
+      expect(() =>
+        store.rebindPristineCodexThreadWithAudit(
+          scope,
+          {
+            expectedCodexThreadId: 'thr_recreated',
+            codexThreadId: 'thr_forbidden',
+            runtimeGeneration: 3,
+          },
+          {
+            ...scope,
+            actor: 'system',
+            action: 'recovery.completed',
+            outcome: 'success',
+            idempotencyKey: 'rebind-forbidden',
+          },
+        ),
+      ).toThrow(StoreConflictError)
+      expect(store.getSession(scope).codexThreadId).toBe('thr_recreated')
+    })
+  })
+
   it('keeps tenant, workspace, and session lookups isolated', () => {
     withStore((store) => {
       expect(() =>

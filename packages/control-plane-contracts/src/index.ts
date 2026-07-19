@@ -24,6 +24,28 @@ import {
 } from '@persistent-codex/provider-platform'
 import { z } from 'zod'
 
+export {
+  TOPOLOGY_CONTRACT_VERSION,
+  capacityLimitOutcomeSchema,
+  capacityReservationSchema,
+  capacityVectorSchema,
+  dependencyReadinessSchema,
+  drainStateSchema,
+  placementSchema,
+  recoveryOutcomeSchema,
+  schedulerQueueItemSchema,
+  tenantSchedulingPolicySchema,
+  topologyScopeSchema,
+  workspaceLeaseSchema,
+} from '@persistent-codex/production-topology/contracts'
+export type {
+  CapacityVector,
+  DependencyReadiness,
+  SchedulerQueueItem,
+  TenantSchedulingPolicy,
+  WorkspaceLease,
+} from '@persistent-codex/production-topology/contracts'
+
 const identifierSchema = z.string().min(1)
 const sequenceSchema = z.number().int().nonnegative()
 export const organizationRoleSchema = z.enum([
@@ -397,6 +419,10 @@ export const readinessCheckSchema = z.object({
     'runtimeIsolation',
     'kms',
     'encryption',
+    'eventBroker',
+    'objectStorage',
+    'runtimeControl',
+    'scheduler',
   ]),
   status: z.enum(['ready', 'failed']),
   code: z.string().min(1).nullable(),
@@ -1187,6 +1213,9 @@ export const pushNotificationResolutionSchema = z.object({
 export const apiErrorResponseSchema = z.object({
   code: identifierSchema,
   message: identifierSchema,
+  reasonCode: identifierSchema.optional(),
+  policyVersion: z.number().int().positive().optional(),
+  measurementWatermark: identifierSchema.optional(),
   issues: z.array(z.string()).optional(),
 })
 

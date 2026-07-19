@@ -336,7 +336,8 @@ describe('WP24 commercial admission and billing API', () => {
       expect(denied.statusCode).toBe(429)
       expect(denied.json()).toMatchObject({
         code: 'USAGE_LIMIT_REACHED',
-        message: 'HARD_LIMIT_PROVIDER_SPEND_MICROS',
+        message: 'Workspace usage limit reached',
+        reasonCode: 'HARD_LIMIT_PROVIDER_SPEND_MICROS',
         policyVersion: 3,
         measurementWatermark: 'ledger-100',
       })
@@ -3405,6 +3406,73 @@ describe('WP4 session, turn and live event flow', () => {
     })
   })
 
+  it('rebinds a pristine conversation when its empty Codex thread was not persisted', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'pristine-thread-rebind-'))
+    const databasePath = join(directory, 'events.sqlite')
+    const scoped = {
+      'x-tenant-id': 'ten_pristine_rebind',
+      'x-workspace-id': 'wsp_pristine_rebind',
+    }
+    const firstStore = new SqliteEventStore(databasePath)
+    const firstClient = new FakeRuntimeClient({ threadId: 'thr_unpersisted' })
+    const first = await buildControlPlane({
+      eventStore: firstStore,
+      runtimeClientFactory: () => firstClient,
+      sessionIdFactory: () => 'ses_pristine_rebind',
+    })
+    try {
+      const created = await first.inject({
+        method: 'POST',
+        url: '/v1/sessions',
+        headers: scoped,
+        payload: {},
+      })
+      expect(created.statusCode).toBe(201)
+      expect(created.json()).toMatchObject({
+        codexThreadId: 'thr_unpersisted',
+        status: 'active',
+      })
+    } finally {
+      await first.close()
+      firstStore.close()
+    }
+
+    class UnloadedThreadClient extends FakeRuntimeClient {
+      override async request<TResult>(method: string, params: unknown) {
+        if (method === 'thread/read')
+          throw new Error('thread not loaded: thr_unpersisted')
+        return super.request<TResult>(method, params)
+      }
+    }
+    const recoveredStore = new SqliteEventStore(databasePath)
+    const recoveredClient = new UnloadedThreadClient({
+      threadId: 'thr_recreated',
+    })
+    const recovered = await buildControlPlane({
+      eventStore: recoveredStore,
+      runtimeClientFactory: () => recoveredClient,
+    })
+    try {
+      const resumed = await recovered.inject({
+        method: 'POST',
+        url: '/v1/sessions/ses_pristine_rebind/resume',
+        headers: { ...scoped, 'idempotency-key': 'recover-pristine-thread' },
+        payload: {},
+      })
+      expect(resumed.statusCode).toBe(200)
+      expect(resumed.json()).toMatchObject({
+        codexThreadId: 'thr_recreated',
+        status: 'active',
+        recoveryErrorCode: null,
+      })
+      expect(recoveredClient.requests).toContain('thread/start')
+    } finally {
+      await recovered.close()
+      recoveredStore.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('persists fake notifications and approval requests before publishing live events', async () => {
     const client = new FakeRuntimeClient()
     const { current } = await setupLive(client)
@@ -3659,7 +3727,7 @@ describe('WP6 session resume and recovery', () => {
     })
   })
 
-  it('durably exposes THREAD_NOT_RESUMABLE without replacing the thread', async () => {
+  it('durably exposes THREAD_NOT_RESUMABLE without replacing a thread that has history', async () => {
     class BrokenResumeClient extends FakeRuntimeClient {
       override async request<TResult>(
         method: string,
@@ -3670,7 +3738,7 @@ describe('WP6 session resume and recovery', () => {
       }
     }
     const client = new BrokenResumeClient({ threadId: 'thr_broken' })
-    await setup({
+    const current = await setup({
       runtimeClientFactory: () => client,
       sessionIdFactory: () => 'ses_broken',
     })
@@ -3683,6 +3751,14 @@ describe('WP6 session resume and recovery', () => {
       url: '/v1/sessions',
       headers: scoped,
       payload: {},
+    })
+    current.recordDurableUserMessage({
+      tenantId: 'ten_broken',
+      workspaceId: 'wsp_broken',
+      sessionId: 'ses_broken',
+      messageId: 'msg_broken_history',
+      idempotencyKey: 'broken-history',
+      content: 'Korunması gereken mevcut sohbet geçmişi',
     })
     const failed = await app!.inject({
       method: 'POST',

@@ -38,7 +38,10 @@ export const GEMINI_CLI_VERSION = '0.50.0'
 export const GEMINI_CLI_SUPPORTED_VERSIONS = ['0.25.0', '0.50.0'] as const
 export const GEMINI_CLI_VERSION_POLICY =
   GEMINI_CLI_SUPPORTED_VERSIONS.join(', ')
-export const CURSOR_AGENT_SUPPORTED_VERSIONS = ['2026.07.09-a3815c0'] as const
+export const CURSOR_AGENT_SUPPORTED_VERSIONS = [
+  '2026.07.09-a3815c0',
+  '2026.07.16-899851b',
+] as const
 export const CURSOR_AGENT_VERSION_POLICY =
   CURSOR_AGENT_SUPPORTED_VERSIONS.join(', ')
 const DEFAULT_MAX_LINE_BYTES = 1024 * 1024
@@ -1017,34 +1020,37 @@ abstract class CliProviderAdapter implements ProviderRuntimeAdapterV1 {
     this.provider = provider
     const configuredCatalog = providerModelCatalogSchema.parse(options.catalog)
     this.catalog =
-      provider === 'gemini' || provider === 'cursor'
+      provider === 'gemini'
         ? providerModelCatalogSchema.parse({
             ...configuredCatalog,
             models: configuredCatalog.models.map((model) => ({
               ...model,
               reasoningEfforts: ['none'],
               defaultReasoningEffort: 'none',
-              ...(provider === 'cursor'
-                ? {
-                    capabilities: {
-                      ...model.capabilities,
-                      streaming: 'supported',
-                      reasoningSummary: 'unsupported',
-                      commandExecution: 'supported',
-                      fileChanges: 'degraded',
-                      approvals: 'unsupported',
-                      interrupt: 'supported',
-                      resume: 'supported',
-                      toolCalls: 'supported',
-                      imageInput: 'unsupported',
-                      usage: 'degraded',
-                      cost: 'unsupported',
-                    },
-                  }
-                : {}),
             })),
           })
-        : configuredCatalog
+        : provider === 'cursor'
+          ? providerModelCatalogSchema.parse({
+              ...configuredCatalog,
+              models: configuredCatalog.models.map((model) => ({
+                ...model,
+                capabilities: {
+                  ...model.capabilities,
+                  streaming: 'supported',
+                  reasoningSummary: 'unsupported',
+                  commandExecution: 'supported',
+                  fileChanges: 'degraded',
+                  approvals: 'unsupported',
+                  interrupt: 'supported',
+                  resume: 'supported',
+                  toolCalls: 'supported',
+                  imageInput: 'unsupported',
+                  usage: 'degraded',
+                  cost: 'unsupported',
+                },
+              })),
+            })
+          : configuredCatalog
     if (this.catalog.identity.provider !== provider)
       throw new Error(`Catalog provider must be ${provider}`)
     this.context = options.context
@@ -1498,19 +1504,24 @@ export class CursorAgentRuntimeAdapter extends CliProviderAdapter {
   }
 
   args(input: ProviderTurnStartInput) {
-    if (input.reasoningEffort !== 'none')
-      throw new ProviderConfigurationError(
-        'REASONING_EFFORT_UNSUPPORTED',
-        `Cursor Agent ${CURSOR_AGENT_VERSION_POLICY} has no verified reasoning-effort override; choose none.`,
-      )
     const policy = loadCursorProjectPolicy(input.cwd)
     const force = input.allowFileChanges === true && policy.allowsWrites
+    const configuredModel = this.catalog.models.find(
+      (model) => model.modelId === input.modelId,
+    )
+    const hasEffortVariants =
+      configuredModel !== undefined &&
+      (configuredModel.reasoningEfforts.length > 1 ||
+        !configuredModel.reasoningEfforts.includes('none'))
+    const model = hasEffortVariants
+      ? `${input.modelId}-${input.reasoningEffort}`
+      : input.modelId
     return [
       '--print',
       '--trust',
       '--output-format',
       'stream-json',
-      ...(input.modelId ? ['--model', input.modelId] : []),
+      ...(model ? ['--model', model] : []),
       ...(input.sessionId ? ['--resume', input.sessionId] : []),
       ...(force ? ['--force'] : []),
     ]

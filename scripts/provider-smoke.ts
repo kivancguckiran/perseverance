@@ -13,7 +13,10 @@ import {
   CursorAgentRuntimeAdapter,
   GeminiCliRuntimeAdapter,
 } from '../packages/provider-cli-adapters/src/index'
-import type { ProviderModelCatalog } from '../packages/provider-platform/src/index'
+import {
+  reasoningEffortSchema,
+  type ProviderModelCatalog,
+} from '../packages/provider-platform/src/index'
 
 const provider = process.argv[2]
 if (provider !== 'claude' && provider !== 'gemini' && provider !== 'cursor')
@@ -27,6 +30,9 @@ const configuredModelId =
         : 'CURSOR_SMOKE_MODEL'
   ]
 const modelId = configuredModelId ?? '__SMOKE_MODEL_REQUIRED__'
+const reasoningEffort = reasoningEffortSchema.parse(
+  process.env.PROVIDER_SMOKE_REASONING_EFFORT ?? 'none',
+)
 let sequence = 0
 const catalog: ProviderModelCatalog = {
   schemaVersion: 1,
@@ -46,9 +52,11 @@ const catalog: ProviderModelCatalog = {
       isDefault: true,
       reasoningEfforts:
         provider === 'claude'
-          ? ['none', 'low', 'medium', 'high', 'xhigh']
-          : ['none'],
-      defaultReasoningEffort: 'none',
+          ? ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+          : provider === 'cursor'
+            ? ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+            : ['none'],
+      defaultReasoningEffort: reasoningEffort,
       inputModalities: ['text'],
       capabilities: {
         streaming: 'supported',
@@ -160,7 +168,7 @@ const run = async (
       prompt,
       cwd: smokeRoot,
       modelId,
-      reasoningEffort: 'none',
+      reasoningEffort,
     },
     (event) => {
       rawSeen ||= Object.keys(event.rawEnvelope).length > 0
@@ -277,6 +285,7 @@ async function smoke() {
   return {
     provider,
     modelId,
+    reasoningEffort,
     start: first.outcome,
     resume: resumed.outcome,
     interrupt: interrupted.outcome,

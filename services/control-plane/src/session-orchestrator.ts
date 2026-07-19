@@ -250,6 +250,13 @@ function errorPayload(error: unknown) {
   }
 }
 
+function isThreadUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /not found|missing|not loaded|rollout.*(?:corrupt|invalid)|history.*(?:corrupt|invalid)|identity mismatch|thread.*home/i.test(
+    message,
+  )
+}
+
 function classifyRecoveryError(error: unknown): RecoveryFailure {
   const message = error instanceof Error ? error.message : String(error)
   if (error instanceof RequestTimeoutError)
@@ -276,11 +283,7 @@ function classifyRecoveryError(error: unknown): RecoveryFailure {
       permanent: false,
       statusCode: 401,
     }
-  if (
-    /not found|missing|rollout.*(?:corrupt|invalid)|history.*(?:corrupt|invalid)|identity mismatch|thread.*home/i.test(
-      message,
-    )
-  )
+  if (isThreadUnavailableError(error))
     return {
       code: 'THREAD_NOT_RESUMABLE',
       message: 'The bound Codex thread cannot be read from this workspace home',
@@ -1065,10 +1068,59 @@ export class SessionOrchestrator {
         cwd,
         codexHome: this.#codexHome(scope),
       })
-      const read = await runtime.client.request<ThreadReadResponse>(
-        'thread/read',
-        { threadId, includeTurns: true } satisfies codexV2.ThreadReadParams,
-      )
+      let read: ThreadReadResponse
+      try {
+        read = await runtime.client.request<ThreadReadResponse>('thread/read', {
+          threadId,
+          includeTurns: true,
+        } satisfies codexV2.ThreadReadParams)
+      } catch (error) {
+        const pristine =
+          this.#store.getLatestDurableRun(scope) === null &&
+          this.#store.listDurableUserMessages(scope, 1).length === 0
+        if (!pristine || !isThreadUnavailableError(error)) throw error
+        const session = this.#store.getSession(scope)
+        const started = await runtime.client.request<ThreadStartResponse>(
+          'thread/start',
+          {
+            cwd,
+            ...(session.resolvedModel ? { model: session.resolvedModel } : {}),
+            ...(this.#approvalPolicy
+              ? { approvalPolicy: this.#approvalPolicy }
+              : {}),
+          } satisfies ThreadStartParams,
+        )
+        const record = this.#store.rebindPristineCodexThreadWithAudit(
+          scope,
+          {
+            expectedCodexThreadId: threadId,
+            codexThreadId: started.thread.id,
+            runtimeGeneration: runtime.client.processGeneration,
+          },
+          {
+            ...scope,
+            actor: 'system',
+            action: 'recovery.completed',
+            outcome: 'success',
+            idempotencyKey: `recovery:${key}:rebound`,
+            metadata: {
+              operation: 'rebind_pristine_thread',
+              toState: 'active',
+            },
+          },
+        )
+        this.#threadScopes.delete(this.#threadKey(scope, threadId))
+        this.#threadScopes.set(this.#threadKey(scope, started.thread.id), scope)
+        const response = this.getSession(record)
+        this.#store.completeIdempotencyKey({
+          ...scope,
+          scope: keyScope,
+          key,
+          status: 'completed',
+          response,
+        })
+        return response
+      }
       if (read.thread.id !== threadId)
         throw new Error('Thread identity mismatch')
       this.#reconcileSnapshot(scope, read.thread, 'thread/read')

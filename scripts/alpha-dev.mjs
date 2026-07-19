@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { loadEnvFile } from 'node:process'
+
+const localEnvironmentFile = resolve('.env.local')
+if (existsSync(localEnvironmentFile)) loadEnvFile(localEnvironmentFile)
 
 const runtime = resolve('.runtime/alpha')
 mkdirSync(runtime, { recursive: true, mode: 0o700 })
@@ -17,6 +21,7 @@ const child = spawn('pnpm', ['dev'], {
     CODEX_HOME_ROOT:
       process.env.CODEX_HOME_ROOT ?? resolve(runtime, 'codex-homes'),
     ARTIFACT_ROOT: process.env.ARTIFACT_ROOT ?? resolve(runtime, 'artifacts'),
+    CODEX_BIN: process.env.CODEX_BIN ?? resolve('node_modules/.bin/codex'),
   },
 })
 for (const signal of ['SIGINT', 'SIGTERM'])

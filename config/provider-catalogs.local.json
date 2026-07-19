@@ -1,0 +1,544 @@
+[
+  {
+    "schemaVersion": 1,
+    "identity": {
+      "provider": "claude",
+      "adapter": "claude-code-stream-json",
+      "adapterVersion": "1",
+      "upstreamVersion": "2.1.109"
+    },
+    "discoveredAt": "2026-07-19T00:00:00.000Z",
+    "models": [
+      {
+        "provider": "claude",
+        "modelId": "claude-sonnet-5",
+        "displayName": "Claude Sonnet 5",
+        "hidden": false,
+        "isDefault": true,
+        "reasoningEfforts": ["low", "medium", "high", "max"],
+        "defaultReasoningEffort": "high",
+        "inputModalities": ["text", "image"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "supported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "claude",
+        "modelId": "claude-opus-4-8",
+        "displayName": "Claude Opus 4.8",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["low", "medium", "high", "max"],
+        "defaultReasoningEffort": "high",
+        "inputModalities": ["text", "image"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "supported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "claude",
+        "modelId": "claude-fable-5",
+        "displayName": "Claude Fable 5",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["low", "medium", "high", "max"],
+        "defaultReasoningEffort": "high",
+        "inputModalities": ["text", "image"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "supported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "claude",
+        "modelId": "claude-haiku-4-5",
+        "displayName": "Claude Haiku 4.5",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text", "image"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "supported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      }
+    ]
+  },
+  {
+    "schemaVersion": 1,
+    "identity": {
+      "provider": "gemini",
+      "adapter": "gemini-cli-stream-json",
+      "adapterVersion": "1",
+      "upstreamVersion": "0.50.0"
+    },
+    "discoveredAt": "2026-07-19T00:00:00.000Z",
+    "models": [
+      {
+        "provider": "gemini",
+        "modelId": "auto",
+        "displayName": "Gemini Auto",
+        "hidden": false,
+        "isDefault": true,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "gemini",
+        "modelId": "gemini-3.5-flash",
+        "displayName": "Gemini 3.5 Flash",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "gemini",
+        "modelId": "gemini-3.1-pro-preview",
+        "displayName": "Gemini 3.1 Pro Preview",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "gemini",
+        "modelId": "gemini-3.1-flash-lite",
+        "displayName": "Gemini 3.1 Flash-Lite",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "gemini",
+        "modelId": "gemini-3-flash-preview",
+        "displayName": "Gemini 3 Flash Preview",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "gemini",
+        "modelId": "gemini-2.5-pro",
+        "displayName": "Gemini 2.5 Pro",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "gemini",
+        "modelId": "gemini-2.5-flash",
+        "displayName": "Gemini 2.5 Flash",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      },
+      {
+        "provider": "gemini",
+        "modelId": "gemini-2.5-flash-lite",
+        "displayName": "Gemini 2.5 Flash-Lite",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "degraded",
+          "commandExecution": "supported",
+          "fileChanges": "supported",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "degraded",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "supported",
+          "cost": "degraded"
+        }
+      }
+    ]
+  },
+  {
+    "schemaVersion": 1,
+    "identity": {
+      "provider": "cursor",
+      "adapter": "cursor-agent-stream-json",
+      "adapterVersion": "1",
+      "upstreamVersion": "2026.07.16-899851b"
+    },
+    "discoveredAt": "2026-07-19T00:00:00.000Z",
+    "models": [
+      {
+        "provider": "cursor",
+        "modelId": "auto",
+        "displayName": "Cursor Auto",
+        "hidden": false,
+        "isDefault": true,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "composer-2.5",
+        "displayName": "Composer 2.5",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "gpt-5.6-sol",
+        "displayName": "GPT-5.6 Sol",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none", "low", "medium", "high", "xhigh", "max"],
+        "defaultReasoningEffort": "medium",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "gpt-5.6-terra",
+        "displayName": "GPT-5.6 Terra",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none", "low", "medium", "high", "xhigh", "max"],
+        "defaultReasoningEffort": "medium",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "gpt-5.6-luna",
+        "displayName": "GPT-5.6 Luna",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none", "low", "medium", "high", "xhigh", "max"],
+        "defaultReasoningEffort": "medium",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "claude-opus-4-8",
+        "displayName": "Claude Opus 4.8",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["low", "medium", "high", "xhigh", "max"],
+        "defaultReasoningEffort": "high",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "claude-sonnet-5",
+        "displayName": "Claude Sonnet 5",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["low", "medium", "high", "xhigh", "max"],
+        "defaultReasoningEffort": "high",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "cursor-grok-4.5",
+        "displayName": "Cursor Grok 4.5",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["low", "medium", "high"],
+        "defaultReasoningEffort": "medium",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "gemini-3.1-pro",
+        "displayName": "Gemini 3.1 Pro",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      },
+      {
+        "provider": "cursor",
+        "modelId": "gemini-3.5-flash",
+        "displayName": "Gemini 3.5 Flash",
+        "hidden": false,
+        "isDefault": false,
+        "reasoningEfforts": ["none"],
+        "defaultReasoningEffort": "none",
+        "inputModalities": ["text"],
+        "capabilities": {
+          "streaming": "supported",
+          "reasoningSummary": "unsupported",
+          "commandExecution": "supported",
+          "fileChanges": "degraded",
+          "approvals": "unsupported",
+          "interrupt": "supported",
+          "resume": "supported",
+          "toolCalls": "supported",
+          "imageInput": "unsupported",
+          "usage": "degraded",
+          "cost": "unsupported"
+        }
+      }
+    ]
+  }
+]

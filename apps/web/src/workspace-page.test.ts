@@ -28,6 +28,7 @@ import {
   serverOwnedRunLabel,
   supportGrantStatusLabel,
   shouldSubmitComposer,
+  userFacingApiError,
 } from './workspace-page'
 import MessageMarkdown from './message-markdown'
 import {
@@ -73,6 +74,29 @@ describe('WP20 support access presentation', () => {
     expect(supportGrantStatusLabel('active')).toBe('Aktif')
     expect(supportGrantStatusLabel('revoked')).toContain('iptal')
     expect(supportGrantStatusLabel('expired')).toContain('doldu')
+  })
+})
+
+describe('API error presentation', () => {
+  it('turns prepaid credit codes into an actionable user message', () => {
+    expect(
+      userFacingApiError(
+        {
+          code: 'USAGE_LIMIT_REACHED',
+          message: 'Prepaid credit balance is insufficient',
+          reasonCode: 'HARD_LIMIT_PREPAID_CREDIT',
+          policyVersion: 24,
+          measurementWatermark: 'credit:0',
+        },
+        429,
+      ),
+    ).toContain('Kullanım kredisi tükendi')
+  })
+
+  it('keeps safe server messages for unknown errors', () => {
+    expect(
+      userFacingApiError({ code: 'UNKNOWN', message: 'Tekrar deneyin' }, 500),
+    ).toBe('Tekrar deneyin')
   })
 })
 
@@ -155,7 +179,23 @@ describe('bounded browser timeline state', () => {
       priceCatalogVersions: ['v1'],
     }
     expect(formatUsageCost(baseUsage)).toMatchObject({
-      detail: 'tahmini · unreconciled · complete',
+      detail: 'API liste fiyatı tahmini · complete',
+    })
+    expect(
+      formatUsageCost({
+        ...baseUsage,
+        counters: {
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          toolUnits: 0,
+        },
+        estimatedCostMicros: null,
+      }),
+    ).toMatchObject({
+      amount: 'Henüz ölçülmüş kullanım yok',
+      detail: 'İlk token kaydından sonra hesaplanır',
     })
     expect(
       formatUsageCost({
@@ -164,8 +204,8 @@ describe('bounded browser timeline state', () => {
         estimatedCostMicros: null,
       }),
     ).toMatchObject({
-      amount: 'Maliyet ölçülemedi',
-      detail: 'fiyat bekleniyor · unreconciled · partial',
+      amount: 'Fiyatlandırılamadı',
+      detail: 'Bu model için fiyat yok · partial',
     })
     expect(
       formatUsageCost({
@@ -173,7 +213,7 @@ describe('bounded browser timeline state', () => {
         reconciliationStatus: 'reconciled',
         officialCostMicros: 1000,
       }),
-    ).toMatchObject({ detail: 'resmî · reconciled · complete' })
+    ).toMatchObject({ detail: 'Gerçekleşen provider maliyeti · complete' })
   })
 
   it('keeps only versioned minimized offline history metadata', () => {
@@ -252,7 +292,7 @@ describe('bounded browser timeline state', () => {
       effort: 'medium',
     })
   })
-  it('maps Claude defaults and Gemini/Cursor none in the provider picker', () => {
+  it('maps each provider catalog default in the provider picker', () => {
     expect(
       providerPickerSelection('claude', [
         {
@@ -279,10 +319,10 @@ describe('bounded browser timeline state', () => {
           modelId: 'cursor-model',
           isDefault: true,
           hidden: false,
-          defaultReasoningEffort: 'none',
+          defaultReasoningEffort: 'max',
         },
       ]),
-    ).toEqual({ modelId: 'cursor-model', effort: 'none' })
+    ).toEqual({ modelId: 'cursor-model', effort: 'max' })
   })
   it('renders actionable auth and unknown/capacity guidance', () => {
     expect(providerAuthMessage('claude', 'required', 'Run login')).toContain(
@@ -319,6 +359,19 @@ describe('bounded browser timeline state', () => {
       provider: 'cursor',
       modelId: 'cursor-model',
       effort: 'none',
+    })
+    expect(
+      parseStoredProviderSelection(
+        JSON.stringify({
+          provider: 'cursor',
+          modelId: 'claude-opus-4-8',
+          effort: 'max',
+        }),
+      ),
+    ).toEqual({
+      provider: 'cursor',
+      modelId: 'claude-opus-4-8',
+      effort: 'max',
     })
   })
   it('resets the realtime cursor when navigating between sessions', () => {

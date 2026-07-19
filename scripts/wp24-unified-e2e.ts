@@ -1216,7 +1216,7 @@ try {
     payload: { prompt: 'must not start without prepaid credit' },
   })
   assert.equal(creditDeniedTurn.statusCode, 429, creditDeniedTurn.body)
-  assert.equal(creditDeniedTurn.json().message, 'HARD_LIMIT_PREPAID_CREDIT')
+  assert.equal(creditDeniedTurn.json().reasonCode, 'HARD_LIMIT_PREPAID_CREDIT')
   const creditDeniedSource = await app!.inject({
     method: 'POST',
     url: `/v1/workspaces/${workspaceId}/sources`,
@@ -1230,7 +1230,10 @@ try {
     payload: Buffer.from('credit denied'),
   })
   assert.equal(creditDeniedSource.statusCode, 429, creditDeniedSource.body)
-  assert.equal(creditDeniedSource.json().message, 'HARD_LIMIT_PREPAID_CREDIT')
+  assert.equal(
+    creditDeniedSource.json().reasonCode,
+    'HARD_LIMIT_PREPAID_CREDIT',
+  )
 
   await billing!.withScope(scope, async (client) => {
     await client.query(

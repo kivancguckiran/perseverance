@@ -149,6 +149,7 @@ import {
   type AuthPrincipal,
   type AuthorizationAction,
   type OrganizationMembership,
+  type DependencyReadiness,
   meResponseSchema,
 } from '@persistent-codex/control-plane-contracts'
 import type {
@@ -240,6 +241,7 @@ export interface ControlPlaneOptions {
   metricRecorder?: BoundedMetricRecorder
   now?: () => Date
   readinessProbeTimeoutMs?: number
+  topologyReadiness?: () => Promise<DependencyReadiness>
   securityReadiness?: {
     runtimeBackend: 'local-process' | 'kata-kubernetes'
     isolationLevel: 'development_only' | 'container' | 'microvm'
@@ -1118,6 +1120,19 @@ function sameScope(left: StoreScope, right: StoreScope): boolean {
     left.workspaceId === right.workspaceId &&
     left.sessionId === right.sessionId
   )
+}
+
+function usageLimitErrorResponse(decision: AdmissionDecision) {
+  return apiErrorResponseSchema.parse({
+    code: 'USAGE_LIMIT_REACHED',
+    message:
+      decision.reason === 'HARD_LIMIT_PREPAID_CREDIT'
+        ? 'Prepaid credit balance is insufficient'
+        : 'Workspace usage limit reached',
+    reasonCode: decision.reason,
+    policyVersion: decision.policyVersion,
+    measurementWatermark: decision.measurementWatermark,
+  })
 }
 
 export async function buildControlPlane(options: ControlPlaneOptions = {}) {
@@ -2103,6 +2118,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           throw new Error('DISK_UNAVAILABLE')
       }),
     ])
+    const topologyReadinessPromise = options.topologyReadiness
+      ? withProbeTimeout(timeoutMs, options.topologyReadiness).catch(() => null)
+      : Promise.resolve(null)
     let readiness
     try {
       ;[readiness] = await Promise.all([
@@ -2130,9 +2148,29 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       })
     }
     const dependencyChecks = await dependencyChecksPromise
-    const dependencyFailed = dependencyChecks.some(
-      (check) => check.status === 'failed',
-    )
+    const topologyReadiness = await topologyReadinessPromise
+    const topologyChecks = topologyReadiness
+      ? topologyReadiness.dependencies.map((dependency) => ({
+          name:
+            dependency.name === 'postgresql'
+              ? ('database' as const)
+              : dependency.name === 'event-broker'
+                ? ('eventBroker' as const)
+                : dependency.name === 'object-storage'
+                  ? ('objectStorage' as const)
+                  : dependency.name === 'runtime-control'
+                    ? ('runtimeControl' as const)
+                    : ('kms' as const),
+          status: dependency.ready ? ('ready' as const) : ('failed' as const),
+          code: dependency.code,
+        }))
+      : []
+    const topologyMissing =
+      Boolean(options.topologyReadiness) && !topologyReadiness
+    const dependencyFailed =
+      dependencyChecks.some((check) => check.status === 'failed') ||
+      topologyMissing ||
+      topologyChecks.some((check) => check.status === 'failed')
     const appServer = {
       name: 'appServer' as const,
       status:
@@ -2180,6 +2218,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         security: securityReadiness,
         checks: [
           ...dependencyChecks,
+          ...topologyChecks,
           runtimeIsolation,
           kms,
           encryption,
@@ -2495,12 +2534,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           requestedBytes: request.body.byteLength,
         })
         if (admission?.outcome === 'deny')
-          return reply.code(429).send({
-            code: 'USAGE_LIMIT_REACHED',
-            message: admission.reason,
-            policyVersion: admission.policyVersion,
-            measurementWatermark: admission.measurementWatermark,
-          })
+          return reply.code(429).send(usageLimitErrorResponse(admission))
         if (admission?.outcome === 'warn')
           reply.header('x-usage-warning', admission.reason)
         const metadata = sourceUploadMetadataSchema.parse({
@@ -2696,12 +2730,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             `source-index:${request.params.sourceId}`,
         })
         if (admission?.outcome === 'deny')
-          return reply.code(429).send({
-            code: 'USAGE_LIMIT_REACHED',
-            message: admission.reason,
-            policyVersion: admission.policyVersion,
-            measurementWatermark: admission.measurementWatermark,
-          })
+          return reply.code(429).send(usageLimitErrorResponse(admission))
         if (admission?.outcome === 'warn')
           reply.header('x-usage-warning', admission.reason)
         const job = await corpus.reindexSource(scope, request.params.sourceId)
@@ -2762,12 +2791,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             headerValue(request.headers['idempotency-key']) ?? request.id,
         })
         if (admission?.outcome === 'deny')
-          return reply.code(429).send({
-            code: 'USAGE_LIMIT_REACHED',
-            message: admission.reason,
-            policyVersion: admission.policyVersion,
-            measurementWatermark: admission.measurementWatermark,
-          })
+          return reply.code(429).send(usageLimitErrorResponse(admission))
         if (admission?.outcome === 'warn')
           reply.header('x-usage-warning', admission.reason)
         const body = corpusSearchRequestSchema.parse(request.body)
@@ -5081,6 +5105,24 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             created: reserved.created,
           }
         }
+        if (options.topologyReadiness) {
+          const topology = await withProbeTimeout(
+            options.readinessProbeTimeoutMs ?? 2_000,
+            options.topologyReadiness,
+          ).catch(() => null)
+          if (!topology?.ready) {
+            if (sharedTask?.created)
+              await sharedFolders.settleTask({
+                ...sharedTask.identity,
+                taskId: sharedTask.taskId,
+                status: 'admission_denied',
+              })
+            return reply.code(503).send({
+              code: 'PRODUCTION_DEPENDENCY_UNAVAILABLE',
+              message: 'Production dependencies are not ready',
+            })
+          }
+        }
         admission = await admitCommercialOperation({
           tenantId: scope.tenantId,
           workspaceId: scope.workspaceId,
@@ -5095,12 +5137,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
               taskId: sharedTask.taskId,
               status: 'admission_denied',
             })
-          return reply.code(429).send({
-            code: 'USAGE_LIMIT_REACHED',
-            message: admission.reason,
-            policyVersion: admission.policyVersion,
-            measurementWatermark: admission.measurementWatermark,
-          })
+          return reply.code(429).send(usageLimitErrorResponse(admission))
         }
         if (admission?.outcome === 'warn')
           reply.header('x-usage-warning', admission.reason)
