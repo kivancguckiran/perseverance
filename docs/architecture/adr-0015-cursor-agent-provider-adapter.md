@@ -16,8 +16,9 @@ devredemez.
 - Provider ID `cursor`, process binary’si `cursor-agent`, adapter yüzeyi
   `--print --output-format stream-json` olur. Process yalnız workspace cwd’sinde başlar;
   stdout NDJSON ve stderr diagnostics ayrı tutulur.
-- Destek politikası exact, gerçek smoke ile doğrulanmış release allowlist’idir. İlk ve
-  mevcut kabul edilen release `2026.07.09-a3815c0` olur. Tarih/hash biçimi parse
+- Destek politikası exact, gerçek smoke ile doğrulanmış release allowlist’idir. İlk
+  kabul edilen release `2026.07.09-a3815c0`, 19 Temmuz 2026 tarihinde fixture ve
+  authenticated smoke ile doğrulanan güncel release `2026.07.16-899851b` olur. Tarih/hash biçimi parse
   edilemez, binary yok/çalıştırılamaz veya release allowlist dışında kalırsa process
   başlamaz. Aynı tarihli farklı hash dahil yeni her release fixture ve zorunlu gerçek
   smoke kanıtı olmadan reddedilir. Adapter installer, `curl`, `update` veya `upgrade`
@@ -27,8 +28,13 @@ devredemez.
   credential’ından veya server environment’ındaki `CURSOR_API_KEY`’den gelebilir;
   environment’ta key varlığı tek başına readiness sayılmaz. API key argv, event, log,
   fixture, snapshot, audit veya UI’a taşınmaz. Prompt argv yerine stdin’den verilir.
-- Model katalogu yalnız `PERSISTENT_PROVIDER_CATALOGS_JSON` içindeki deployment
-  doğrulamasından gelir. Cursor için reasoning effort yalnız `none` kabul edilir.
+- Model katalogu yalnız versioned `PERSISTENT_PROVIDER_CATALOGS_FILE` veya deployment
+  override’ı `PERSISTENT_PROVIDER_CATALOGS_JSON` içinden gelir. `2026.07.16-899851b`
+  authenticated model listesini machine-readable olarak verir. Yardım metni ayrıca
+  parameterized model biçimi ilan etse de bu release/account kombinasyonu gerçek
+  smoke’ta onu reddeder ve yalnız listedeki exact ID’leri kabul eder. Adapter katalogda
+  izinli base model/effort çiftini `<model>-<effort>` exact ID’sine çevirir; kullanıcıdan
+  serbest model suffix’i almaz. Effort desteklemeyen modeller yalnız `none` ilan edilir.
 - `<workspace>/.cursor/cli.json` process başlamadan parse edilir. Allow/deny array’leri,
   workspace scope, traversal, symlink, `/proc`, `/sys`, sensitive file deny’ları ve aşırı
   geniş allow kuralları fail-closed doğrulanır. Deny allow’dan üstündür.
@@ -56,19 +62,19 @@ devredemez.
 
 ## Capability matrix
 
-| Capability          | Cursor Agent `2026.07.09-a3815c0` |
-| ------------------- | --------------------------------- |
-| Streaming           | supported                         |
-| Reasoning summary   | unsupported                       |
-| Command execution   | supported                         |
-| File changes        | degraded (`--force` kapılı)       |
-| Approval resolution | unsupported                       |
-| Interrupt           | supported                         |
-| Resume              | supported                         |
-| Tool calls          | supported                         |
-| Image input         | unsupported                       |
-| Usage               | degraded (provider-reported)      |
-| Cost                | unsupported                       |
+| Capability          | Cursor Agent `2026.07.09-a3815c0`, `2026.07.16-899851b` |
+| ------------------- | ------------------------------------------------------- |
+| Streaming           | supported                                               |
+| Reasoning summary   | unsupported                                             |
+| Command execution   | supported                                               |
+| File changes        | degraded (`--force` kapılı)                             |
+| Approval resolution | unsupported                                             |
+| Interrupt           | supported                                               |
+| Resume              | supported                                               |
+| Tool calls          | supported                                               |
+| Image input         | unsupported                                             |
+| Usage               | degraded (provider-reported)                            |
+| Cost                | unsupported                                             |
 
 ## Sonuçlar
 

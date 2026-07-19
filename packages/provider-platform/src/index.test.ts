@@ -58,6 +58,30 @@ const catalog: ProviderModelCatalog = {
 }
 
 describe('provider model policy', () => {
+  it('accepts the provider-level max reasoning effort', () => {
+    expect(
+      resolveModelSelection(
+        'codex',
+        { modelId: 'fixture-model-a', reasoningEffort: 'max' },
+        {
+          sol: { provider: 'codex', selector: { kind: 'catalog_default' } },
+          luna: { provider: 'codex', selector: { kind: 'catalog_default' } },
+        },
+        {
+          ...catalog,
+          models: [
+            {
+              ...catalog.models[0]!,
+              reasoningEfforts: ['none', 'medium', 'max'],
+            },
+          ],
+        },
+      ),
+    ).toMatchObject({
+      requested: { modelId: 'fixture-model-a', reasoningEffort: 'max' },
+    })
+  })
+
   it('resolves aliases only through config and the discovered catalog', () => {
     expect(
       resolveModelPolicy(

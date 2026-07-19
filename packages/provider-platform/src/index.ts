@@ -15,6 +15,7 @@ export const reasoningEffortSchema = z.enum([
   'medium',
   'high',
   'xhigh',
+  'max',
 ])
 export const capabilitySupportSchema = z.enum([
   'supported',

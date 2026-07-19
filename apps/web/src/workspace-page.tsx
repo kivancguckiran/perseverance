@@ -32,6 +32,7 @@ import {
   folderMemberListResponseSchema,
   folderMembershipSchema,
   sharedFolderSchema,
+  apiErrorResponseSchema,
   type SessionResponse,
   type Approval,
   type ApprovalDecision,
@@ -51,13 +52,23 @@ import {
   type SupportGrant,
   type SupportAccessAction,
   type SecurityAuditRecord,
+  type Source,
   type FolderMembership,
   type SharedFolder,
+  type ApiErrorResponse,
 } from '@persistent-codex/control-plane-contracts'
 import type { TimelineEvent } from '@persistent-codex/domain-events'
 import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { PushNotificationControl, useOnlineStatus } from './pwa-runtime'
 import {
   offlineConversationKey,
@@ -240,14 +251,22 @@ async function readBillingFinancial(): Promise<BillingFinancialOverview> {
 
 export function formatUsageCost(summary: UsageCostSummary | undefined) {
   if (!summary)
-    return { amount: 'Maliyet bekleniyor', detail: 'usage henüz alınmadı' }
+    return {
+      amount: 'Henüz kullanım yok',
+      detail: 'İlk yanıttan sonra hesaplanır',
+    }
+  if (Object.values(summary.counters).every((value) => value === 0))
+    return {
+      amount: 'Henüz ölçülmüş kullanım yok',
+      detail: 'İlk token kaydından sonra hesaplanır',
+    }
   const micros =
     summary.reconciliationStatus === 'reconciled'
       ? summary.officialCostMicros
       : summary.estimatedCostMicros
   const amount =
     micros === null
-      ? 'Maliyet ölçülemedi'
+      ? 'Fiyatlandırılamadı'
       : new Intl.NumberFormat('en-US', {
           style: 'currency',
           currency: summary.currency,
@@ -258,8 +277,8 @@ export function formatUsageCost(summary: UsageCostSummary | undefined) {
     amount,
     detail:
       summary.reconciliationStatus === 'reconciled'
-        ? `resmî · reconciled · ${summary.completeness}`
-        : `${micros === null ? 'fiyat bekleniyor' : 'tahmini'} · unreconciled · ${summary.completeness}`,
+        ? `Gerçekleşen provider maliyeti · ${summary.completeness}`
+        : `${micros === null ? 'Bu model için fiyat yok' : 'API liste fiyatı tahmini'} · ${summary.completeness}`,
   }
 }
 
@@ -365,11 +384,27 @@ export function parseOfflineConversation(
   }
 }
 
+export function userFacingApiError(
+  body: ApiErrorResponse | null,
+  status: number,
+) {
+  if (
+    body?.reasonCode === 'HARD_LIMIT_PREPAID_CREDIT' ||
+    body?.message === 'HARD_LIMIT_PREPAID_CREDIT'
+  )
+    return 'Kullanım kredisi tükendi. Bu workspace’te yeni bir işlem başlatmak için yeterli prepaid kredi bulunmuyor.'
+  if (body?.code === 'USAGE_LIMIT_REACHED')
+    return 'Workspace kullanım limiti doldu. Plan ve kota ayarlarını kontrol edin.'
+  return body?.message ?? `İstek başarısız (${status})`
+}
+
 async function apiError(response: Response): Promise<Error> {
-  const body = (await response.json().catch(() => null)) as {
-    message?: string
-  } | null
-  return new Error(body?.message ?? `İstek başarısız (${response.status})`)
+  const parsed = apiErrorResponseSchema.safeParse(
+    await response.json().catch(() => null),
+  )
+  return new Error(
+    userFacingApiError(parsed.success ? parsed.data : null, response.status),
+  )
 }
 
 export async function readSessionDetail(
@@ -492,6 +527,7 @@ function SupportAccessPanel({
   audit,
   auditChainValid,
   onChanged,
+  onClose,
 }: {
   sessionId: string
   grants: SupportGrant[]
@@ -499,8 +535,8 @@ function SupportAccessPanel({
   audit: SecurityAuditRecord[]
   auditChainValid: boolean
   onChanged(): void
+  onClose(): void
 }) {
-  const [open, setOpen] = useState(false)
   const [reason, setReason] = useState('')
   const [supportPrincipalId, setSupportPrincipalId] = useState('')
   const [durationMinutes, setDurationMinutes] = useState(15)
@@ -541,7 +577,6 @@ function SupportAccessPanel({
       if (!response.ok) throw await apiError(response)
       supportGrantSchema.parse(await response.json())
       setReason('')
-      setOpen(false)
       onChanged()
     } catch (cause) {
       setPanelError(cause instanceof Error ? cause.message : String(cause))
@@ -573,8 +608,8 @@ function SupportAccessPanel({
   }
 
   return (
-    <section
-      className="support-access-panel"
+    <aside
+      className="workspace-drawer support-access-panel"
       aria-labelledby="support-access-title"
     >
       <div className="support-access-heading">
@@ -584,10 +619,11 @@ function SupportAccessPanel({
         </div>
         <button
           type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
+          className="drawer-close"
+          aria-label="Support erişimi panelini kapat"
+          onClick={onClose}
         >
-          {open ? 'Kapat' : 'Erişim paylaş'}
+          ×
         </button>
       </div>
       <p className="support-access-note">
@@ -599,80 +635,76 @@ function SupportAccessPanel({
           {panelError}
         </p>
       ) : null}
-      {open ? (
-        <form
-          className="support-access-form"
-          onSubmit={(event) => void createGrant(event)}
-        >
-          <p>
-            <strong>Paylaşılan nesne:</strong> session <code>{sessionId}</code>
-          </p>
-          <fieldset>
-            <legend>İzin verilen eylemler</legend>
-            {(
-              [
-                ['content.view', 'Prompt ve output görüntüleme'],
-                ['artifact.download', 'Artifact indirme (çift onay)'],
-                ['attachment.download', 'Attachment indirme (çift onay)'],
-                ['content.decrypt', 'İçerik decrypt (KMS rolü + çift onay)'],
-              ] as const
-            ).map(([action, label]) => (
-              <label key={action}>
-                <input
-                  type="checkbox"
-                  checked={actions.includes(action)}
-                  onChange={() => toggleAction(action)}
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </fieldset>
-          <label>
-            <span>Atanan support principal</span>
-            <input
-              value={supportPrincipalId}
-              required
-              maxLength={160}
-              onChange={(event) => setSupportPrincipalId(event.target.value)}
-            />
-          </label>
-          <label>
-            <span>Kullanıcı gerekçesi</span>
-            <textarea
-              value={reason}
-              required
-              minLength={8}
-              maxLength={500}
-              onChange={(event) => setReason(event.target.value)}
-            />
-          </label>
-          <label>
-            <span>Süre</span>
-            <select
-              value={durationMinutes}
-              onChange={(event) =>
-                setDurationMinutes(Number(event.target.value))
-              }
-            >
-              <option value={5}>5 dakika</option>
-              <option value={15}>15 dakika</option>
-              <option value={30}>30 dakika</option>
-              <option value={60}>60 dakika</option>
-            </select>
-          </label>
-          <button
-            type="submit"
-            disabled={
-              submitting ||
-              actions.length === 0 ||
-              reason.trim().length < 8 ||
-              !supportPrincipalId.trim()
-            }
+      <form
+        className="support-access-form"
+        onSubmit={(event) => void createGrant(event)}
+      >
+        <p>
+          <strong>Paylaşılan nesne:</strong> session <code>{sessionId}</code>
+        </p>
+        <fieldset>
+          <legend>İzin verilen eylemler</legend>
+          {(
+            [
+              ['content.view', 'Prompt ve output görüntüleme'],
+              ['artifact.download', 'Artifact indirme (çift onay)'],
+              ['attachment.download', 'Attachment indirme (çift onay)'],
+              ['content.decrypt', 'İçerik decrypt (KMS rolü + çift onay)'],
+            ] as const
+          ).map(([action, label]) => (
+            <label key={action}>
+              <input
+                type="checkbox"
+                checked={actions.includes(action)}
+                onChange={() => toggleAction(action)}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </fieldset>
+        <label>
+          <span>Atanan support principal</span>
+          <input
+            value={supportPrincipalId}
+            required
+            maxLength={160}
+            onChange={(event) => setSupportPrincipalId(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Kullanıcı gerekçesi</span>
+          <textarea
+            value={reason}
+            required
+            minLength={8}
+            maxLength={500}
+            onChange={(event) => setReason(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Süre</span>
+          <select
+            value={durationMinutes}
+            onChange={(event) => setDurationMinutes(Number(event.target.value))}
           >
-            {submitting ? 'Oluşturuluyor…' : 'Dar kapsamlı grant oluştur'}
-          </button>
-        </form>
-      ) : null}
+            <option value={5}>5 dakika</option>
+            <option value={15}>15 dakika</option>
+            <option value={30}>30 dakika</option>
+            <option value={60}>60 dakika</option>
+          </select>
+        </label>
+        <button
+          type="submit"
+          disabled={
+            submitting ||
+            actions.length === 0 ||
+            reason.trim().length < 8 ||
+            !supportPrincipalId.trim()
+          }
+        >
+          {submitting ? 'Oluşturuluyor…' : 'Dar kapsamlı grant oluştur'}
+        </button>
+      </form>
       {pending ? <p>Grant’ler yükleniyor…</p> : null}
       <ul className="support-grant-list">
         {grants.map((grant) => (
@@ -721,7 +753,78 @@ function SupportAccessPanel({
           </ol>
         </details>
       ) : null}
-    </section>
+    </aside>
+  )
+}
+
+function SourcesDrawer({
+  sources,
+  pending,
+  error,
+  online,
+  onUpload,
+  onClose,
+}: {
+  sources: Source[]
+  pending: boolean
+  error: boolean
+  online: boolean
+  onUpload(file: File): void
+  onClose(): void
+}) {
+  return (
+    <aside
+      className="workspace-drawer sources-drawer"
+      aria-labelledby="sources-title"
+    >
+      <div className="drawer-heading">
+        <div>
+          <p className="section-label">Workspace bilgisi</p>
+          <h2 id="sources-title">Sources</h2>
+          <p>Bu workspace’in cevaplarda başvurabildiği dosya ve dokümanlar.</p>
+        </div>
+        <button
+          className="drawer-close"
+          type="button"
+          onClick={onClose}
+          aria-label="Sources panelini kapat"
+        >
+          ×
+        </button>
+      </div>
+      <label className="source-upload drawer-upload">
+        <span>{pending ? 'Yükleniyor…' : 'Source ekle'}</span>
+        <input
+          type="file"
+          disabled={!online || pending}
+          accept=".pdf,.md,.markdown,.txt,.text,.json,.js,.jsx,.ts,.tsx,.py,.rs,.sh,.css,.html"
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            if (file) onUpload(file)
+            event.currentTarget.value = ''
+          }}
+        />
+      </label>
+      {error ? (
+        <p className="form-error" role="alert">
+          Source listesi alınamadı.
+        </p>
+      ) : null}
+      {sources.length ? (
+        <ul className="source-list" aria-label="Corpus source durumları">
+          {sources.map((source) => (
+            <li key={source.sourceId}>
+              <span title={source.displayName}>{source.displayName}</span>
+              <strong data-source-status={source.status}>
+                {source.status}
+              </strong>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="drawer-empty">Henüz source eklenmedi.</p>
+      )}
+    </aside>
   )
 }
 
@@ -1895,6 +1998,8 @@ function ConversationHistory({
   onArchiveFolder,
   onRestoreFolder,
   onDeleteFolder,
+  tools,
+  footer,
 }: {
   folders: ConversationFolder[]
   sessions: HistorySession[]
@@ -1911,6 +2016,8 @@ function ConversationHistory({
   onArchiveFolder(folder: ConversationFolder): void
   onRestoreFolder(folder: ConversationFolder): void
   onDeleteFolder(folder: ConversationFolder): void
+  tools?: ReactNode
+  footer?: ReactNode
 }) {
   const [creatingFolder, setCreatingFolder] = useState(false)
   const activeFolders = folders.filter((folder) => !folder.archivedAt)
@@ -1949,6 +2056,7 @@ function ConversationHistory({
           <span aria-hidden="true">▱</span> Yeni folder
         </button>
       </div>
+      {tools ? <div className="history-tools">{tools}</div> : null}
       {creatingFolder ? (
         <form
           className="folder-create-row"
@@ -2088,6 +2196,7 @@ function ConversationHistory({
           </details>
         ) : null}
       </div>
+      {footer ? <div className="history-footer">{footer}</div> : null}
     </section>
   )
 }
@@ -2095,7 +2204,7 @@ function ConversationHistory({
 export function readStoredProviderSelection(): {
   provider: 'codex' | 'claude' | 'gemini' | 'cursor'
   modelId: string
-  effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 } {
   return parseStoredProviderSelection(
     typeof window === 'undefined'
@@ -2107,7 +2216,7 @@ export function readStoredProviderSelection(): {
 export function parseStoredProviderSelection(raw: string | null): {
   provider: 'codex' | 'claude' | 'gemini' | 'cursor'
   modelId: string
-  effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 } {
   const fallback = {
     provider: 'codex' as const,
@@ -2125,6 +2234,7 @@ export function parseStoredProviderSelection(raw: string | null): {
       'medium',
       'high',
       'xhigh',
+      'max',
     ] as const
     return saved &&
       providers.includes(saved.provider as (typeof providers)[number]) &&
@@ -2148,7 +2258,7 @@ export function providerPickerSelection(
     isDefault: boolean
     hidden: boolean
     defaultReasoningEffort:
-      'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+      'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   }> = [],
 ) {
   const model = models.find((entry) => entry.isDefault && !entry.hidden)
@@ -2323,6 +2433,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   }, [])
   const [folderActionPending, setFolderActionPending] = useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const [supportAccessOpen, setSupportAccessOpen] = useState(false)
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
   const [attachmentPending, setAttachmentPending] = useState(false)
   const [sourcePending, setSourcePending] = useState(false)
@@ -2331,7 +2443,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   >('codex')
   const [selectedModelId, setSelectedModelId] = useState('')
   const [selectedEffort, setSelectedEffort] = useState<
-    'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+    'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   >('medium')
   const [providerSelectionHydrated, setProviderSelectionHydrated] =
     useState(false)
@@ -2361,6 +2473,32 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     setSelectedEffort(stored.effort)
     setProviderSelectionHydrated(true)
   }, [])
+
+  useEffect(() => {
+    if (!providerSelectionHydrated || !providerCatalogs.data) return
+    if (selectedProvider === 'codex' && selectedModelId === '') return
+    const catalog = providerCatalogs.data.catalogs.find(
+      (entry) => entry.identity.provider === selectedProvider,
+    )
+    if (!catalog) return
+    const selected = catalog.models.find(
+      (model) => model.modelId === selectedModelId && !model.hidden,
+    )
+    if (!selected) {
+      const fallback = providerPickerSelection(selectedProvider, catalog.models)
+      setSelectedModelId(fallback.modelId)
+      setSelectedEffort(fallback.effort)
+      return
+    }
+    if (!selected.reasoningEfforts.includes(selectedEffort))
+      setSelectedEffort(selected.defaultReasoningEffort)
+  }, [
+    providerCatalogs.data,
+    providerSelectionHydrated,
+    selectedEffort,
+    selectedModelId,
+    selectedProvider,
+  ])
 
   useEffect(() => {
     if (!syncedHistory.length) return
@@ -2789,7 +2927,16 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const capabilityWarnings = selectedModel
     ? Object.entries(selectedModel.capabilities).flatMap(
         ([capability, support]) =>
-          support === 'supported' ? [] : [`${capability}: ${support}`],
+          support === 'supported' ||
+          !['commandExecution', 'fileChanges', 'approvals'].includes(capability)
+            ? []
+            : [
+                capability === 'approvals'
+                  ? 'Native approval akışı yok'
+                  : capability === 'commandExecution'
+                    ? 'Komut desteği sınırlı'
+                    : 'Dosya değişikliği desteği sınırlı',
+              ],
       )
     : []
   const selectedProviderReadiness =
@@ -3155,6 +3302,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     const trimmed = prompt.trim()
     if (
       !session ||
+      session.status !== 'active' ||
       (!trimmed && attachments.length === 0) ||
       turnPending ||
       turnActive ||
@@ -3415,6 +3563,135 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 params: { sessionId: selectedSessionId },
               })
             }}
+            footer={
+              <fieldset
+                className="provider-picker provider-picker-compact"
+                disabled={sessionPending || !online}
+              >
+                <legend>Yeni sohbet modeli</legend>
+                <label>
+                  Provider
+                  <select
+                    aria-label="Provider"
+                    value={selectedProvider}
+                    onChange={(event) => {
+                      const provider = event.target.value as
+                        'codex' | 'claude' | 'gemini' | 'cursor'
+                      const catalog = providerCatalogs.data?.catalogs.find(
+                        (entry) => entry.identity.provider === provider,
+                      )
+                      const selection = providerPickerSelection(
+                        provider,
+                        catalog?.models,
+                      )
+                      setSelectedProvider(provider)
+                      setSelectedModelId(selection.modelId)
+                      setSelectedEffort(selection.effort)
+                    }}
+                  >
+                    {(providerCatalogs.data?.catalogs ?? []).map((catalog) => (
+                      <option
+                        key={catalog.identity.provider}
+                        value={catalog.identity.provider}
+                      >
+                        {catalog.identity.provider}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Model
+                  <select
+                    aria-label="Model"
+                    value={selectedModelId}
+                    onChange={(event) => {
+                      const modelId = event.target.value
+                      const model = selectedCatalog?.models.find(
+                        (entry) => entry.modelId === modelId,
+                      )
+                      setSelectedModelId(modelId)
+                      setSelectedEffort(
+                        modelId
+                          ? (model?.defaultReasoningEffort ?? 'none')
+                          : 'medium',
+                      )
+                    }}
+                  >
+                    {selectedProvider === 'codex' ? (
+                      <option value="">sol · catalog default</option>
+                    ) : null}
+                    {(selectedCatalog?.models ?? [])
+                      .filter((model) => !model.hidden)
+                      .map((model) => (
+                        <option key={model.modelId} value={model.modelId}>
+                          {model.displayName}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Reasoning
+                  <select
+                    aria-label="Reasoning effort"
+                    value={selectedEffort}
+                    onChange={(event) =>
+                      setSelectedEffort(
+                        event.target.value as typeof selectedEffort,
+                      )
+                    }
+                  >
+                    {availableEfforts.map((effort) => (
+                      <option key={effort} value={effort}>
+                        {effort === 'none' && selectedProvider === 'gemini'
+                          ? 'provider default'
+                          : effort}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {capabilityWarnings.length > 0 ? (
+                  <p className="capability-warning" role="note">
+                    {capabilityWarnings.join(' · ')}
+                  </p>
+                ) : null}
+                {selectedProvider !== 'codex' && selectedProviderReadiness ? (
+                  <p className="capability-warning" role="status">
+                    {providerAuthMessage(
+                      selectedProvider,
+                      selectedProviderReadiness.authStatus,
+                      selectedProviderReadiness.instruction,
+                    )}
+                  </p>
+                ) : null}
+              </fieldset>
+            }
+            tools={
+              <>
+                <button
+                  className="history-tool-button"
+                  type="button"
+                  onClick={() => setSourcesOpen(true)}
+                >
+                  <span>▤ Sources</span>
+                  <small>{sources.data?.sources.length ?? 0}</small>
+                </button>
+                {session ? (
+                  <button
+                    className="history-tool-button"
+                    type="button"
+                    onClick={() => setSupportAccessOpen(true)}
+                  >
+                    <span>Support erişimi</span>
+                    <small>
+                      {supportGrants.data?.filter(
+                        (grant) => grant.status === 'active',
+                      ).length ?? 0}{' '}
+                      aktif
+                    </small>
+                  </button>
+                ) : null}
+              </>
+            }
           />
           <section
             className="shared-folder-panel"
@@ -3559,124 +3836,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               <dd>{realtimeState}</dd>
             </div>
           </dl>
-          <fieldset
-            className="provider-picker"
-            disabled={sessionPending || !online}
-          >
-            <legend>Yeni conversation modeli</legend>
-            <label>
-              Provider
-              <select
-                aria-label="Provider"
-                value={selectedProvider}
-                onChange={(event) => {
-                  const provider = event.target.value as
-                    'codex' | 'claude' | 'gemini' | 'cursor'
-                  const catalog = providerCatalogs.data?.catalogs.find(
-                    (entry) => entry.identity.provider === provider,
-                  )
-                  const selection = providerPickerSelection(
-                    provider,
-                    catalog?.models,
-                  )
-                  setSelectedProvider(provider)
-                  setSelectedModelId(selection.modelId)
-                  setSelectedEffort(selection.effort)
-                }}
-              >
-                {(providerCatalogs.data?.catalogs ?? []).map((catalog) => (
-                  <option
-                    key={catalog.identity.provider}
-                    value={catalog.identity.provider}
-                  >
-                    {catalog.identity.provider}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Model
-              <select
-                aria-label="Model"
-                value={selectedModelId}
-                onChange={(event) => {
-                  const modelId = event.target.value
-                  const model = selectedCatalog?.models.find(
-                    (entry) => entry.modelId === modelId,
-                  )
-                  setSelectedModelId(modelId)
-                  setSelectedEffort(
-                    modelId
-                      ? (model?.defaultReasoningEffort ?? 'none')
-                      : 'medium',
-                  )
-                }}
-              >
-                {selectedProvider === 'codex' ? (
-                  <option value="">sol · catalog default</option>
-                ) : null}
-                {(selectedCatalog?.models ?? [])
-                  .filter((model) => !model.hidden)
-                  .map((model) => (
-                    <option key={model.modelId} value={model.modelId}>
-                      {model.displayName}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label>
-              Reasoning effort
-              <select
-                aria-label="Reasoning effort"
-                value={selectedEffort}
-                onChange={(event) =>
-                  setSelectedEffort(event.target.value as typeof selectedEffort)
-                }
-              >
-                {availableEfforts.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {capabilityWarnings.length > 0 ? (
-              <p className="capability-warning" role="note">
-                {capabilityWarnings.join(' · ')}
-              </p>
-            ) : null}
-            {selectedProvider !== 'codex' && selectedProviderReadiness ? (
-              <p className="capability-warning" role="status">
-                {providerAuthMessage(
-                  selectedProvider,
-                  selectedProviderReadiness.authStatus,
-                  selectedProviderReadiness.instruction,
-                )}
-              </p>
-            ) : null}
-            {providerCatalogs.isError ? (
-              <p className="form-error">Provider catalog alınamadı.</p>
-            ) : null}
-          </fieldset>
-          <button
-            className="session-button"
-            type="button"
-            disabled={
-              sessionPending ||
-              !online ||
-              (!authReady && selectedProvider === 'codex') ||
-              !selectedModel ||
-              !availableEfforts.includes(selectedEffort) ||
-              selectedProviderReadiness?.ready === false
-            }
-            onClick={() => void createSession()}
-          >
-            {sessionPending
-              ? 'Session başlatılıyor…'
-              : session
-                ? 'Yeni session'
-                : 'Session oluştur'}
-          </button>
           {session ? (
             <div className="session-meta">
               <span>{session.sessionId}</span>
@@ -3689,7 +3848,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   disabled={sessionPending}
                   onClick={() => void resumeSession()}
                 >
-                  {sessionPending ? 'Resume ediliyor…' : 'Session resume'}
+                  {sessionPending ? 'Sürdürülüyor…' : 'Sohbeti sürdür'}
                 </button>
               ) : null}
               {session.recoveryErrorCode ? (
@@ -3697,11 +3856,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               ) : null}
             </div>
           ) : null}
-          <nav className="recent-sessions" aria-label="Yakın session’lar">
-            <p className="section-label">Yakın session’lar</p>
+          <nav className="recent-sessions" aria-label="Son sohbetler">
+            <p className="section-label">Son sohbetler</p>
             {recentSessions.isPending ? <span>Yükleniyor…</span> : null}
             {recentSessions.isError ? (
-              <span>Session listesi alınamadı.</span>
+              <span>Sohbet listesi alınamadı.</span>
             ) : null}
             {historySessions.map((item) => (
               <button
@@ -3728,13 +3887,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 <span>
                   {recentSessions.isFetchingNextPage
                     ? 'Yükleniyor…'
-                    : 'Daha eski session’lar'}
+                    : 'Daha eski sohbetler'}
                 </span>
               </button>
             ) : null}
             {recentSessions.data &&
             !recentSessions.data.pages.some((page) => page.sessions.length) ? (
-              <span>Session yok.</span>
+              <span>Sohbet yok.</span>
             ) : null}
           </nav>
         </aside>
@@ -3996,43 +4155,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </div>
               </details>
             ) : null}
-            <details className="source-panel">
-              <summary
-                aria-label={`Corpus sources (${sources.data?.sources.length ?? 0})`}
-              >
-                <span className="source-panel-icon" aria-hidden="true">
-                  ▤
-                </span>
-                <span className="source-panel-label">Sources</span>
-                <span>{sources.data?.sources.length ?? 0}</span>
-              </summary>
-              <label className="source-upload">
-                <span>{sourcePending ? 'Yükleniyor…' : 'Source ekle'}</span>
-                <input
-                  type="file"
-                  disabled={!online || sourcePending}
-                  accept=".pdf,.md,.markdown,.txt,.text,.json,.js,.jsx,.ts,.tsx,.py,.rs,.sh,.css,.html"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0]
-                    if (file) void uploadSource(file)
-                    event.currentTarget.value = ''
-                  }}
-                />
-              </label>
-              <ul aria-label="Corpus source durumları">
-                {(sources.data?.sources ?? []).map((source) => (
-                  <li key={source.sourceId}>
-                    <span title={source.displayName}>{source.displayName}</span>
-                    <strong data-source-status={source.status}>
-                      {source.status}
-                    </strong>
-                  </li>
-                ))}
-              </ul>
-              {sources.isError ? (
-                <p role="alert">Source listesi alınamadı.</p>
-              ) : null}
-            </details>
             <label>
               <span>Folder</span>
               <select
@@ -4193,17 +4315,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </section>
           {session ? (
             <>
-              <SupportAccessPanel
-                sessionId={session.sessionId}
-                grants={supportGrants.data ?? []}
-                pending={supportGrants.isPending}
-                audit={supportAudit.data?.records ?? []}
-                auditChainValid={supportAudit.data?.chainValid ?? true}
-                onChanged={() => {
-                  void supportGrants.refetch()
-                  void supportAudit.refetch()
-                }}
-              />
               <AuditPanel
                 records={
                   audit.data?.pages.flatMap((page) => page.records) ?? []
@@ -4340,7 +4451,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   &gt;_
                 </div>
                 <h3>
-                  {session ? 'İlk turn için hazır' : 'Önce session oluştur'}
+                  {session ? 'İlk turn için hazır' : 'Önce sohbet oluştur'}
                 </h3>
                 <p>
                   Normalize event’ler durable store commit’inden sonra burada
@@ -4351,16 +4462,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </div>
 
           {error ? (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
+            <section className="request-error" role="alert">
+              <strong>İşlem tamamlanamadı</strong>
+              <p>{error}</p>
+            </section>
           ) : null}
           {session?.recoveryOptions.length ? (
             <section className="recovery-panel" aria-live="polite">
               <h3>
                 {session.recoveryErrorCode === 'THREAD_NOT_RESUMABLE'
                   ? 'Thread sürdürülemiyor'
-                  : 'Session geçici olarak kurtarılamadı'}
+                  : 'Sohbet geçici olarak kurtarılamadı'}
               </h3>
               <p>
                 {session.recoveryErrorCode === 'THREAD_NOT_RESUMABLE'
@@ -4383,7 +4495,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     disabled={sessionPending || readOnly}
                     onClick={() => void createSession()}
                   >
-                    Yeni session başlat
+                    Yeni sohbet başlat
                   </button>
                 ) : null}
                 {session.recoveryOptions.includes('view_read_only') ? (
@@ -4439,6 +4551,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   accept="image/png,image/jpeg,image/webp,image/gif,text/plain,text/markdown,application/json,application/pdf,.md,.txt,.json,.pdf"
                   disabled={
                     !session ||
+                    session.status !== 'active' ||
                     !online ||
                     turnPending ||
                     turnActive ||
@@ -4474,6 +4587,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 rows={2}
                 disabled={
                   !session ||
+                  session.status !== 'active' ||
                   !online ||
                   turnPending ||
                   readOnly ||
@@ -4484,6 +4598,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 type="submit"
                 disabled={
                   !session ||
+                  session.status !== 'active' ||
                   !online ||
                   (!prompt.trim() && attachments.length === 0) ||
                   turnPending ||
@@ -4502,7 +4617,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     disabled={!prompt.trim() || turnPending}
                     onClick={() => void steerOrInterrupt('steer')}
                   >
-                    Aktif turn’e yönlendir
+                    Yönlendir
                   </button>
                   <button
                     type="button"
@@ -4517,6 +4632,41 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </form>
         </section>
       </section>
+      {sourcesOpen || supportAccessOpen ? (
+        <button
+          className="drawer-backdrop"
+          type="button"
+          aria-label="Yan paneli kapat"
+          onClick={() => {
+            setSourcesOpen(false)
+            setSupportAccessOpen(false)
+          }}
+        />
+      ) : null}
+      {sourcesOpen ? (
+        <SourcesDrawer
+          sources={sources.data?.sources ?? []}
+          pending={sourcePending}
+          error={sources.isError}
+          online={online}
+          onUpload={(file) => void uploadSource(file)}
+          onClose={() => setSourcesOpen(false)}
+        />
+      ) : null}
+      {supportAccessOpen && session ? (
+        <SupportAccessPanel
+          sessionId={session.sessionId}
+          grants={supportGrants.data ?? []}
+          pending={supportGrants.isPending}
+          audit={supportAudit.data?.records ?? []}
+          auditChainValid={supportAudit.data?.chainValid ?? true}
+          onClose={() => setSupportAccessOpen(false)}
+          onChanged={() => {
+            void supportGrants.refetch()
+            void supportAudit.refetch()
+          }}
+        />
+      ) : null}
     </main>
   )
 }

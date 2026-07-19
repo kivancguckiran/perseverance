@@ -3106,6 +3106,86 @@ export class SqliteEventStore {
     return this.getSession(scope)
   }
 
+  rebindPristineCodexThreadWithAudit(
+    scope: StoreScope,
+    input: {
+      expectedCodexThreadId: string
+      codexThreadId: string
+      runtimeGeneration: number
+    },
+    audit: AppendAuditInput,
+  ): SessionRecord {
+    assertScope(scope)
+    assertIdentifier(input.expectedCodexThreadId, 'expectedCodexThreadId')
+    assertIdentifier(input.codexThreadId, 'codexThreadId')
+    if (input.expectedCodexThreadId === input.codexThreadId)
+      return this.getSession(scope)
+    const timestamp = this.#timestamp()
+    this.#database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = this.#database
+        .prepare(
+          `UPDATE sessions
+           SET codex_thread_id = ?, status = 'active', recovery_error_code = NULL,
+               runtime_generation = ?, last_resumed_at = ?, updated_at = ?
+           WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+             AND provider = 'codex' AND codex_thread_id = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM durable_runs
+               WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM turns
+               WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM conversation_user_messages
+               WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+             )`,
+        )
+        .run(
+          input.codexThreadId,
+          input.runtimeGeneration,
+          timestamp,
+          timestamp,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+          input.expectedCodexThreadId,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+          scope.tenantId,
+          scope.workspaceId,
+          scope.sessionId,
+        )
+      if (Number(result.changes) !== 1)
+        throw new StoreConflictError(
+          'SESSION_THREAD_REBIND_FORBIDDEN',
+          'Only a conversation without durable history may be rebound',
+        )
+      this.#insertAudit(audit, timestamp)
+      this.#pruneAudit(timestamp)
+      this.#beforeAtomicAuditCommit?.(audit.action)
+      this.#database.exec('COMMIT')
+    } catch (error) {
+      this.#database.exec('ROLLBACK')
+      if (
+        error instanceof Error &&
+        error.message.includes('UNIQUE constraint failed')
+      )
+        throw new StoreConflictError(
+          'CODEX_THREAD_CONFLICT',
+          'Codex thread is already bound to another session in this workspace',
+        )
+      throw error
+    }
+    return this.getSession(scope)
+  }
+
   updateSessionStatus(scope: StoreScope, status: string): SessionRecord {
     assertScope(scope)
     assertIdentifier(status, 'status')

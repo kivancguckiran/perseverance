@@ -1,0 +1,133 @@
+{
+  "version": "official-standard-2026-07-19",
+  "currency": "USD",
+  "effectiveAt": "2026-07-19T00:00:00.000Z",
+  "models": [
+    {
+      "provider": "codex",
+      "modelId": "gpt-5.6-sol",
+      "inputPerMillionMicros": 5000000,
+      "cachedInputPerMillionMicros": 500000,
+      "outputPerMillionMicros": 30000000,
+      "reasoningPerMillionMicros": 30000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "codex",
+      "modelId": "gpt-5.6-terra",
+      "inputPerMillionMicros": 2500000,
+      "cachedInputPerMillionMicros": 250000,
+      "outputPerMillionMicros": 15000000,
+      "reasoningPerMillionMicros": 15000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "codex",
+      "modelId": "gpt-5.6-luna",
+      "inputPerMillionMicros": 1000000,
+      "cachedInputPerMillionMicros": 100000,
+      "outputPerMillionMicros": 6000000,
+      "reasoningPerMillionMicros": 6000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "codex",
+      "modelId": "gpt-5.5",
+      "inputPerMillionMicros": 5000000,
+      "cachedInputPerMillionMicros": 500000,
+      "outputPerMillionMicros": 30000000,
+      "reasoningPerMillionMicros": 30000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "claude",
+      "modelId": "sonnet",
+      "inputPerMillionMicros": 2000000,
+      "cachedInputPerMillionMicros": 200000,
+      "outputPerMillionMicros": 10000000,
+      "reasoningPerMillionMicros": 10000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "claude",
+      "modelId": "claude-sonnet-5",
+      "inputPerMillionMicros": 2000000,
+      "cachedInputPerMillionMicros": 200000,
+      "outputPerMillionMicros": 10000000,
+      "reasoningPerMillionMicros": 10000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "claude",
+      "modelId": "claude-opus-4-8",
+      "inputPerMillionMicros": 5000000,
+      "cachedInputPerMillionMicros": 500000,
+      "outputPerMillionMicros": 25000000,
+      "reasoningPerMillionMicros": 25000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "claude",
+      "modelId": "claude-fable-5",
+      "inputPerMillionMicros": 10000000,
+      "cachedInputPerMillionMicros": 1000000,
+      "outputPerMillionMicros": 50000000,
+      "reasoningPerMillionMicros": 50000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "claude",
+      "modelId": "claude-haiku-4-5",
+      "inputPerMillionMicros": 1000000,
+      "cachedInputPerMillionMicros": 100000,
+      "outputPerMillionMicros": 5000000,
+      "reasoningPerMillionMicros": 5000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-2.5-pro",
+      "inputPerMillionMicros": 1250000,
+      "cachedInputPerMillionMicros": 125000,
+      "outputPerMillionMicros": 10000000,
+      "reasoningPerMillionMicros": 10000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.5-flash",
+      "inputPerMillionMicros": 1500000,
+      "cachedInputPerMillionMicros": 150000,
+      "outputPerMillionMicros": 9000000,
+      "reasoningPerMillionMicros": 9000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.1-pro-preview",
+      "inputPerMillionMicros": 2000000,
+      "cachedInputPerMillionMicros": 200000,
+      "outputPerMillionMicros": 12000000,
+      "reasoningPerMillionMicros": 12000000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3.1-flash-lite",
+      "inputPerMillionMicros": 250000,
+      "cachedInputPerMillionMicros": 25000,
+      "outputPerMillionMicros": 1500000,
+      "reasoningPerMillionMicros": 1500000,
+      "toolUnitMicros": 0
+    },
+    {
+      "provider": "gemini",
+      "modelId": "gemini-3-flash-preview",
+      "inputPerMillionMicros": 500000,
+      "cachedInputPerMillionMicros": 50000,
+      "outputPerMillionMicros": 3000000,
+      "reasoningPerMillionMicros": 3000000,
+      "toolUnitMicros": 0
+    }
+  ]
+}
