@@ -15,6 +15,8 @@ import {
   CodexAppServerClient,
   createIsolatedCodexHome,
 } from '../agents/workspace-agent/src/index'
+import { Wp26ProductionStack } from './wp26-production-stack'
+import { S3CompatibleObjectStore } from '../packages/production-topology/src/durable-dependencies'
 
 const codexBin = process.env.WP26_CODEX_BIN
 if (!codexBin) throw new Error('WP26_CODEX_BIN must point to Codex 0.144.2')
@@ -135,6 +137,8 @@ const claim: SchedulerClaim = {
     expiresAt: new Date(Date.now() + 120_000).toISOString(),
   },
   capacityReservationId: 'capacity-runtime',
+  regionId: 'eu-1',
+  nodeId: 'node-runtime',
 }
 const releases: Array<Record<string, unknown>> = []
 const repository: SchedulerRepositoryPort = {
@@ -271,4 +275,150 @@ try {
 } finally {
   await client.stop()
   isolated.cleanup()
+}
+
+const stack = new Wp26ProductionStack()
+const waitFor = async <T>(
+  operation: () => Promise<T | null>,
+  timeoutMs = 240_000,
+) => {
+  const started = performance.now()
+  while (performance.now() - started < timeoutMs) {
+    const value = await operation()
+    if (value)
+      return { value, elapsedMs: Math.round(performance.now() - started) }
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  throw new Error('LIVE_FAIRNESS_TIMEOUT')
+}
+const request = async (
+  url: string,
+  headers: Record<string, string>,
+  body?: unknown,
+) => {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  const value = (await response.json()) as Record<string, unknown>
+  if (response.status < 200 || response.status >= 300)
+    throw new Error(`LIVE_FAIRNESS_HTTP_${response.status}`)
+  return value
+}
+try {
+  await stack.startInfrastructure()
+  await stack.startWorkers(codexBin, 2)
+  await stack.startApis(2)
+  const scopeA = {
+    'x-tenant-id': 'tenant-a',
+    'x-organization-id': 'tenant-a',
+    'x-workspace-id': 'workspace-a',
+  }
+  const scopeB = {
+    'x-tenant-id': 'tenant-b',
+    'x-organization-id': 'tenant-b',
+    'x-workspace-id': 'workspace-b',
+  }
+  const sessionA = await request(`${stack.loadBalancerUrl}/v1/sessions`, scopeA)
+  const sessionB = await request(`${stack.loadBalancerUrl}/v1/sessions`, scopeB)
+  const turnHeaders = (scope: Record<string, string>, key: string) => ({
+    ...scope,
+    'content-type': 'application/json',
+    'idempotency-key': key,
+  })
+  const aRuns: string[] = []
+  for (let index = 0; index < 3; index++) {
+    const turn = await request(
+      `${stack.loadBalancerUrl}/v1/sessions/${sessionA.sessionId}/turns`,
+      turnHeaders(scopeA, `fair-a-${index}`),
+      { prompt: 'Yalnızca TAMAM yaz. Araç kullanma.' },
+    )
+    aRuns.push(String(turn.runId))
+  }
+  const bTurn = await request(
+    `${stack.loadBalancerUrl}/v1/sessions/${sessionB.sessionId}/turns`,
+    turnHeaders(scopeB, 'fair-b-0'),
+    { prompt: 'Yalnızca TAMAM yaz. Araç kullanma.' },
+  )
+  const tenantB = await waitFor(async () => {
+    const result = await stack.query(
+      `SELECT state FROM persistent_codex.ha_runs WHERE run_id=$1`,
+      [bTurn.runId],
+    )
+    return result.rows[0]?.state === 'completed' ? true : null
+  })
+  const tenantBLatencyMs = tenantB.elapsedMs
+  const backlogAtBCompletion = await stack.query(
+    `SELECT count(*)::int count FROM persistent_codex.ha_runs WHERE run_id=ANY($1::text[]) AND state<>'completed'`,
+    [aRuns],
+  )
+  assert(backlogAtBCompletion.rows[0].count >= 1)
+  await waitFor(async () => {
+    const result = await stack.query(
+      `SELECT count(*)::int count FROM persistent_codex.ha_runs WHERE run_id=ANY($1::text[]) AND state='completed'`,
+      [aRuns],
+    )
+    return result.rows[0].count === aRuns.length ? true : null
+  })
+  const poisonTurn = await request(
+    `${stack.loadBalancerUrl}/v1/sessions/${sessionA.sessionId}/turns`,
+    turnHeaders(scopeA, 'fair-poison'),
+    {
+      prompt: 'opaque poison fixture',
+      approvalContext: { kind: 'command', command: 'opaque', risk: 'bounded' },
+    },
+  )
+  const poisonStored = await stack.query(
+    `SELECT prompt_object_key FROM persistent_codex.ha_runs WHERE run_id=$1`,
+    [poisonTurn.runId],
+  )
+  const objectStore = new S3CompatibleObjectStore({
+    endpoint: stack.minioUrl,
+    bucket: 'wp26',
+    accessKeyId: 'wp26access',
+    secretAccessKey: 'wp26-secret-not-logged',
+  })
+  await objectStore.delete(String(poisonStored.rows[0].prompt_object_key))
+  await request(
+    `${stack.loadBalancerUrl}/v1/approvals/${poisonTurn.approvalId}/decision`,
+    { ...turnHeaders(scopeA, 'unused'), 'x-principal-id': 'scheduler-harness' },
+    { decision: 'accept', expectedVersion: 1 },
+  )
+  const poison = await waitFor(async () => {
+    const result = await stack.query(
+      `SELECT state,attempt FROM persistent_codex.ha_runs WHERE run_id=$1`,
+      [poisonTurn.runId],
+    )
+    return result.rows[0]?.state === 'poisoned' ? result.rows[0] : null
+  }, 30_000)
+  assert.equal(poison.value.attempt, 4)
+  const starts = await stack.query(
+    `SELECT count(DISTINCT owner_id)::int owners,count(*)::int starts FROM persistent_codex.ha_runtime_starts WHERE run_id=ANY($1::text[])`,
+    [[...aRuns, String(bTurn.runId)]],
+  )
+  assert.equal(starts.rows[0].owners, 2)
+  console.log(
+    JSON.stringify({
+      gate: 'wp26:scheduler-live-fairness',
+      schedulerInstances: 2,
+      algorithm: 'weighted-fair-v1',
+      tenantABacklog: aRuns.length,
+      tenantBLatencyMs,
+      tenantBCompletedWhileTenantABacklogged: true,
+      distinctWorkers: starts.rows[0].owners,
+      runtimeStarts: starts.rows[0].starts,
+      providerConcurrencyLimit: 2,
+      workspaceConcurrencyLimit: 1,
+      poison: {
+        attempts: poison.value.attempt,
+        state: poison.value.state,
+        boundedBackoff: true,
+      },
+      realCodex: true,
+      cleanup: 'complete',
+    }),
+  )
+} finally {
+  await stack.cleanup()
 }

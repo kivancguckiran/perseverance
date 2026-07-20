@@ -105,6 +105,7 @@ try {
   if (!ready) throw new Error('PostgreSQL did not become ready')
   migration('0018_oidc_authorization_rls.sql')
   migration('0028_ha_scheduler_capacity.sql')
+  migration('0029_wp26_production_execution.sql')
   docker(
     [
       'exec',
@@ -253,9 +254,9 @@ try {
     '-U',
     'postgres',
     '-tAc',
-    `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='persistent_codex' AND c.relname IN ('tenant_scheduling_policies','scheduler_queue','scheduler_provider_admissions','workspace_fence_counters','workspace_leases','workspace_placements','capacity_reservations','drain_states','recovery_outcomes','dependency_readiness','capacity_limit_outcomes') AND c.relrowsecurity AND c.relforcerowsecurity`,
+    `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='persistent_codex' AND c.relname IN ('tenant_scheduling_policies','scheduler_queue','scheduler_provider_admissions','workspace_fence_counters','workspace_leases','workspace_placements','capacity_reservations','drain_states','recovery_outcomes','dependency_readiness','capacity_limit_outcomes','ha_sessions','ha_runs','ha_events','ha_approvals','ha_event_outbox','ha_runtime_starts','ha_capacity_usage') AND c.relrowsecurity AND c.relforcerowsecurity`,
   ])
-  assert.equal(Number(forced), 11)
+  assert.equal(Number(forced), 18)
   const compatibility = docker([
     'exec',
     container,
@@ -263,9 +264,9 @@ try {
     '-U',
     'postgres',
     '-tAc',
-    `SELECT (SELECT count(*) FROM persistent_codex.security_migrations WHERE version IN (18,28))::text || ':' || (SELECT status FROM persistent_codex.organizations WHERE organization_id='tenant_a')`,
+    `SELECT (SELECT count(*) FROM persistent_codex.security_migrations WHERE version IN (18,28,29))::text || ':' || (SELECT status FROM persistent_codex.organizations WHERE organization_id='tenant_a')`,
   ])
-  assert.equal(compatibility, '2:active')
+  assert.equal(compatibility, '3:active')
   console.log(
     JSON.stringify({
       gate: 'wp26:postgres',
@@ -282,7 +283,7 @@ try {
       staleOwner: 'rejected',
       rpoMs: 0,
       schedulerRecoveryRtoMs,
-      forcedRlsTables: 11,
+      forcedRlsTables: 18,
       onlineMigrationCompatibility: 'n-1-read-pass',
       rollbackStrategy: 'writer-stop-drain-binary-rollback-no-schema-drop',
       cleanup: { container, volume, status: 'scheduled' },

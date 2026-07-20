@@ -337,6 +337,8 @@ describe('fenced real-runtime scheduler seam', () => {
         item: claimedItem,
         lease: activeLease,
         capacityReservationId: 'capacity-1',
+        regionId: 'eu-1',
+        nodeId: 'node-1',
       })),
       assertFence: vi.fn(async () => undefined),
       releaseLease: vi.fn(async () => true),
