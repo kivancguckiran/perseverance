@@ -79,8 +79,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP23 — Mobil approval ve push                | Tamamlandı | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği bağımsız kabul edildi                          |
 | WP24 — Billing, kredi ve gelir/marj kabulü   | Tamamlandı | Prepaid kredi, reservation, gelir/COGS/marj ve billing kabulü bağımsız doğrulandı                           |
 | WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Tamamlandı | Davet, rol/ACL, durable ortak task/billing ve birleşik Faz 4 kabulü bağımsız doğrulandı                     |
-| WP26 — HA topology ve kapasite               | Aktif      | Production HA topolojisi, scheduler fairness ve noisy-neighbor sınırları kurulacak                          |
-| WP27 — SLO ve DR                             | Planlandı  | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
+| WP26 — HA topology ve kapasite               | Tamamlandı | Production HA, durable scheduler, fencing recovery ve noisy-neighbor sınırları bağımsız kabul edildi        |
+| WP27 — SLO ve DR                             | Aktif      | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
 | WP28 — Enterprise lifecycle                  | Planlandı  | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
 | WP29 — Supply-chain ve canary                | Planlandı  | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
 | WP30 — Production kabul ve rollout           | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
@@ -1183,3 +1183,23 @@ Karar: **Tamamlandı**
   production kanıtı sayılmadı.
 
 WP25 ve Faz 4 tamamlandı. Tek aktif iş paketi Faz 5'in ilk paketi WP26'dır.
+
+## WP26 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `ffa8032` ve `b12957e` kabul edildi.
+- `wp26:accept`, pinli Codex `0.144.2` ve gerçek Linux IO device ile 65 hedefli testi,
+  PostgreSQL/RLS yarışını, iki API ve iki scheduler HA zincirini, live fairness ve
+  poison senaryosunu, cgroup kapasite sınırlarını ve Chromium reconnect akışını geçti.
+- API ve scheduler process kaybında approval context ile durable high-water replay
+  korundu; stale fence reddedildi, duplicate Codex start oluşmadı ve drain edilen
+  node'dan yeni node'a placement recovery gerçekleşti.
+- Ölçülen scheduler recovery RPO değeri `0 ms`, RTO değeri `14.306 sn` oldu.
+- PostgreSQL, RabbitMQ, MinIO, runtime-control ve Vault kaybında admission fail-closed
+  `503` üretti; restore sonrası committed replay değişmedi.
+- Repo genelinde format, typecheck, 345 test ve build geçti. Sandbox dışı localhost
+  doğrulamasında SSR HTTP smoke `/` ve `/sessions/:sessionId` için başarılı oldu.
+  Geçici WP26 container ve volume kalmadı; çalışma ağacı temizdi.
+
+WP26 tamamlandı. Tek aktif iş paketi WP27'dir; WP27 kabul edilmeden WP28 başlatılmaz.

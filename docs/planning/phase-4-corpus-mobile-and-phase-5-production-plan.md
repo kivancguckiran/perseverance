@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP26
+- Aktif iş paketi: WP27
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -28,8 +28,8 @@ lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine 
 | WP23  | 4   | Tamamlandı | Mobil/PWA approval, push notification ve çoklu cihaz sürekliliği         |
 | WP24  | 4   | Tamamlandı | Billing, prepaid kredi ve gelir/COGS/marj kabulü                         |
 | WP25  | 4   | Tamamlandı | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
-| WP26  | 5   | Aktif      | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP27  | 5   | Planlandı  | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP26  | 5   | Tamamlandı | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
+| WP27  | 5   | Aktif      | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
 | WP28  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
 | WP29  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
 | WP30  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
@@ -669,6 +669,29 @@ yatay ölçeklenebilir, tenant-fair ve arızaya dayanıklı production topolojis
 #### Teslimat commit'i
 
 `feat: add highly available tenant-fair production topology`
+
+#### Bağımsız kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `ffa8032` ve `b12957e` kabul edildi.
+- Gerçek PostgreSQL, RabbitMQ, MinIO ve Vault bağımlılıklarıyla iki API/realtime ve
+  iki scheduler process'i çalıştırıldı. API ve scheduler kaybında durable replay,
+  approval context, node drain ve fencing recovery korundu.
+- Scheduler recovery RPO değeri `0 ms`, ölçülen RTO değeri `14.306 sn` oldu. Eski
+  fencing token ile yazma reddedildi; aynı run için tek Codex turn başlatıldı.
+- İki tenant'lı live fairness, provider/workspace concurrency, bounded retry ve
+  poison davranışı gerçek Codex `0.144.2` runtime'ıyla geçti.
+- Gerçek Linux cgroup v2 üzerinde CPU, memory/OOM, pids, IO/IOPS, disk byte/inode ve
+  default-deny egress sınırları doğrulandı. Event/output/artifact/index kapasite
+  ihlalleri durable ve tenant-scoped biçimde reddedildi.
+- PostgreSQL, broker, object storage, runtime-control ve KMS kaybında yeni admission
+  `503` ile fail-closed oldu; committed replay restore sonrasında korundu.
+- `wp26:accept` bütün zorunlu kapıları `accepted:true` ve
+  `productionHaEvidence:true` ile tamamladı. Repo genelinde format, typecheck, 345
+  test, build ve SSR HTTP smoke geçti; geçici container ve volume kalmadı.
+
+WP26 tamamlandı. WP27 Faz 5'in tek aktif iş paketidir.
 
 ### WP27 — Observability, SLO, backup/restore ve DR
 
