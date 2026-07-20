@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto'
 import websocket from '@fastify/websocket'
 import Fastify from 'fastify'
 import {
+  ProductionTelemetry,
+  OtlpHttpExporter,
+  opaqueScope,
+  parseTraceparent,
+  type TraceContext,
+} from '@persistent-codex/production-observability'
+import {
   createBillingPostgresRepository,
   type BillingPostgresRepository,
 } from '@persistent-codex/billing-platform'
@@ -30,6 +37,8 @@ export interface ProductionControlPlaneOptions {
   logger?: boolean
   dependencyTimeoutMs?: number
   now?: () => Date
+  telemetry?: ProductionTelemetry
+  telemetryScopeSalt?: string
 }
 
 function header(value: string | string[] | undefined) {
@@ -70,6 +79,62 @@ export async function buildProductionControlPlane(
   const decoder = new TextDecoder()
   const timeoutMs = options.dependencyTimeoutMs ?? 2_000
   const now = options.now ?? (() => new Date())
+  const telemetry = options.telemetry ?? new ProductionTelemetry(now)
+  const telemetrySalt = options.telemetryScopeSalt ?? 'wp27-test-scope-salt'
+  const requestTelemetry = new WeakMap<
+    object,
+    {
+      context: TraceContext
+      end: (
+        status?: 'ok' | 'error',
+        extra?: Record<string, string | number | boolean>,
+      ) => void
+      started: number
+    }
+  >()
+
+  app.addHook('onRequest', async (request) => {
+    const requestScope = scope(request.headers)
+    const span = telemetry.startSpan('api.request', {
+      parent: parseTraceparent(header(request.headers.traceparent)),
+      attributes: {
+        'service.name': 'control-plane',
+        'service.role': 'api',
+        operation: request.url.startsWith('/v1/realtime') ? 'realtime' : 'http',
+        method: request.method,
+        ...(requestScope
+          ? {
+              'tenant.opaque': opaqueScope(
+                requestScope.tenantId,
+                telemetrySalt,
+              ),
+              'workspace.opaque': opaqueScope(
+                requestScope.workspaceId,
+                telemetrySalt,
+              ),
+            }
+          : {}),
+      },
+    })
+    requestTelemetry.set(request, { ...span, started: performance.now() })
+  })
+  app.addHook('onResponse', async (request, reply) => {
+    const observed = requestTelemetry.get(request)
+    if (!observed) return
+    const ok = reply.statusCode < 500
+    telemetry.recordMetric('api_availability', ok ? 1 : 0, {
+      context: observed.context,
+      attributes: { status: ok ? 'success' : 'error', method: request.method },
+    })
+    telemetry.recordMetric('api_error_rate', ok ? 0 : 1, {
+      context: observed.context,
+      attributes: { status: `${Math.floor(reply.statusCode / 100)}xx` },
+    })
+    observed.end(ok ? 'ok' : 'error', {
+      status: `${reply.statusCode}`,
+      outcome: ok ? 'success' : 'error',
+    })
+  })
 
   const dependencyReadiness = async () => {
     const probes = await Promise.allSettled([
@@ -180,6 +245,11 @@ export async function buildProductionControlPlane(
       }
     }
   }>('/v1/sessions/:sessionId/turns', async (request, reply) => {
+    const admissionStarted = performance.now()
+    const admissionSpan = telemetry.startSpan('turn.admission', {
+      parent: requestTelemetry.get(request)?.context ?? null,
+      attributes: { operation: 'turn.start' },
+    })
     const requestScope = scope(request.headers)
     if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
     const unavailable = await requireReady()
@@ -232,6 +302,7 @@ export async function buildProductionControlPlane(
         requestBody: request.body,
         requiredRegionId: options.requiredRegionId,
         maxAttempts: 4,
+        traceId: admissionSpan.context.traceId,
         ...(approvalContext
           ? {
               approval: {
@@ -268,7 +339,17 @@ export async function buildProductionControlPlane(
         workspaceId: requestScope.workspaceId,
         sessionId: request.params.sessionId,
         runId: accepted.run.runId,
+        traceId: admissionSpan.context.traceId,
       })
+      telemetry.recordMetric(
+        'turn_admission_latency',
+        performance.now() - admissionStarted,
+        {
+          context: admissionSpan.context,
+          attributes: { outcome: accepted.created ? 'created' : 'idempotent' },
+        },
+      )
+      admissionSpan.end('ok')
       return reply.code(202).send({
         tenantId: requestScope.tenantId,
         workspaceId: requestScope.workspaceId,
@@ -282,6 +363,12 @@ export async function buildProductionControlPlane(
         approvalId: accepted.approval?.approvalId ?? null,
       })
     } catch (error) {
+      admissionSpan.end('error', {
+        'error.code':
+          error instanceof Error
+            ? error.message.slice(0, 64).replaceAll(/[^A-Za-z0-9_:-]/g, '_')
+            : 'UNKNOWN',
+      })
       await options.objectStore.delete(objectKey).catch(() => undefined)
       await options.billing
         .cancelDecision(requestScope, billingDecision.decisionId)
@@ -315,6 +402,11 @@ export async function buildProductionControlPlane(
     Params: { approvalId: string }
     Body: { decision?: unknown; expectedVersion?: unknown }
   }>('/v1/approvals/:approvalId/decision', async (request, reply) => {
+    const approvalStarted = performance.now()
+    const approvalSpan = telemetry.startSpan('approval.decision', {
+      parent: requestTelemetry.get(request)?.context ?? null,
+      attributes: { operation: 'approval.decision' },
+    })
     const requestScope = scope(request.headers)
     if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
     const unavailable = await requireReady()
@@ -348,7 +440,17 @@ export async function buildProductionControlPlane(
       approvalId: decided.approvalId,
       runId: decided.runId,
       state: decided.state,
+      traceId: approvalSpan.context.traceId,
     })
+    telemetry.recordMetric(
+      'approval_latency',
+      performance.now() - approvalStarted,
+      {
+        context: approvalSpan.context,
+        attributes: { outcome: decided.state },
+      },
+    )
+    approvalSpan.end('ok')
     return decided
   })
 
@@ -521,6 +623,7 @@ export async function buildProductionControlPlaneFromEnv(
     queue: required('EVENT_BROKER_QUEUE'),
   })
   await broker.ensureQueue()
+  const telemetry = new ProductionTelemetry()
   const app = await buildProductionControlPlane({
     instanceId: required('PERSISTENT_INSTANCE_ID'),
     repository,
@@ -531,9 +634,25 @@ export async function buildProductionControlPlaneFromEnv(
     requiredRegionId: required('PERSISTENT_REGION_ID'),
     billing,
     logger: env.PERSISTENT_LOGGER === '1',
+    telemetryScopeSalt: required('TELEMETRY_SCOPE_SALT'),
+    telemetry,
   })
+  const exporter = env.OTEL_EXPORTER_OTLP_ENDPOINT
+    ? new OtlpHttpExporter(telemetry, env.OTEL_EXPORTER_OTLP_ENDPOINT)
+    : null
+  const telemetryTimer = exporter
+    ? setInterval(() => void exporter.flush().catch(() => undefined), 1_000)
+    : null
+  telemetryTimer?.unref()
   app.addHook('onClose', async () =>
-    Promise.all([repository.close(), billing.close()]),
+    Promise.all([
+      repository.close(),
+      billing.close(),
+      ...(exporter ? [exporter.flush().catch(() => 0)] : []),
+    ]),
   )
+  app.addHook('onClose', async () => {
+    if (telemetryTimer) clearInterval(telemetryTimer)
+  })
   return app
 }
