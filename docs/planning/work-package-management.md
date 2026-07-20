@@ -80,8 +80,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP24 — Billing, kredi ve gelir/marj kabulü   | Tamamlandı | Prepaid kredi, reservation, gelir/COGS/marj ve billing kabulü bağımsız doğrulandı                           |
 | WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Tamamlandı | Davet, rol/ACL, durable ortak task/billing ve birleşik Faz 4 kabulü bağımsız doğrulandı                     |
 | WP26 — HA topology ve kapasite               | Tamamlandı | Production HA, durable scheduler, fencing recovery ve noisy-neighbor sınırları bağımsız kabul edildi        |
-| WP27 — SLO ve DR                             | Aktif      | Observability, backup/restore ve region failover tatbikatı tamamlanacak                                     |
-| WP28 — Enterprise lifecycle                  | Planlandı  | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
+| WP27 — SLO ve DR                             | Tamamlandı | Gerçek PITR/restore, dependency game-day, SLO alertleri ve telemetry güvenliği bağımsız kabul edildi        |
+| WP28 — Enterprise lifecycle                  | Aktif      | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
 | WP29 — Supply-chain ve canary                | Planlandı  | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
 | WP30 — Production kabul ve rollout           | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
 
@@ -1203,3 +1203,25 @@ Karar: **Tamamlandı**
   Geçici WP26 container ve volume kalmadı; çalışma ağacı temizdi.
 
 WP26 tamamlandı. Tek aktif iş paketi WP27'dir; WP27 kabul edilmeden WP28 başlatılmaz.
+
+## WP27 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `229c91d` ve `c40d655` kabul edildi.
+- Bağımsız `wp27:accept` gerçek PostgreSQL PITR, izole PostgreSQL/MinIO/RabbitMQ/Vault
+  restore'u, dependency pause/recovery, active/passive region failover, Prometheus
+  alert yaşam döngüsü ve gerçek Codex telemetry E2E kapılarını geçti.
+- Son koşuda PITR RPO/RTO `1.217/2.047 sn`, restore RTO `2.145 sn`, region failover
+  RPO/RTO `0/1.119 sn` ölçüldü. Duplicate turn, event gap, stale fence, cross-tenant
+  erişim, corrupt/missing backup ve unavailable key kontrolleri geçti.
+- Gerçek collector çıktısında sekiz aşamalı trace zinciri doğrulandı; collector kaybı
+  ürün akışını kesmedi ve telemetry drop metriği oluştu. Secret, prompt, output, PII
+  ve corpus marker eşleşmesi sıfırdı.
+- Dört Prometheus rule'u gerçek scrape target ile firing→inactive geçti. External
+  paging ve cloud-managed bağımlılık kanıtları doğru biçimde `not-run` kaldı.
+- Repo genelinde format, typecheck, 355 test, build ve SSR HTTP smoke geçti. Acceptance
+  report checksum'ı `c5ebe8dd9ddf6949db486d4155d730bf37bc15fcd96092705c87665bcdd19ea9`;
+  geçici container, volume ve process kalmadı.
+
+WP27 tamamlandı. Tek aktif iş paketi WP28'dir; WP28 kabul edilmeden WP29 başlatılmaz.

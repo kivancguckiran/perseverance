@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP27
+- Aktif iş paketi: WP28
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -29,8 +29,8 @@ lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine 
 | WP24  | 4   | Tamamlandı | Billing, prepaid kredi ve gelir/COGS/marj kabulü                         |
 | WP25  | 4   | Tamamlandı | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
 | WP26  | 5   | Tamamlandı | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
-| WP27  | 5   | Aktif      | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP28  | 5   | Planlandı  | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP27  | 5   | Tamamlandı | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
+| WP28  | 5   | Aktif      | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
 | WP29  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
 | WP30  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
@@ -723,6 +723,33 @@ senaryolarını belgeli RPO/RTO ile tekrarlanabilir kılmak.
 #### Teslimat commit'i
 
 `feat: add production observability and disaster recovery`
+
+#### Bağımsız kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama ve gerçek DR düzeltme commit'leri `229c91d` ve `c40d655` kabul edildi.
+- Continuous WAL archive kullanan gerçek PostgreSQL PITR hedef timestamp/LSN'e açıldı;
+  hedef sonrası veri dışarıda kaldı. Son bağımsız koşuda RPO `1.217 sn`, RTO
+  `2.047 sn` ölçüldü.
+- PostgreSQL, MinIO, RabbitMQ, Vault ve derived index ayrı target namespace'e doğru
+  sırada restore edildi. Tenant/RLS, event gap, duplicate runtime, checksum, eksik ve
+  bozuk component ile unavailable key kontrolleri geçti; restore RTO `2.145 sn` oldu.
+- Gerçek WP26 stack üzerinde RabbitMQ, MinIO, Vault ve Redis failure injection'ları;
+  active/passive API-scheduler failover'u çalıştırıldı. Region failover RPO `0 ms`,
+  RTO `1.119 sn`; stale fence ve duplicate runtime reddi doğrulandı.
+- Prometheus dört gerçek alert rule'unu yükledi; burn-rate, restore ve region-budget
+  failure injection'ları `firing`, recovery sonrasında `inactive` oldu.
+- Pinli Codex `0.144.2` ile gerçek turn API→scheduler→Workspace Agent→Codex→event→
+  broker/replay trace zincirini taşıdı. Collector kaybında ürün devam etti, bounded
+  drop metriği oluştu ve secret/prompt/output/PII/corpus marker sızıntısı bulunmadı.
+- `wp27:accept` `accepted:true`, gerçek evidence hash zinciri ve checksum ile geçti.
+  Repo genelinde format, typecheck, 355 test, build ve SSR HTTP smoke tamamlandı;
+  geçici WP27 container/volume/process kalmadı.
+- External paging, managed cross-region replication, production KMS revocation ve
+  cloud object replication credential/ortam yokluğu nedeniyle açıkça `not-run` kaldı.
+
+WP27 tamamlandı. WP28 Faz 5'in tek aktif iş paketidir.
 
 ### WP28 — Enterprise identity ve veri lifecycle
 
