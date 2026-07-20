@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./contracts": "./src/contracts.ts",
-    "./postgres": "./src/postgres.ts"
+    "./postgres": "./src/postgres.ts",
+    "./production-postgres": "./src/production-postgres.ts",
+    "./durable-dependencies": "./src/durable-dependencies.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

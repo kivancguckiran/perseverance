@@ -78,6 +78,8 @@ export interface ClaimedWork {
   item: SchedulerQueueItem
   lease: WorkspaceLease
   capacityReservationId: string
+  regionId: string
+  nodeId: string
 }
 
 export class PostgresTopologyRepository {
@@ -191,6 +193,7 @@ export class PostgresTopologyRepository {
              AND NOT EXISTS (
                SELECT 1 FROM persistent_codex.drain_states d
                WHERE d.region_id=q.required_region_id
+                 AND d.target_kind='region' AND d.node_id IS NULL
                  AND d.state IN ('cordoned','draining','drained','maintenance'))
            ORDER BY
              (CASE WHEN $1::timestamptz-q.enqueued_at >= make_interval(secs => p.starvation_age_ms/1000.0)
@@ -205,6 +208,30 @@ export class PostgresTopologyRepository {
         return null
       }
       const row = candidate.rows[0] as Row
+      const workspaceLock = await client.query(
+        `SELECT pg_try_advisory_xact_lock(hashtextextended($1,26)) AS acquired`,
+        [
+          JSON.stringify([
+            row.tenant_id,
+            row.organization_id,
+            row.workspace_id,
+          ]),
+        ],
+      )
+      if (workspaceLock.rows[0]?.acquired !== true) {
+        await client.query('COMMIT')
+        return null
+      }
+      const workspaceActive = await client.query(
+        `SELECT 1 FROM persistent_codex.scheduler_queue
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND state IN ('leased','starting','running') LIMIT 1`,
+        [row.tenant_id, row.organization_id, row.workspace_id],
+      )
+      if (workspaceActive.rowCount) {
+        await client.query('COMMIT')
+        return null
+      }
       const node = await client.query(
         `SELECT n.* FROM persistent_codex.runtime_nodes n
          WHERE n.region_id=$1 AND n.state='ready'
@@ -323,6 +350,8 @@ export class PostgresTopologyRepository {
         }),
         lease: lease(leaseResult.rows[0] as Row),
         capacityReservationId: input.capacityReservationId,
+        regionId: String(nodeRow.region_id),
+        nodeId: String(nodeRow.node_id),
       }
     } catch (error) {
       await client.query('ROLLBACK')
@@ -360,6 +389,19 @@ export class PostgresTopologyRepository {
           input.expectedExpiresAt,
         ],
       )
+      if (result.rowCount)
+        await client.query(
+          `UPDATE persistent_codex.capacity_reservations SET expires_at=$1,updated_at=now()
+           WHERE tenant_id=$2 AND organization_id=$3 AND workspace_id=$4
+             AND fencing_token=$5 AND state IN ('held','bound')`,
+          [
+            input.nextExpiresAt,
+            input.tenantId,
+            input.organizationId,
+            input.workspaceId,
+            input.fencingToken,
+          ],
+        )
       return result.rowCount ? lease(result.rows[0] as Row) : null
     })
   }

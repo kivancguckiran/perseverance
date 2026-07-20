@@ -1015,6 +1015,7 @@ export const createTurnRequestSchema = z
   .object({
     prompt: z.string().trim().max(100_000),
     attachmentIds: z.array(identifierSchema).default([]),
+    approvalContext: z.string().trim().min(1).max(2_000).optional(),
   })
   .refine(
     (value) => value.prompt.length > 0 || value.attachmentIds.length > 0,

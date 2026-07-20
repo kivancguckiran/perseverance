@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "corpus:lint": "node corpus/scripts/lint.mjs",
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/entrypoint.ts",
+    "start": "tsx src/entrypoint.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
