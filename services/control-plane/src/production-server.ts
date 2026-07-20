@@ -332,6 +332,10 @@ export async function buildProductionControlPlane(
         billingDecision.decisionId,
         accepted.run.runId,
       )
+      const brokerSpan = telemetry.startSpan('event.publish', {
+        parent: admissionSpan.context,
+        attributes: { operation: 'broker.publish', 'event.type': 'run.queued' },
+      })
       await options.broker.publish('ha.event', {
         schemaVersion: 1,
         type: 'run.queued',
@@ -341,6 +345,7 @@ export async function buildProductionControlPlane(
         runId: accepted.run.runId,
         traceId: admissionSpan.context.traceId,
       })
+      brokerSpan.end('ok')
       telemetry.recordMetric(
         'turn_admission_latency',
         performance.now() - admissionStarted,
@@ -458,6 +463,11 @@ export async function buildProductionControlPlane(
     Params: { sessionId: string }
     Querystring: { after?: string; limit?: string }
   }>('/v1/sessions/:sessionId/events', async (request, reply) => {
+    const replayStarted = performance.now()
+    const replaySpan = telemetry.startSpan('event.replay', {
+      parent: requestTelemetry.get(request)?.context ?? null,
+      attributes: { operation: 'event.replay' },
+    })
     const requestScope = scope(request.headers)
     if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
     const after = Number.parseInt(request.query.after ?? '0', 10)
@@ -471,6 +481,15 @@ export async function buildProductionControlPlane(
       Number.isFinite(after) ? after : 0,
       limit,
     )
+    telemetry.recordMetric(
+      'event_replay_lag',
+      Math.max(0, performance.now() - replayStarted),
+      {
+        context: replaySpan.context,
+        attributes: { outcome: 'success' },
+      },
+    )
+    replaySpan.end('ok')
     return {
       ...requestScope,
       sessionId: request.params.sessionId,
@@ -623,7 +642,10 @@ export async function buildProductionControlPlaneFromEnv(
     queue: required('EVENT_BROKER_QUEUE'),
   })
   await broker.ensureQueue()
-  const telemetry = new ProductionTelemetry()
+  const telemetry = new ProductionTelemetry(
+    () => new Date(),
+    Number(env.TELEMETRY_MAX_RECORDS ?? 2_048),
+  )
   const app = await buildProductionControlPlane({
     instanceId: required('PERSISTENT_INSTANCE_ID'),
     repository,

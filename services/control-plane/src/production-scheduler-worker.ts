@@ -203,6 +203,10 @@ export class ProductionSchedulerWorker {
       payload: Record<string, unknown>,
       suffix: string = randomUUID(),
     ) => {
+      const eventSpan = telemetry.startSpan('event.append', {
+        parent: runtimeSpan.context,
+        attributes: { operation: 'event.append', 'event.type': eventType },
+      })
       await fence()
       const result = await this.options.repository.appendFencedEvent({
         ...scope,
@@ -213,7 +217,11 @@ export class ProductionSchedulerWorker {
         fencingToken: claimed.lease.fencingToken,
         payload,
       })
-      if (!result.accepted) throw new Error(result.reasonCode)
+      if (!result.accepted) {
+        eventSpan.end('error', { 'error.code': result.reasonCode })
+        throw new Error(result.reasonCode)
+      }
+      eventSpan.end('ok')
       return result
     }
     try {
@@ -303,6 +311,13 @@ export class ProductionSchedulerWorker {
           })
         if (!startIntent) throw new Error('STALE_FENCING_TOKEN')
         upstreamStartIntent = true
+        const codexSpan = telemetry.startSpan('codex.turn', {
+          parent: runtimeSpan.context,
+          attributes: {
+            'service.role': 'codex-app-server',
+            operation: 'turn.start',
+          },
+        })
         const turn = await client.request<codexV2.TurnStartResponse>(
           'turn/start',
           {
@@ -327,6 +342,7 @@ export class ProductionSchedulerWorker {
             )
           }),
         ])
+        codexSpan.end('ok')
         await fence()
         const outputBytes = new TextEncoder().encode(text)
         const capacity = await this.options.repository.meterCapacity({
@@ -489,7 +505,10 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
     return value
   }
   const databaseUrl = required('TOPOLOGY_DATABASE_URL')
-  const telemetry = new ProductionTelemetry()
+  const telemetry = new ProductionTelemetry(
+    () => new Date(),
+    Number(env.TELEMETRY_MAX_RECORDS ?? 2_048),
+  )
   return new ProductionSchedulerWorker({
     ownerId: required('SCHEDULER_OWNER_ID'),
     repository: createProductionPostgresRepository(databaseUrl),

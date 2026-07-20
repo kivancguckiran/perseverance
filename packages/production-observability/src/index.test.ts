@@ -185,6 +185,19 @@ describe('WP27 production telemetry boundary', () => {
     span.end()
     expect(JSON.stringify(telemetry.snapshot())).not.toContain('raw')
   })
+
+  it('bounds telemetry during exporter loss and exposes a drop metric', () => {
+    const telemetry = new ProductionTelemetry(() => new Date(), 2)
+    for (let index = 0; index < 5; index++)
+      telemetry.recordMetric('api_availability', 1)
+    const snapshot = telemetry.snapshot()
+    expect(
+      snapshot.metrics.filter((item) => item.sli === 'api_availability'),
+    ).toHaveLength(2)
+    expect(
+      snapshot.metrics.find((item) => item.sli === 'telemetry_dropped')?.value,
+    ).toBe(3)
+  })
 })
 
 describe('WP27 immutable backup and fail-closed restore', () => {

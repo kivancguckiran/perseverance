@@ -1,100 +1,302 @@
 {
   "schemaVersion": 1,
   "workPackage": "WP27",
-  "acceptedAt": "2026-07-20T17:01:10+03:00",
-  "status": "accepted-local-harness",
-  "gates": {
-    "wp27:test": { "passed": true, "tests": 9 },
-    "wp27:otel": {
-      "passed": true,
+  "generatedAt": "2026-07-20T15:46:17.073Z",
+  "status": "accepted-real-harness",
+  "observations": [
+    {
+      "gate": "wp27:test",
+      "accepted": true,
+      "testFilesPassed": 2,
+      "testsPassed": 10,
+      "runner": "vitest",
+      "previousEvidenceSha256": null,
+      "evidenceSha256": "685c8663c10de0a71d12e33507fbae73315f797d14e817daf8d62d686fb60599"
+    },
+    {
+      "gate": "wp27:otel",
+      "accepted": true,
       "collector": "otel/opentelemetry-collector-contrib:0.130.1",
       "otlpHttp": true,
-      "prometheusExport": true,
-      "productionExporter": true
+      "metricExport": true,
+      "traceLogMetricCorrelation": "4b6b044d0295dce2a57b97b38c4785d6",
+      "productionExporter": true,
+      "leakedMarkers": 0,
+      "previousEvidenceSha256": "685c8663c10de0a71d12e33507fbae73315f797d14e817daf8d62d686fb60599",
+      "evidenceSha256": "5d0c94cbbb50b8f44c8b32d913b6fd26a09ddfb8477af8bd2b368afb034ba0ee"
     },
-    "wp27:postgres-pitr": {
-      "passed": true,
-      "service": "pgvector/pgvector:pg17",
-      "method": "physical-base-backup-plus-streamed-WAL",
-      "backupMs": 379,
-      "rpoMs": 0,
-      "rtoMs": 1647,
-      "duplicateTurns": 0,
-      "forcedRlsTables": 2
+    {
+      "gate": "wp27:postgres-pitr",
+      "accepted": true,
+      "service": "PostgreSQL pgvector/pgvector:pg17",
+      "continuousWalArchive": true,
+      "recoveryTarget": {
+        "type": "timestamp",
+        "value": "2026-07-20 15:41:57.491051+00",
+        "lsn": "0/7000928"
+      },
+      "watermark1": "BEGIN\nINSERT 0 1\nINSERT 0 1\nUPDATE 1\nCOMMIT\n0/6000808|2026-07-20 15:41:56.778917+00",
+      "watermark2": "BEGIN\nINSERT 0 1\nINSERT 0 1\nUPDATE 1\ntenant-a|workspace-a\n2\nCOMMIT\n0/7000928|2026-07-20 15:41:57.491051+00",
+      "sourceFinalLsn": "0/80003C0",
+      "targetRestoredLsn": "0/8000398",
+      "sourceTargetLsnGapBytes": 40,
+      "restoredWatermarks": "0,1,2",
+      "excludedAfterTarget": true,
+      "eventSequences": "1,2,3",
+      "highWater": 3,
+      "tenantGraphVerified": true,
+      "crossTenantRows": 0,
+      "auditChainSequence": 2,
+      "leases": 1,
+      "runtimeStarts": 1,
+      "duplicateRuntimeStarts": 0,
+      "measuredBackupMs": 4276,
+      "measuredRpoMs": 1771,
+      "measuredRtoMs": 8026,
+      "previousEvidenceSha256": "5d0c94cbbb50b8f44c8b32d913b6fd26a09ddfb8477af8bd2b368afb034ba0ee",
+      "evidenceSha256": "56c27f5013ca63d32cbeac775aa67b560f7dab4144ac5bdc486207ce04a6ae5e"
     },
-    "wp27:restore": {
-      "passed": true,
-      "isolated": true,
-      "rpoMs": 0,
-      "rtoMs": 11,
+    {
+      "gate": "wp27:restore",
+      "accepted": true,
+      "realTargetTopology": {
+        "postgresql": true,
+        "minio": true,
+        "rabbitmq": true,
+        "vault": true,
+        "derivedIndex": true,
+        "isolatedTargetNamespace": true
+      },
+      "manifestId": "wp27-real-restore",
+      "manifestSha256": "8bdd8b0ebf066baad487a4de7cd29fda1f3f956604842c4563cd1fa11708207a",
+      "componentChecksums": [
+        {
+          "kind": "postgres_base",
+          "checksum": "1b9948498d5e2ad7f9ff6c02fc52de7d2ae68de8a49f3d2eb9b9ce9d71442d98",
+          "keyVersion": null
+        },
+        {
+          "kind": "postgres_wal",
+          "checksum": "a5d893b04fa3c8f1b66ddc5e8277439bab5fdbaf2a14fffc4063b5b144fe8a28",
+          "keyVersion": null
+        },
+        {
+          "kind": "key_metadata",
+          "checksum": "4a6cd00c3aa6607ea8826d3cfc803eb2d0f69c6a4ec32f0fe3821ca7890b5380",
+          "keyVersion": "kms-v27"
+        },
+        {
+          "kind": "objects",
+          "checksum": "ef0e55b2033443345a690597323b474c9a5c7eed0ead5d9a68aedf9b7aeec2f0",
+          "keyVersion": "kms-v27"
+        },
+        {
+          "kind": "event_broker",
+          "checksum": "6470556a4ed95b29e90fe4ef49488ebcb16cc06e6794b52ca617cc968ef0e183",
+          "keyVersion": null
+        },
+        {
+          "kind": "index_manifest",
+          "checksum": "65fe237887d866788786f54e6cba8943cc84b87a0ca3cf55d4b276bbe6dc1537",
+          "keyVersion": null
+        },
+        {
+          "kind": "configuration",
+          "checksum": "f101fcacc079c5f7f74ea8778c956a08b081440f36f07fdd084ac9dc28def22a",
+          "keyVersion": null
+        }
+      ],
+      "watermark": {
+        "capturedAt": "2026-07-20T15:43:46.387Z",
+        "postgresLsn": "0/1A54000",
+        "eventHighWater": 2,
+        "objectVersionWatermark": "object-v1"
+      },
+      "restoreOrder": [
+        "postgresql",
+        "key_metadata",
+        "objects",
+        "event_broker",
+        "derived_index"
+      ],
+      "tenantGraphRows": 2,
       "duplicateTurns": 0,
       "eventGaps": 0,
-      "auditChainBreaks": 0,
-      "crossTenantMixing": 0
+      "crossTenantRestStatus": 404,
+      "forcedRlsVerified": true,
+      "indexInputHash": "65fe237887d866788786f54e6cba8943cc84b87a0ca3cf55d4b276bbe6dc1537",
+      "indexRebuildHash": "65fe237887d866788786f54e6cba8943cc84b87a0ca3cf55d4b276bbe6dc1537",
+      "corruptObjectFailClosed": true,
+      "missingComponentFailClosed": true,
+      "unavailableKeyFailClosed": true,
+      "revokedKey": "not-run-vault-dev-no-production-revocation-api",
+      "measuredRtoMs": 13425,
+      "previousEvidenceSha256": "56c27f5013ca63d32cbeac775aa67b560f7dab4144ac5bdc486207ce04a6ae5e",
+      "evidenceSha256": "76814e09aa26619805bd1818140d6248fb1c25f079fce49828d8e2bc4a3eb1d4"
     },
-    "wp27:game-day": {
-      "passed": true,
-      "regionFailoverRpoMs": 0,
-      "regionFailoverRtoMs": 13,
-      "evidenceChainHead": "2af669010087afcfd6c93a6838deadbe7404ae437b0966d2eb7e84dd494fd052"
+    {
+      "gate": "wp27:game-day",
+      "accepted": true,
+      "realWp26ProductionStack": true,
+      "dependencies": ["PostgreSQL", "RabbitMQ", "MinIO", "Vault", "Redis"],
+      "scenarios": [
+        {
+          "schemaVersion": 1,
+          "scenario": "rabbitmq-pause-recovery",
+          "status": "passed",
+          "failureInjection": "docker-pause",
+          "readinessDownMs": 2008,
+          "recoveryRtoMs": 6,
+          "admissionDuringFailure": 503,
+          "replayGap": 0,
+          "userImpact": "admission-fail-closed",
+          "previousEvidenceSha256": null,
+          "evidenceSha256": "45187194507cdc97c2d7a877c6fa1e962ed225ad55c39cb3bf40cdb888aaf077"
+        },
+        {
+          "schemaVersion": 1,
+          "scenario": "minio-pause-recovery",
+          "status": "passed",
+          "failureInjection": "docker-pause",
+          "readinessDownMs": 2005,
+          "recoveryRtoMs": 7,
+          "admissionDuringFailure": 503,
+          "replayGap": 0,
+          "userImpact": "admission-fail-closed",
+          "previousEvidenceSha256": "45187194507cdc97c2d7a877c6fa1e962ed225ad55c39cb3bf40cdb888aaf077",
+          "evidenceSha256": "d172849e7ed6a59bdcd531495e7539721da28f3850a069f3230fdc88612a2440"
+        },
+        {
+          "schemaVersion": 1,
+          "scenario": "vault-pause-recovery",
+          "status": "passed",
+          "failureInjection": "docker-pause",
+          "readinessDownMs": 2005,
+          "recoveryRtoMs": 10,
+          "admissionDuringFailure": 503,
+          "replayGap": 0,
+          "userImpact": "admission-fail-closed",
+          "previousEvidenceSha256": "d172849e7ed6a59bdcd531495e7539721da28f3850a069f3230fdc88612a2440",
+          "evidenceSha256": "c89ee41c3691723ecebb08836fd7150a9852d45a2a59ad5568904f53b8c697a0"
+        },
+        {
+          "schemaVersion": 1,
+          "scenario": "cache-pause",
+          "status": "passed",
+          "failureInjection": "docker-pause",
+          "readinessDuringFailure": 200,
+          "replayGap": 0,
+          "correctnessPreserved": true,
+          "userImpact": "none",
+          "previousEvidenceSha256": "c89ee41c3691723ecebb08836fd7150a9852d45a2a59ad5568904f53b8c697a0",
+          "evidenceSha256": "bfa7a03a125fbfe07e99dabe30d3fccbc26e09b23a557ea2858271a005a08f5d"
+        },
+        {
+          "schemaVersion": 1,
+          "scenario": "active-passive-region-failover",
+          "status": "passed",
+          "failureInjection": "SIGKILL-active-api-scheduler",
+          "oldRegionFenced": true,
+          "passivePlacementEpoch": 2,
+          "newAdmissionStatus": 201,
+          "approvalContextPreserved": true,
+          "duplicateApprovalDecisionStatus": 409,
+          "staleEventReason": "STALE_FENCING_TOKEN",
+          "duplicateRuntimeStartRejected": true,
+          "duplicateCodexTurns": 0,
+          "replayGap": 0,
+          "completedReconciliation": true,
+          "measuredRpoMs": 0,
+          "measuredRtoMs": 1279,
+          "previousEvidenceSha256": "bfa7a03a125fbfe07e99dabe30d3fccbc26e09b23a557ea2858271a005a08f5d",
+          "evidenceSha256": "543d95cbfc6fb84dab27af04e17665d76dcaf7684ecee346ac9b9677e8c7e12c"
+        }
+      ],
+      "evidenceChainHead": "543d95cbfc6fb84dab27af04e17665d76dcaf7684ecee346ac9b9677e8c7e12c",
+      "outboxUnpublished": 0,
+      "cleanup": "verified",
+      "previousEvidenceSha256": "76814e09aa26619805bd1818140d6248fb1c25f079fce49828d8e2bc4a3eb1d4",
+      "evidenceSha256": "bee7dc1dc91164d4d27e75cf789be1817e9d902fa5ab56fbe24dec8fadbcf496"
     },
-    "wp27:alerts": {
-      "passed": true,
-      "failureInjection": "firing",
-      "recovery": "inactive",
-      "multiWindowRules": 4
+    {
+      "gate": "wp27:alerts",
+      "accepted": true,
+      "prometheus": "prom/prometheus:v3.5.0",
+      "rulesLoaded": 4,
+      "realScrapeTarget": true,
+      "failureInjection": [
+        "ApiAvailabilityFastBurn",
+        "ApiAvailabilityMediumBurn",
+        "RegionFailoverBudgetExceeded",
+        "RestoreOrBackupFailed"
+      ],
+      "recoveryState": "inactive",
+      "restoreAlertTriggered": true,
+      "regionBudgetAlertTriggered": true,
+      "externalPagingDelivery": "not-run-no-credential",
+      "previousEvidenceSha256": "bee7dc1dc91164d4d27e75cf789be1817e9d902fa5ab56fbe24dec8fadbcf496",
+      "evidenceSha256": "e1edab383723a1051d59ec7b7f45f1f0327b28af14caa8b2f914bdeddbf670fb"
     },
-    "wp27:telemetry-scan": {
-      "passed": true,
-      "markerClasses": 5,
-      "matches": 0,
-      "failClosed": true
-    },
-    "wp27:e2e": {
-      "passed": true,
+    {
+      "gate": "wp27:e2e",
+      "accepted": true,
       "codexVersion": "0.144.2",
-      "realAppServerHandshake": true,
-      "providerTurnExecuted": false,
-      "externalPromptSent": false
+      "providerTurnExecuted": true,
+      "externalFixtureAuthorized": true,
+      "traceId": "351340b64cfd147739d35ad42039ebb8",
+      "collectorSpans": [
+        "api.request",
+        "turn.admission",
+        "scheduler.claim",
+        "workspace.runtime",
+        "codex.turn",
+        "event.append",
+        "event.publish",
+        "event.replay"
+      ],
+      "durableTraceCorrelation": true,
+      "runtimeStarts": 1,
+      "duplicateCodexTurns": 0,
+      "collectorFailureProductContinued": true,
+      "telemetryDropMetricObserved": true,
+      "telemetryMarkerMatches": 0,
+      "replayCompleted": true,
+      "previousEvidenceSha256": "e1edab383723a1051d59ec7b7f45f1f0327b28af14caa8b2f914bdeddbf670fb",
+      "evidenceSha256": "3c0c2cdd9418844c2551d81990d89e8b3421ecd21c59d6bdb5075df2d107f19f"
     },
-    "wp27:accept": { "passed": true }
+    {
+      "gate": "wp27:telemetry-scan",
+      "accepted": true,
+      "fixtureClasses": ["secret", "prompt", "output", "pii", "corpus"],
+      "scannedSurfaces": [
+        "trace",
+        "metric",
+        "log",
+        "dashboard-label",
+        "alert",
+        "slo",
+        "collector",
+        "acceptance-evidence"
+      ],
+      "markerCount": 5,
+      "matches": 0,
+      "failClosed": true,
+      "previousEvidenceSha256": "3c0c2cdd9418844c2551d81990d89e8b3421ecd21c59d6bdb5075df2d107f19f",
+      "evidenceSha256": "1a0283edc05fb7f59897a0879c9b00befb183bb4c575ce556f5ad6703d0ba9f8"
+    }
+  ],
+  "evidenceChainHead": "1a0283edc05fb7f59897a0879c9b00befb183bb4c575ce556f5ad6703d0ba9f8",
+  "productionNotRun": {
+    "externalPagingDelivery": "not-run-no-credential",
+    "managedCrossRegionReplication": "not-run-local-container-topology",
+    "productionKmsRevocation": "not-run-vault-dev-fixture",
+    "cloudObjectVersionReplication": "not-run-local-minio"
   },
-  "restoreOrder": [
-    "postgresql",
-    "key_metadata",
-    "objects",
-    "event_broker",
-    "derived_index"
-  ],
-  "failClosed": {
-    "corruptBackup": true,
-    "incompleteBackup": true,
-    "unavailableKey": true,
-    "staleFence": true,
-    "duplicateRuntimeStart": true
-  },
-  "realServices": [
-    "OpenTelemetry Collector Contrib 0.130.1",
-    "PostgreSQL 17 with pgvector",
-    "Codex app-server 0.144.2"
-  ],
-  "localFixtures": [
-    "loopback active/passive API",
-    "filesystem object/key/index restore target"
-  ],
   "cleanup": {
     "containers": 0,
     "volumes": 0,
     "processes": 0,
     "temporaryCredentials": 0,
     "verified": true
-  },
-  "productionAssumptionsNotVerified": [
-    "managed multi-AZ PostgreSQL durability and cloud cross-region replication lag",
-    "production object storage version replication and provider durability",
-    "production KMS availability, revocation propagation, and SLA",
-    "real event-broker cluster quorum and cross-region recovery",
-    "external paging delivery and human on-call response",
-    "live model-provider turn; intentionally not executed to avoid external prompt/workspace data export"
-  ]
+  }
 }
