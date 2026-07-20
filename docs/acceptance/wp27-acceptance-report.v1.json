@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "workPackage": "WP27",
+  "acceptedAt": "2026-07-20T17:01:10+03:00",
+  "status": "accepted-local-harness",
+  "gates": {
+    "wp27:test": { "passed": true, "tests": 9 },
+    "wp27:otel": {
+      "passed": true,
+      "collector": "otel/opentelemetry-collector-contrib:0.130.1",
+      "otlpHttp": true,
+      "prometheusExport": true,
+      "productionExporter": true
+    },
+    "wp27:postgres-pitr": {
+      "passed": true,
+      "service": "pgvector/pgvector:pg17",
+      "method": "physical-base-backup-plus-streamed-WAL",
+      "backupMs": 379,
+      "rpoMs": 0,
+      "rtoMs": 1647,
+      "duplicateTurns": 0,
+      "forcedRlsTables": 2
+    },
+    "wp27:restore": {
+      "passed": true,
+      "isolated": true,
+      "rpoMs": 0,
+      "rtoMs": 11,
+      "duplicateTurns": 0,
+      "eventGaps": 0,
+      "auditChainBreaks": 0,
+      "crossTenantMixing": 0
+    },
+    "wp27:game-day": {
+      "passed": true,
+      "regionFailoverRpoMs": 0,
+      "regionFailoverRtoMs": 13,
+      "evidenceChainHead": "2af669010087afcfd6c93a6838deadbe7404ae437b0966d2eb7e84dd494fd052"
+    },
+    "wp27:alerts": {
+      "passed": true,
+      "failureInjection": "firing",
+      "recovery": "inactive",
+      "multiWindowRules": 4
+    },
+    "wp27:telemetry-scan": {
+      "passed": true,
+      "markerClasses": 5,
+      "matches": 0,
+      "failClosed": true
+    },
+    "wp27:e2e": {
+      "passed": true,
+      "codexVersion": "0.144.2",
+      "realAppServerHandshake": true,
+      "providerTurnExecuted": false,
+      "externalPromptSent": false
+    },
+    "wp27:accept": { "passed": true }
+  },
+  "restoreOrder": [
+    "postgresql",
+    "key_metadata",
+    "objects",
+    "event_broker",
+    "derived_index"
+  ],
+  "failClosed": {
+    "corruptBackup": true,
+    "incompleteBackup": true,
+    "unavailableKey": true,
+    "staleFence": true,
+    "duplicateRuntimeStart": true
+  },
+  "realServices": [
+    "OpenTelemetry Collector Contrib 0.130.1",
+    "PostgreSQL 17 with pgvector",
+    "Codex app-server 0.144.2"
+  ],
+  "localFixtures": [
+    "loopback active/passive API",
+    "filesystem object/key/index restore target"
+  ],
+  "cleanup": {
+    "containers": 0,
+    "volumes": 0,
+    "processes": 0,
+    "temporaryCredentials": 0,
+    "verified": true
+  },
+  "productionAssumptionsNotVerified": [
+    "managed multi-AZ PostgreSQL durability and cloud cross-region replication lag",
+    "production object storage version replication and provider durability",
+    "production KMS availability, revocation propagation, and SLA",
+    "real event-broker cluster quorum and cross-region recovery",
+    "external paging delivery and human on-call response",
+    "live model-provider turn; intentionally not executed to avoid external prompt/workspace data export"
+  ]
+}

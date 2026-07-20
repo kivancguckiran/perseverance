@@ -1,0 +1,34 @@
+apiVersion: persistent-codex.dev/v1
+kind: DisasterRecoverySchedule
+metadata: { name: production-dr, owner: disaster-recovery }
+spec:
+  isolatedRestore:
+    {
+      cron: '0 3 * * 1',
+      timezone: UTC,
+      rpoTargetMs: 300000,
+      rtoTargetMs: 900000,
+    }
+  regionFailover:
+    {
+      cron: '0 3 1 * *',
+      timezone: UTC,
+      rpoTargetMs: 300000,
+      rtoTargetMs: 1800000,
+    }
+  retention:
+    { immutableEvidenceDays: 400, backupManifestDays: 400, walDays: 35 }
+  evidence: { hashChain: sha256, immutable: true, schemaVersion: 1 }
+  failureNotification:
+    {
+      severity: page,
+      owner: disaster-recovery,
+      runbook: docs/runbooks/wp27-observability-dr.md,
+    }
+  cleanup:
+    {
+      required: true,
+      verifyContainers: true,
+      verifyVolumes: true,
+      verifyCredentials: true,
+    }

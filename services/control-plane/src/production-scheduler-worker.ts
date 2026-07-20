@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import {
+  ProductionTelemetry,
+  OtlpHttpExporter,
+  createTrace,
+  type TraceContext,
+} from '@persistent-codex/production-observability'
+import {
   createBillingPostgresRepository,
   type BillingPostgresRepository,
 } from '@persistent-codex/billing-platform'
@@ -43,6 +49,8 @@ export interface ProductionSchedulerWorkerOptions {
   healthPort?: number
   runtimeTimeoutMs?: number
   billing: BillingPostgresRepository
+  telemetry?: ProductionTelemetry
+  telemetryExporter?: OtlpHttpExporter
 }
 
 export class ProductionSchedulerWorker {
@@ -50,6 +58,7 @@ export class ProductionSchedulerWorker {
   #running = false
   #healthServer: Server | null = null
   #activeClient: CodexAppServerClient | null = null
+  #telemetryTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(options: ProductionSchedulerWorkerOptions) {
     this.options = options
@@ -58,6 +67,14 @@ export class ProductionSchedulerWorker {
   async start() {
     if (this.#running) return
     this.#running = true
+    if (this.options.telemetryExporter) {
+      this.#telemetryTimer = setInterval(
+        () =>
+          void this.options.telemetryExporter!.flush().catch(() => undefined),
+        1_000,
+      )
+      this.#telemetryTimer.unref()
+    }
     if (this.options.healthPort) {
       this.#healthServer = createServer((_request, response) => {
         response.writeHead(200, { 'content-type': 'application/json' })
@@ -99,6 +116,9 @@ export class ProductionSchedulerWorker {
 
   async stop() {
     this.#running = false
+    if (this.#telemetryTimer) clearInterval(this.#telemetryTimer)
+    this.#telemetryTimer = null
+    await this.options.telemetryExporter?.flush().catch(() => 0)
     await this.#activeClient?.stop().catch(() => undefined)
     this.#activeClient = null
     if (this.#healthServer)
@@ -118,6 +138,33 @@ export class ProductionSchedulerWorker {
     const stored = await this.options.repository.bindClaim(claimed, {
       runtimeId,
       ownerId: this.options.ownerId,
+    })
+    const generatedParent = createTrace()
+    const parent: TraceContext = stored.traceId
+      ? { ...generatedParent, traceId: stored.traceId }
+      : generatedParent
+    const telemetry = this.options.telemetry ?? new ProductionTelemetry()
+    const schedulerSpan = telemetry.startSpan('scheduler.claim', {
+      parent,
+      attributes: {
+        'service.name': 'workspace-scheduler',
+        'service.role': 'scheduler',
+        operation: 'claim',
+        outcome: 'claimed',
+      },
+    })
+    telemetry.recordMetric(
+      'scheduler_queue_wait',
+      Math.max(0, Date.now() - new Date(stored.queuedAt).getTime()),
+      { context: schedulerSpan.context, attributes: { outcome: 'claimed' } },
+    )
+    schedulerSpan.end('ok')
+    const runtimeSpan = telemetry.startSpan('workspace.runtime', {
+      parent: schedulerSpan.context,
+      attributes: {
+        'service.role': 'workspace-agent',
+        operation: 'runtime.start',
+      },
     })
     let expectedExpiry = new Date(claimed.lease.expiresAt)
     let leaseValid = true
@@ -182,6 +229,14 @@ export class ProductionSchedulerWorker {
           recovery: stored.attempt > 1,
         },
         `started_${claimed.lease.fencingToken}`,
+      )
+      telemetry.recordMetric(
+        'turn_start_latency',
+        Math.max(0, Date.now() - new Date(stored.queuedAt).getTime()),
+        {
+          context: runtimeSpan.context,
+          attributes: { outcome: 'started' },
+        },
       )
       await new Promise((resolve) =>
         setTimeout(resolve, this.options.runtimeHoldMs),
@@ -299,6 +354,7 @@ export class ProductionSchedulerWorker {
           { runId: stored.runId, outcome: 'completed', reconciled: true },
           'completed',
         )
+        runtimeSpan.end('ok')
         await this.options.billing.settleOperation(scope, stored.runId, {
           idempotencyKey: `wp26:${stored.runId}:complete`,
           usageDedupeKey: `wp26:${stored.runId}:complete`,
@@ -331,6 +387,12 @@ export class ProductionSchedulerWorker {
         isolatedHome.cleanup()
       }
     } catch (error) {
+      runtimeSpan.end('error', {
+        'error.code':
+          error instanceof Error
+            ? error.message.slice(0, 64).replaceAll(/[^A-Za-z0-9_:-]/g, '_')
+            : 'UNKNOWN',
+      })
       if (!(
         error instanceof Error && error.message === 'STALE_FENCING_TOKEN'
       )) {
@@ -427,6 +489,7 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
     return value
   }
   const databaseUrl = required('TOPOLOGY_DATABASE_URL')
+  const telemetry = new ProductionTelemetry()
   return new ProductionSchedulerWorker({
     ownerId: required('SCHEDULER_OWNER_ID'),
     repository: createProductionPostgresRepository(databaseUrl),
@@ -453,5 +516,14 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
       ? { healthPort: Number(env.SCHEDULER_HEALTH_PORT) }
       : {}),
     runtimeTimeoutMs: Number(env.SCHEDULER_RUNTIME_TIMEOUT_MS ?? 180_000),
+    telemetry,
+    ...(env.OTEL_EXPORTER_OTLP_ENDPOINT
+      ? {
+          telemetryExporter: new OtlpHttpExporter(
+            telemetry,
+            env.OTEL_EXPORTER_OTLP_ENDPOINT,
+          ),
+        }
+      : {}),
   })
 }

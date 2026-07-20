@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "owner": "production-platform",
+  "dashboards": [
+    {
+      "uid": "wp27-availability-v1",
+      "title": "WP27 Availability",
+      "panels": [
+        "api_availability",
+        "api_error_rate",
+        "turn_admission_latency"
+      ],
+      "runbook": "docs/runbooks/wp27-observability-dr.md#api-availability"
+    },
+    {
+      "uid": "wp27-latency-v1",
+      "title": "WP27 Turn Latency",
+      "panels": [
+        "turn_admission_latency",
+        "turn_start_latency",
+        "reconnect_recovery"
+      ],
+      "runbook": "docs/runbooks/wp27-observability-dr.md#api-availability"
+    },
+    {
+      "uid": "wp27-queue-v1",
+      "title": "WP27 Scheduler Queue",
+      "panels": ["scheduler_queue_wait", "scheduler_lease_recovery"],
+      "runbook": "docs/runbooks/wp27-observability-dr.md#region-failover"
+    },
+    {
+      "uid": "wp27-realtime-v1",
+      "title": "WP27 Realtime and Replay",
+      "panels": ["event_broker_lag", "event_replay_lag", "reconnect_recovery"],
+      "runbook": "docs/runbooks/wp27-observability-dr.md#api-availability"
+    },
+    {
+      "uid": "wp27-approval-v1",
+      "title": "WP27 Approvals",
+      "panels": ["approval_latency", "api_error_rate"],
+      "runbook": "docs/runbooks/wp27-observability-dr.md#api-availability"
+    },
+    {
+      "uid": "wp27-indexing-v1",
+      "title": "WP27 Indexing Freshness",
+      "panels": ["indexing_freshness", "event_broker_lag"],
+      "runbook": "docs/runbooks/wp27-observability-dr.md#backuprestore"
+    },
+    {
+      "uid": "wp27-dr-v1",
+      "title": "WP27 Backup Restore and Region DR",
+      "panels": [
+        "backup_success",
+        "restore_success",
+        "region_failover_rpo",
+        "region_failover_rto"
+      ],
+      "runbook": "docs/runbooks/wp27-observability-dr.md#region-failover"
+    }
+  ],
+  "templating": {
+    "allowedLabels": [
+      "service.name",
+      "service.role",
+      "deployment.region",
+      "operation",
+      "route",
+      "status",
+      "outcome",
+      "error.code",
+      "tenant.opaque",
+      "workspace.opaque"
+    ],
+    "forbiddenLabels": [
+      "tenant_id",
+      "workspace_id",
+      "prompt",
+      "output",
+      "content",
+      "source",
+      "attachment",
+      "secret",
+      "authorization"
+    ]
+  }
+}

@@ -203,6 +203,12 @@ importers:
         specifier: workspace:*
         version: link:../codex-event-adapter
 
+  packages/production-observability:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+
   packages/production-topology:
     dependencies:
       pg:
@@ -320,6 +326,9 @@ importers:
       '@persistent-codex/event-store':
         specifier: workspace:*
         version: link:../../packages/event-store
+      '@persistent-codex/production-observability':
+        specifier: workspace:*
+        version: link:../../packages/production-observability
       '@persistent-codex/production-topology':
         specifier: workspace:*
         version: link:../../packages/production-topology

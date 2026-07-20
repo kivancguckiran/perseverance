@@ -249,6 +249,7 @@ export class Wp26ProductionStack {
       '0027_secure_shared_folders.sql',
       '0028_ha_scheduler_capacity.sql',
       '0029_wp26_production_execution.sql',
+      '0030_wp27_observability_dr.sql',
     ]) {
       docker(
         [
@@ -330,6 +331,7 @@ export class Wp26ProductionStack {
       EVENT_BROKER_PASSWORD: 'wp26-broker-secret',
       EVENT_BROKER_QUEUE: 'wp26-events',
       KMS_READINESS_URL: this.vaultUrl,
+      TELEMETRY_SCOPE_SALT: 'wp26-wp27-safe-scope-salt',
       PERSISTENT_REGION_ID: 'eu-1',
       WORKSPACE_CWD: ROOT.replace(/\/$/, ''),
       ...extra,

@@ -1,0 +1,13 @@
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.130.1
+    command: [--config=/etc/otelcol/config.yaml]
+    volumes: [./otel-collector.v1.yaml:/etc/otelcol/config.yaml:ro]
+    ports: ['127.0.0.1::4318', '127.0.0.1::9464', '127.0.0.1::13133']
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: [--config.file=/etc/prometheus/prometheus.yml]
+    volumes:
+      - ./prometheus.v1.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.v1.yml:/etc/prometheus/alerts.v1.yml:ro
+    ports: ['127.0.0.1::9090']

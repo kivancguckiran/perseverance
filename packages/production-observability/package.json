@@ -1,0 +1,19 @@
+{
+  "name": "@persistent-codex/production-observability",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts.ts",
+    "./telemetry": "./src/telemetry.ts",
+    "./backup": "./src/backup.ts",
+    "./alerts": "./src/alerts.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  }
+}

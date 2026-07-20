@@ -23,6 +23,7 @@ export interface ProductionSession extends ProductionScope {
 export interface ProductionRun extends ProductionScope {
   sessionId: string
   runId: string
+  traceId: string | null
   queueItemId: string
   idempotencyKey: string
   promptObjectKey: string
@@ -112,6 +113,7 @@ function run(row: Row): ProductionRun {
     workspaceId: String(row.workspace_id),
     sessionId: String(row.session_id),
     runId: String(row.run_id),
+    traceId: nullable(row.trace_id),
     queueItemId: String(row.queue_item_id),
     idempotencyKey: String(row.idempotency_key),
     promptObjectKey: String(row.prompt_object_key),
@@ -259,6 +261,7 @@ export class ProductionPostgresRepository {
       requestBody: unknown
       requiredRegionId: string
       maxAttempts: number
+      traceId?: string | null
       approval?: {
         approvalId?: string
         kind: ProductionApproval['kind']
@@ -322,8 +325,8 @@ export class ProductionPostgresRepository {
         `INSERT INTO persistent_codex.scheduler_queue
           (tenant_id,organization_id,workspace_id,queue_item_id,run_id,session_id,
            provider_id,idempotency_key,required_region_id,state,priority,
-           virtual_finish,attempt,max_attempts,not_before)
-         VALUES ($1,$2,$3,$4,$5,$6,'codex',$7,$8,$9,0,$10,0,$11,$12)`,
+           virtual_finish,attempt,max_attempts,not_before,trace_id)
+         VALUES ($1,$2,$3,$4,$5,$6,'codex',$7,$8,$9,0,$10,0,$11,$12,$13)`,
         [
           input.tenantId,
           input.organizationId,
@@ -337,13 +340,14 @@ export class ProductionPostgresRepository {
           finish.rows[0]!.next_finish,
           input.maxAttempts,
           notBefore,
+          input.traceId ?? null,
         ],
       )
       const inserted = await client.query(
         `INSERT INTO persistent_codex.ha_runs
           (tenant_id,organization_id,workspace_id,session_id,run_id,queue_item_id,
-           idempotency_key,request_hash,prompt_object_key,state)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+           idempotency_key,request_hash,prompt_object_key,state,trace_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
         [
           input.tenantId,
           input.organizationId,
@@ -355,6 +359,7 @@ export class ProductionPostgresRepository {
           requestHash,
           input.promptObjectKey,
           input.approval ? 'awaiting_approval' : 'queued',
+          input.traceId ?? null,
         ],
       )
       let createdApproval: ProductionApproval | null = null
@@ -363,8 +368,8 @@ export class ProductionPostgresRepository {
         const approvalResult = await client.query(
           `INSERT INTO persistent_codex.ha_approvals
             (tenant_id,organization_id,workspace_id,session_id,run_id,approval_id,
-             kind,context,state)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending') RETURNING *`,
+             kind,context,state,trace_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9) RETURNING *`,
           [
             input.tenantId,
             input.organizationId,
@@ -374,6 +379,7 @@ export class ProductionPostgresRepository {
             approvalId,
             input.approval.kind,
             JSON.stringify(input.approval.context),
+            input.traceId ?? null,
           ],
         )
         createdApproval = approval(approvalResult.rows[0] as Row)
@@ -562,8 +568,8 @@ export class ProductionPostgresRepository {
       if (!result.rowCount) throw new Error('RUN_NOT_CLAIMABLE')
       await client.query(
         `INSERT INTO persistent_codex.ha_runtime_starts
-          (tenant_id,organization_id,workspace_id,run_id,fencing_token,runtime_id,owner_id,started_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,now())`,
+          (tenant_id,organization_id,workspace_id,run_id,fencing_token,runtime_id,owner_id,started_at,trace_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8)`,
         [
           scope.tenantId,
           scope.organizationId,
@@ -572,6 +578,7 @@ export class ProductionPostgresRepository {
           claimed.lease.fencingToken,
           input.runtimeId,
           input.ownerId,
+          run(result.rows[0] as Row).traceId,
         ],
       )
       await client.query(
@@ -677,6 +684,22 @@ export class ProductionPostgresRepository {
           input.occurredAt ?? new Date(),
         ],
       )
+      if (result.rows[0]?.accepted)
+        await client.query(
+          `UPDATE persistent_codex.ha_events e SET trace_id=r.trace_id
+           FROM persistent_codex.ha_runs r
+           WHERE e.tenant_id=$1 AND e.organization_id=$2 AND e.workspace_id=$3
+             AND e.event_id=$4 AND r.tenant_id=e.tenant_id
+             AND r.organization_id=e.organization_id AND r.workspace_id=e.workspace_id
+             AND r.run_id=$5`,
+          [
+            input.tenantId,
+            input.organizationId,
+            input.workspaceId,
+            input.eventId,
+            input.runId,
+          ],
+        )
       return {
         accepted: Boolean(result.rows[0]?.accepted),
         sequence: Number(result.rows[0]?.sequence ?? 0),

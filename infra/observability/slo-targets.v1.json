@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "window": "rolling_28d",
+  "targets": [
+    {
+      "sli": "api_availability",
+      "objective": 0.999,
+      "unit": "ratio",
+      "comparison": "gte",
+      "owner": "production-platform",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "api_error_rate",
+      "objective": 0.001,
+      "unit": "ratio",
+      "comparison": "lte",
+      "owner": "production-platform",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "turn_admission_latency",
+      "objective": 500,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "control-plane",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "turn_start_latency",
+      "objective": 30000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "workspace-runtime",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "scheduler_queue_wait",
+      "objective": 15000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "production-platform",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "scheduler_lease_recovery",
+      "objective": 60000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "production-platform",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "event_broker_lag",
+      "objective": 5000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "realtime",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "event_replay_lag",
+      "objective": 100,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "realtime",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "reconnect_recovery",
+      "objective": 5000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "realtime",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "approval_latency",
+      "objective": 900000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "control-plane",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "indexing_freshness",
+      "objective": 300000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "corpus-index",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "backup_success",
+      "objective": 0.99,
+      "unit": "ratio",
+      "comparison": "gte",
+      "owner": "disaster-recovery",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "restore_success",
+      "objective": 1,
+      "unit": "ratio",
+      "comparison": "gte",
+      "owner": "disaster-recovery",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "region_failover_rpo",
+      "objective": 300000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "disaster-recovery",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    },
+    {
+      "sli": "region_failover_rto",
+      "objective": 1800000,
+      "unit": "milliseconds",
+      "comparison": "lte",
+      "owner": "disaster-recovery",
+      "runbook": "docs/runbooks/wp27-observability-dr.md"
+    }
+  ]
+}
