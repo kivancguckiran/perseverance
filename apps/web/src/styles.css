@@ -2541,3 +2541,37 @@ h2 {
     width: 100%;
   }
 }
+/* WP28 enterprise admin is deliberately single-column first: destructive context
+   remains adjacent to its action on phone, tablet and short desktop viewports. */
+.enterprise-admin {
+  display: grid;
+  gap: 1rem;
+  width: min(100% - 2rem, 72rem);
+  margin: 0 auto;
+  padding-block: 1rem 3rem;
+}
+.enterprise-admin > header {
+  grid-column: 1 / -1;
+}
+.enterprise-admin > section {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--border, #c8c8c8);
+  border-radius: 0.75rem;
+}
+.enterprise-admin button {
+  min-height: 44px;
+}
+.enterprise-admin .danger-zone {
+  border-color: #b42318;
+}
+@media (min-width: 48rem) {
+  .enterprise-admin {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 70rem) and (max-height: 45rem) {
+  .enterprise-admin {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

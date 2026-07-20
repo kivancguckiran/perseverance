@@ -59,6 +59,9 @@ importers:
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events
+      '@persistent-codex/enterprise-lifecycle':
+        specifier: workspace:*
+        version: link:../../packages/enterprise-lifecycle
       '@tanstack/react-query':
         specifier: ^5.101.2
         version: 5.101.2(react@19.2.7)
@@ -186,6 +189,19 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/enterprise-lifecycle:
+    dependencies:
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
 
   packages/event-store:
     dependencies:
@@ -323,6 +339,9 @@ importers:
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events
+      '@persistent-codex/enterprise-lifecycle':
+        specifier: workspace:*
+        version: link:../../packages/enterprise-lifecycle
       '@persistent-codex/event-store':
         specifier: workspace:*
         version: link:../../packages/event-store
