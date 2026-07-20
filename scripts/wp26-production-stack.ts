@@ -99,17 +99,21 @@ function docker(args: string[], input?: string, allowFailure = false) {
 async function waitFor(
   url: string,
   expected = 200,
-  attempts = 120,
+  attempts = 240,
   headers?: HeadersInit,
 ) {
+  let diagnostic = 'no response'
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const response = await fetch(url, { headers })
       if (response.status === expected) return response
-    } catch {}
+      diagnostic = `HTTP ${response.status}: ${await response.text()}`
+    } catch (error) {
+      diagnostic = error instanceof Error ? error.message : String(error)
+    }
     await new Promise((resolve) => setTimeout(resolve, 250))
   }
-  throw new Error(`Dependency did not become ready: ${url}`)
+  throw new Error(`Dependency did not become ready: ${url}; ${diagnostic}`)
 }
 
 async function freePort() {
@@ -125,6 +129,22 @@ async function freePort() {
   return address.port
 }
 
+async function waitForPublishedPort(container: string, containerPort: string) {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const published = docker(
+      ['port', container, containerPort],
+      undefined,
+      true,
+    )
+    const port = published.split(':').at(-1)
+    if (port && /^\d+$/.test(port)) return port
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error(
+    `Published port did not become ready: ${container}:${containerPort}`,
+  )
+}
+
 export class Wp26ProductionStack {
   readonly id = `wp26-${randomUUID()}`
   readonly postgres = `${this.id}-postgres`
@@ -133,6 +153,7 @@ export class Wp26ProductionStack {
   readonly vault = `${this.id}-vault`
   readonly volume = `${this.id}-pgdata`
   readonly processes: ChildProcess[] = []
+  readonly processDiagnostics: string[] = []
   apiPorts: number[] = []
   workerPorts: number[] = []
   databaseUrl = ''
@@ -163,10 +184,16 @@ export class Wp26ProductionStack {
       '-d',
       '--name',
       this.rabbit,
+      '--hostname',
+      this.rabbit,
       '-e',
       'RABBITMQ_DEFAULT_USER=wp26',
       '-e',
       'RABBITMQ_DEFAULT_PASS=wp26-broker-secret',
+      '-e',
+      'RABBITMQ_ERLANG_COOKIE=wp26-local-harness-cookie-v1',
+      '-e',
+      `RABBITMQ_NODENAME=rabbit@${this.rabbit}`,
       '-p',
       '127.0.0.1::15672',
       'rabbitmq:4-management',
@@ -199,7 +226,7 @@ export class Wp26ProductionStack {
       '127.0.0.1::8200',
       'hashicorp/vault:1.20',
     ])
-    for (let attempt = 0; attempt < 120; attempt++) {
+    for (let attempt = 0; attempt < 240; attempt++) {
       if (
         spawnSync('docker', [
           'exec',
@@ -210,32 +237,35 @@ export class Wp26ProductionStack {
         ]).status === 0
       )
         break
-      if (attempt === 119) throw new Error('PostgreSQL readiness timeout')
+      if (attempt === 239)
+        throw new Error(
+          `PostgreSQL readiness timeout: ${docker(['logs', this.postgres], undefined, true)}`,
+        )
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
-    const pgPort = docker(['port', this.postgres, '5432/tcp'])
-      .split(':')
-      .at(-1)!
-    const rabbitPort = docker(['port', this.rabbit, '15672/tcp'])
-      .split(':')
-      .at(-1)!
-    const minioPort = docker(['port', this.minio, '9000/tcp'])
-      .split(':')
-      .at(-1)!
-    const vaultPort = docker(['port', this.vault, '8200/tcp'])
-      .split(':')
-      .at(-1)!
+    const [pgPort, rabbitPort, minioPort, vaultPort] = await Promise.all([
+      waitForPublishedPort(this.postgres, '5432/tcp'),
+      waitForPublishedPort(this.rabbit, '15672/tcp'),
+      waitForPublishedPort(this.minio, '9000/tcp'),
+      waitForPublishedPort(this.vault, '8200/tcp'),
+    ])
     this.databaseUrl = `postgresql://topology_runtime:runtime@127.0.0.1:${pgPort}/postgres`
     this.rabbitUrl = `http://127.0.0.1:${rabbitPort}`
     this.minioUrl = `http://127.0.0.1:${minioPort}`
     this.vaultUrl = `http://127.0.0.1:${vaultPort}/v1/sys/health`
-    await Promise.all([
-      waitFor(`${this.rabbitUrl}/api/health/checks/alarms`, 200, 120, {
-        authorization: `Basic ${Buffer.from('wp26:wp26-broker-secret').toString('base64')}`,
-      }),
-      waitFor(`${this.minioUrl}/minio/health/ready`),
-      waitFor(this.vaultUrl),
-    ])
+    try {
+      await Promise.all([
+        waitFor(`${this.rabbitUrl}/api/health/checks/alarms`, 200, 240, {
+          authorization: `Basic ${Buffer.from('wp26:wp26-broker-secret').toString('base64')}`,
+        }),
+        waitFor(`${this.minioUrl}/minio/health/ready`, 200, 240),
+        waitFor(this.vaultUrl, 200, 240),
+      ])
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; rabbit=${docker(['inspect', '--format', '{{.State.Status}}/{{.State.ExitCode}}/{{.State.Error}}', this.rabbit], undefined, true)}; rabbitLogs=${docker(['logs', this.rabbit], undefined, true)}`,
+      )
+    }
     for (const migration of [
       '0018_oidc_authorization_rls.sql',
       '0019_runtime_secrets_envelope_encryption.sql',
@@ -345,11 +375,14 @@ export class Wp26ProductionStack {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let diagnostic = ''
+    const diagnosticIndex = this.processDiagnostics.push('') - 1
     child.stdout?.on('data', (chunk) => {
       diagnostic = `${diagnostic}${String(chunk)}`.slice(-4000)
+      this.processDiagnostics[diagnosticIndex] = diagnostic
     })
     child.stderr?.on('data', (chunk) => {
       diagnostic = `${diagnostic}${String(chunk)}`.slice(-4000)
+      this.processDiagnostics[diagnosticIndex] = diagnostic
     })
     child.once('exit', (code) => {
       if (code && !child.killed)

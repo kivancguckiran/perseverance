@@ -32,6 +32,7 @@ export const sliNameSchema = z.enum([
   'restore_success',
   'region_failover_rpo',
   'region_failover_rto',
+  'telemetry_dropped',
 ])
 
 export const sloTargetSchema = z.object({
@@ -55,7 +56,7 @@ export const backupComponentSchema = z.object({
     'index_manifest',
     'configuration',
   ]),
-  objectKey: opaqueId,
+  objectKey: z.string().regex(/^[A-Za-z0-9._:/-]{1,1024}$/),
   checksumSha256: sha256,
   byteLength: z.number().int().nonnegative(),
   encryptionKeyVersion: opaqueId.nullable(),

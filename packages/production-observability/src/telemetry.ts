@@ -121,9 +121,20 @@ export class ProductionTelemetry {
   readonly metrics: MetricRecord[] = []
   readonly logs: LogRecord[] = []
   readonly now: () => Date
+  readonly maxRecords: number
+  droppedRecords = 0
 
-  constructor(now: () => Date = () => new Date()) {
+  constructor(now: () => Date = () => new Date(), maxRecords = 2_048) {
     this.now = now
+    this.maxRecords = maxRecords
+  }
+
+  #boundedPush<T>(target: T[], value: T) {
+    if (target.length >= this.maxRecords) {
+      target.shift()
+      this.droppedRecords++
+    }
+    target.push(value)
   }
 
   startSpan(
@@ -142,7 +153,7 @@ export class ProductionTelemetry {
         if (ended) return
         ended = true
         const endedAt = this.now()
-        this.spans.push({
+        this.#boundedPush(this.spans, {
           traceId: context.traceId,
           spanId: context.spanId,
           parentSpanId: context.parentSpanId,
@@ -164,7 +175,7 @@ export class ProductionTelemetry {
   ) {
     if (!Number.isFinite(value) || value < 0)
       throw new Error('TELEMETRY_METRIC_INVALID')
-    this.metrics.push({
+    this.#boundedPush(this.metrics, {
       sli,
       value,
       observedAt: this.now().toISOString(),
@@ -180,7 +191,7 @@ export class ProductionTelemetry {
   ) {
     if (!/^[A-Z][A-Z0-9_]{2,63}$/.test(code))
       throw new Error('TELEMETRY_LOG_CODE_INVALID')
-    this.logs.push({
+    this.#boundedPush(this.logs, {
       severity,
       code,
       observedAt: this.now().toISOString(),
@@ -191,9 +202,18 @@ export class ProductionTelemetry {
   }
 
   snapshot() {
+    const metrics = [...this.metrics]
+    if (this.droppedRecords > 0)
+      metrics.push({
+        sli: 'telemetry_dropped' as const,
+        value: this.droppedRecords,
+        observedAt: this.now().toISOString(),
+        traceId: null,
+        attributes: Object.freeze({ outcome: 'collector_unavailable' }),
+      })
     return structuredClone({
       spans: this.spans,
-      metrics: this.metrics,
+      metrics,
       logs: this.logs,
     })
   }
@@ -324,6 +344,7 @@ export class OtlpHttpExporter {
     this.telemetry.spans.splice(0, snapshot.spans.length)
     this.telemetry.metrics.splice(0, snapshot.metrics.length)
     this.telemetry.logs.splice(0, snapshot.logs.length)
+    this.telemetry.droppedRecords = 0
     return responses.length
   }
 }

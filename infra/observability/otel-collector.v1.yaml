@@ -12,7 +12,7 @@ processors:
         - 'attributes["prompt"] != nil or attributes["output"] != nil or attributes["content"] != nil or attributes["authorization"] != nil'
   batch: { timeout: 1s, send_batch_size: 512 }
 exporters:
-  debug: { verbosity: basic }
+  debug: { verbosity: detailed }
   prometheus: { endpoint: 0.0.0.0:9464 }
 extensions:
   health_check: { endpoint: 0.0.0.0:13133 }

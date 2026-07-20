@@ -2,26 +2,26 @@ groups:
   - name: wp27-slo-burn-rate-v1
     rules:
       - alert: ApiAvailabilityFastBurn
-        expr: wp27:slo_burn_rate_5m > 14.4 and wp27:slo_burn_rate_1h > 14.4
-        for: 2m
+        expr: persistent_codex_slo_burn_rate_5m > 14.4 and persistent_codex_slo_burn_rate_1h > 14.4
+        for: 0m
         labels: { severity: page, owner: production-platform }
         annotations:
           { runbook: docs/runbooks/wp27-observability-dr.md#api-availability }
       - alert: ApiAvailabilityMediumBurn
-        expr: wp27:slo_burn_rate_30m > 6 and wp27:slo_burn_rate_6h > 6
-        for: 5m
+        expr: persistent_codex_slo_burn_rate_30m > 6 and persistent_codex_slo_burn_rate_6h > 6
+        for: 0m
         labels: { severity: page, owner: production-platform }
         annotations:
           { runbook: docs/runbooks/wp27-observability-dr.md#api-availability }
       - alert: RestoreOrBackupFailed
-        expr: min_over_time(wp27_backup_restore_success[24h]) < 1
-        for: 1m
+        expr: persistent_codex_restore_success < 1
+        for: 0m
         labels: { severity: page, owner: disaster-recovery }
         annotations:
           { runbook: docs/runbooks/wp27-observability-dr.md#backuprestore }
       - alert: RegionFailoverBudgetExceeded
-        expr: wp27_region_failover_rto_ms > 1800000 or wp27_region_failover_rpo_ms > 300000
-        for: 1m
+        expr: persistent_codex_region_failover_rto_ms > 1800000 or persistent_codex_region_failover_rpo_ms > 300000
+        for: 0m
         labels: { severity: page, owner: disaster-recovery }
         annotations:
           { runbook: docs/runbooks/wp27-observability-dr.md#region-failover }
