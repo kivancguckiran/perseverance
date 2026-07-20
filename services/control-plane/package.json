@@ -21,6 +21,7 @@
     "@persistent-codex/codex-protocol-generated": "workspace:*",
     "@persistent-codex/domain-events": "workspace:*",
     "@persistent-codex/event-store": "workspace:*",
+    "@persistent-codex/enterprise-lifecycle": "workspace:*",
     "@persistent-codex/provider-platform": "workspace:*",
     "@persistent-codex/production-topology": "workspace:*",
     "@persistent-codex/production-observability": "workspace:*",

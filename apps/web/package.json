@@ -12,6 +12,7 @@
   "dependencies": {
     "@persistent-codex/control-plane-contracts": "workspace:*",
     "@persistent-codex/domain-events": "workspace:*",
+    "@persistent-codex/enterprise-lifecycle": "workspace:*",
     "@tanstack/react-query": "^5.101.2",
     "@tanstack/react-router": "^1.170.18",
     "@tanstack/react-router-ssr-query": "^1.167.1",
