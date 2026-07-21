@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 node_modules/
+.wp29/
 .next/
 dist/
 coverage/
@@ -13,4 +14,3 @@ tmp/
 .codex-home/
 .runtime/
 artifacts/
-
