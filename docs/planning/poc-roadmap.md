@@ -60,7 +60,8 @@ ve mobil ürün WP21–WP25, Faz 5 Production hardening WP26–WP30 olarak
 WP21–WP25 bağımsız kabul edilerek Faz 4 kapatılmıştır. WP26 production HA, durable
 scheduler/fencing ve kapasite izolasyonu gerçek kabul kapılarıyla tamamlanmıştır. WP27
 gerçek PITR/restore, region failover, SLO alert ve güvenli telemetry kapılarıyla
-tamamlanmış; WP28 Faz 5'in tek aktif iş paketi olarak açılmıştır.
+tamamlanmıştır. WP28 gerçek enterprise identity ve tenant data lifecycle kapılarıyla
+tamamlanmış; WP29 Faz 5'in tek aktif iş paketi olarak açılmıştır.
 
 ## Uygulama sırası
 
