@@ -1,0 +1,11 @@
+rules:
+  - id: wp29-no-eval
+    message: Dynamic eval is forbidden in backend TypeScript.
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern: eval(...)
+  - id: wp29-no-child-process-exec
+    message: Shell-string execution is forbidden; use execFile/spawn argv.
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern: child_process.exec(...)

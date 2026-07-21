@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "controls": [
+    {
+      "controlId": "WP29-CHANGE-001",
+      "domain": "change-management",
+      "soc2": "CC8.1",
+      "iso27001": "A.8.32",
+      "owner": "release-engineering",
+      "gate": "wp29:signatures",
+      "evidenceType": "cosign-signature-verification"
+    },
+    {
+      "controlId": "WP29-SOD-001",
+      "domain": "separation-of-duties",
+      "soc2": "CC6.3",
+      "iso27001": "A.5.3",
+      "owner": "security",
+      "gate": "wp29:rollout",
+      "evidenceType": "postgres-rollout-approval-and-cas"
+    },
+    {
+      "controlId": "WP29-VULN-001",
+      "domain": "vulnerability-management",
+      "soc2": "CC7.1",
+      "iso27001": "A.8.8",
+      "owner": "security",
+      "gate": "wp29:security-scans",
+      "evidenceType": "raw-scanner-reports"
+    },
+    {
+      "controlId": "WP29-PROVIDER-001",
+      "domain": "vendor-provider-management",
+      "soc2": "CC9.2",
+      "iso27001": "A.5.19",
+      "owner": "platform",
+      "gate": "wp29:provider-canary",
+      "evidenceType": "generated-schema-and-event-replay"
+    },
+    {
+      "controlId": "WP29-SDLC-001",
+      "domain": "secure-development",
+      "soc2": "CC8.1",
+      "iso27001": "A.8.25",
+      "owner": "engineering",
+      "gate": "wp29:test",
+      "evidenceType": "vitest-run"
+    },
+    {
+      "controlId": "WP29-MIGRATION-001",
+      "domain": "change-management",
+      "soc2": "CC8.1",
+      "iso27001": "A.8.32",
+      "owner": "database-platform",
+      "gate": "wp29:migrations",
+      "evidenceType": "postgres-migration-rehearsal"
+    },
+    {
+      "controlId": "WP29-SUPPLY-001",
+      "domain": "software-supply-chain",
+      "soc2": "CC8.1",
+      "iso27001": "A.8.30",
+      "owner": "release-engineering",
+      "gate": "wp29:reproducible-build",
+      "evidenceType": "artifact-and-oci-digest-comparison"
+    },
+    {
+      "controlId": "WP29-SBOM-001",
+      "domain": "software-supply-chain",
+      "soc2": "CC7.1",
+      "iso27001": "A.8.8",
+      "owner": "security",
+      "gate": "wp29:sbom",
+      "evidenceType": "syft-cyclonedx-sbom"
+    },
+    {
+      "controlId": "WP29-CANARY-001",
+      "domain": "release-validation",
+      "soc2": "CC8.1",
+      "iso27001": "A.8.29",
+      "owner": "platform",
+      "gate": "wp29:e2e",
+      "evidenceType": "codex-app-server-canary"
+    },
+    {
+      "controlId": "WP29-ROLLBACK-001",
+      "domain": "release-approval",
+      "soc2": "CC8.1",
+      "iso27001": "A.8.31",
+      "owner": "release-manager",
+      "gate": "wp29:rollout",
+      "evidenceType": "postgres-auto-halt-and-rollback"
+    }
+  ]
+}

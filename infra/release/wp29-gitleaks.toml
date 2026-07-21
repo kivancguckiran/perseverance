@@ -1,0 +1,10 @@
+title = "WP29 gitleaks policy"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "wp29-provider-credential"
+description = "WP29 provider credential marker"
+regex = '''WP29_PROVIDER_CREDENTIAL_[A-Za-z0-9_-]{16,}'''
+keywords = ["WP29_PROVIDER_CREDENTIAL_"]

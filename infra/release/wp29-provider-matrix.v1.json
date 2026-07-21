@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "unknownEventRateThreshold": 0.01,
+  "providers": {
+    "codex": {
+      "pinnedVersions": ["0.144.2"],
+      "versionDiscovery": "binary --version + app-server initialize",
+      "streaming": "supported",
+      "approval": "supported",
+      "resume": "supported",
+      "usage": "supported",
+      "unknownFallback": "supported"
+    },
+    "claude": {
+      "pinnedVersions": ["2.1.109"],
+      "versionDiscovery": "binary --version",
+      "streaming": "supported",
+      "approval": "unsupported",
+      "resume": "supported",
+      "usage": "degraded",
+      "unknownFallback": "supported"
+    },
+    "gemini": {
+      "pinnedVersions": ["0.25.0", "0.50.0"],
+      "versionDiscovery": "binary --version",
+      "streaming": "supported",
+      "approval": "unsupported",
+      "resume": "supported",
+      "usage": "degraded",
+      "unknownFallback": "supported"
+    },
+    "cursor": {
+      "pinnedVersions": ["2026.07.09-a3815c0", "2026.07.16-899851b"],
+      "versionDiscovery": "cursor-agent --version",
+      "streaming": "supported",
+      "approval": "unsupported",
+      "resume": "supported",
+      "usage": "degraded",
+      "unknownFallback": "supported"
+    }
+  }
+}
