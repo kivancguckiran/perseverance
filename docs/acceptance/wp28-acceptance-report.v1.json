@@ -1,8 +1,17 @@
 {
   "schemaVersion": 1,
   "workPackage": "WP28",
-  "generatedAt": "2026-07-20T16:43:08.544Z",
-  "status": "accepted-real-local-harness",
+  "generatedAt": "2026-07-21T12:02:50.253Z",
+  "status": "accepted-real-local-integration",
+  "services": {
+    "identityProvider": "Keycloak 26.3.2",
+    "database": "PostgreSQL 17.5",
+    "objectStore": "MinIO",
+    "cache": "Redis 7.4",
+    "keyManagement": "Vault 1.20",
+    "browser": "Chromium via agent-browser 0.31.2",
+    "codexAppServer": "0.144.2"
+  },
   "observations": [
     {
       "gate": "wp28:test",
@@ -15,7 +24,7 @@
       "retention": { "legalHoldPrecedence": true },
       "export": {
         "tenantScoped": true,
-        "manifestSha256": "10cd8148b4a71b1fe8bae7f7b6ab9a5d0052715e76818c6b005f511d7a583dba",
+        "manifestSha256": "99441229c9b5c532a9dd277c19400bd56ffc66acdcc5fd4e282d791fee7d998b",
         "objects": 1,
         "encrypted": true
       },
@@ -23,7 +32,7 @@
       "residency": { "forbiddenRegionRejected": true, "audited": true },
       "sensitiveEvidence": false,
       "previousEvidenceSha256": null,
-      "evidenceSha256": "b451865d06e574849ff6df52a01f8b6a086bfdd851fca09c93658ab7184dc1e9"
+      "evidenceSha256": "2117a0700637d5729742d8ada2e2099a582609e9483c129f83aac70183bc056d"
     },
     {
       "gate": "wp28:postgres",
@@ -32,175 +41,229 @@
       "forcedRls": true,
       "tenants": 2,
       "crossTenantRows": 0,
-      "migration": "0031",
-      "previousEvidenceSha256": "b451865d06e574849ff6df52a01f8b6a086bfdd851fca09c93658ab7184dc1e9",
-      "evidenceSha256": "d8d4ae9d6cce032efb46c143a110537a2e812e5de91b5f0209e86ebddb9d644d"
+      "migration": "0032",
+      "previousEvidenceSha256": "2117a0700637d5729742d8ada2e2099a582609e9483c129f83aac70183bc056d",
+      "evidenceSha256": "5e260aa5a66e6982645ba6164ab9cb6f168787470878f772bf39c2893c27baa6"
     },
     {
       "gate": "wp28:identity",
       "accepted": true,
-      "isolatedHttpIdp": true,
-      "oidcDiscovery": true,
-      "oidcSignedAssertion": true,
+      "idp": "Keycloak 26.3.2",
+      "oidcAuthorizationCodePkce": true,
+      "realJwks": true,
+      "keyRotation": true,
       "samlMetadata": true,
-      "samlSignedResponse": true,
-      "audienceValidated": true,
-      "mfaAmrValidated": true,
-      "replayFailClosed": true,
-      "externalCredential": false,
-      "previousEvidenceSha256": "d8d4ae9d6cce032efb46c143a110537a2e812e5de91b5f0209e86ebddb9d644d",
-      "evidenceSha256": "409cbe66c3f515b4bbc2f76ac28611978308da7bd3324f324edc8c048ab00ceb"
+      "samlAuthnRequest": true,
+      "signedResponseValidatedBy": "samlify",
+      "acsParsed": true,
+      "idpAssurance": { "amr": ["pwd", "otp"], "acr": "1" },
+      "replayRejected": true,
+      "issuerAudienceExpiryClockSkew": true,
+      "syntheticAssertion": false,
+      "previousEvidenceSha256": "5e260aa5a66e6982645ba6164ab9cb6f168787470878f772bf39c2893c27baa6",
+      "evidenceSha256": "d63b6e2510d03d71dc70682fe1c51b5a0373428de771a177141595587238a123"
     },
     {
       "gate": "wp28:scim",
       "accepted": true,
-      "scim": {
-        "duplicateIdempotent": true,
-        "outOfOrderIgnored": true,
-        "deprovisioned": true
-      },
-      "retention": { "legalHoldPrecedence": true },
-      "export": {
-        "tenantScoped": true,
-        "manifestSha256": "b9abd42a93f3db14d57e8b1e4ef270a81166af8ff7363a35798b713f2019438d",
-        "objects": 1,
-        "encrypted": true
-      },
-      "deletion": { "holdReported": true, "cryptoErasureStepRequired": true },
-      "residency": { "forbiddenRegionRejected": true, "audited": true },
-      "sensitiveEvidence": false,
-      "previousEvidenceSha256": "409cbe66c3f515b4bbc2f76ac28611978308da7bd3324f324edc8c048ab00ceb",
-      "evidenceSha256": "da3f8200c53335e9bb53f6faa06efeaf250f2451cf13600b02cfb1cb282070a6"
+      "postgres": "17.5",
+      "httpInstances": 3,
+      "restartPersistent": true,
+      "duplicateConcurrent": true,
+      "outOfOrderIgnored": true,
+      "credentialDigestOnly": true,
+      "crossTenantExternalIdAllowedScoped": true,
+      "crossTenantMemberSubstitutionRejected": true,
+      "groupMembershipRoleMapping": true,
+      "resources": 3,
+      "idempotencyRecords": 4,
+      "previousEvidenceSha256": "d63b6e2510d03d71dc70682fe1c51b5a0373428de771a177141595587238a123",
+      "evidenceSha256": "7746d3a203fecbcdeb33a8eda5f2718d2e8e0483219bb2c6e40e1e516447c770"
     },
     {
       "gate": "wp28:retention",
       "accepted": true,
-      "scim": {
-        "duplicateIdempotent": true,
-        "outOfOrderIgnored": true,
-        "deprovisioned": true
-      },
-      "retention": { "legalHoldPrecedence": true },
-      "export": {
-        "tenantScoped": true,
-        "manifestSha256": "5a08fe9fc22cb261958013e7d10256f4296df95320524d83ade7c3a3ef19bd6e",
-        "objects": 1,
-        "encrypted": true
-      },
-      "deletion": { "holdReported": true, "cryptoErasureStepRequired": true },
-      "residency": { "forbiddenRegionRejected": true, "audited": true },
-      "sensitiveEvidence": false,
-      "previousEvidenceSha256": "da3f8200c53335e9bb53f6faa06efeaf250f2451cf13600b02cfb1cb282070a6",
-      "evidenceSha256": "5ba6eb6e30a2ff9c31914511aa6795bf51394634eff5159b3d3751d53104f031"
+      "postgres": "17.5",
+      "minio": true,
+      "redis": true,
+      "derivedIndex": true,
+      "classes": [
+        "event",
+        "raw_envelope",
+        "audit",
+        "source",
+        "attachment",
+        "artifact",
+        "derived_index",
+        "usage_billing",
+        "backup"
+      ],
+      "boundedBatch": 3,
+      "leasedFenced": true,
+      "restartCheckpoint": true,
+      "legalHoldBlocked": true,
+      "holdReleaseResumed": true,
+      "policyCasStaleRejected": true,
+      "historicalEarlyDeleteRejected": true,
+      "remaining": 0,
+      "previousEvidenceSha256": "7746d3a203fecbcdeb33a8eda5f2718d2e8e0483219bb2c6e40e1e516447c770",
+      "evidenceSha256": "76a2978457340c06d6793cb7b544a0ad4fb7f1410699511e69f3fea4fbfb8554"
     },
     {
       "gate": "wp28:export",
       "accepted": true,
-      "scim": {
-        "duplicateIdempotent": true,
-        "outOfOrderIgnored": true,
-        "deprovisioned": true
+      "postgresObjects": 1,
+      "minioObjects": 1,
+      "vaultKeyVersion": 7,
+      "resumedFromCheckpoint": 1,
+      "duplicateArchive": false,
+      "manifest": {
+        "watermark": "1:a-object",
+        "objects": [
+          {
+            "objectId": "a-object",
+            "sha256": "fb39c0c0bd65b42a69113c3ca7d6ec01f200a4fc8a165637001432674d00b7b7",
+            "byteLength": 33,
+            "keyVersion": 1
+          }
+        ],
+        "archiveSha256": "26c66ffbdb6feea0971422486feb592cbb7622554f06e707cc71203ea88220ed",
+        "archiveByteLength": 132
       },
-      "retention": { "legalHoldPrecedence": true },
-      "export": {
-        "tenantScoped": true,
-        "manifestSha256": "66741e1c834ef1ea2831d20b0c6329359f4ebf1261cb23370228a30ce715e081",
-        "objects": 1,
-        "encrypted": true
-      },
-      "deletion": { "holdReported": true, "cryptoErasureStepRequired": true },
-      "residency": { "forbiddenRegionRejected": true, "audited": true },
-      "sensitiveEvidence": false,
-      "previousEvidenceSha256": "5ba6eb6e30a2ff9c31914511aa6795bf51394634eff5159b3d3751d53104f031",
-      "evidenceSha256": "38f468e3a54ce26f155f53e036939fc0d4dd7396f3b545eab7233eaaf66e807f"
+      "rangeDownload": true,
+      "expiringGrant": true,
+      "crossTenantRejected": true,
+      "supportHttpStatus": 403,
+      "plaintextInEvidence": false,
+      "previousEvidenceSha256": "76a2978457340c06d6793cb7b544a0ad4fb7f1410699511e69f3fea4fbfb8554",
+      "evidenceSha256": "96903f0db17a9aef4e079a308cf2e4e49f7ab328a1c6d081564ede0b2b307e58"
     },
     {
       "gate": "wp28:delete",
       "accepted": true,
-      "postgresDerivedIndex": true,
-      "minioObjectDelete": true,
-      "redisCachePurge": true,
-      "vaultTransitCryptoErasure": true,
-      "ciphertextDecryptAfterErase": false,
-      "crossTenantObjectPreserved": true,
-      "crossTenantCachePreserved": true,
-      "crossTenantIndexPreserved": true,
-      "backupTombstoneSemantics": true,
-      "previousEvidenceSha256": "38f468e3a54ce26f155f53e036939fc0d4dd7396f3b545eab7233eaaf66e807f",
-      "evidenceSha256": "54879d96fe7fe12dfdd7422b0a02bbc49e730099d0d73236b6205ae0ce758dce"
+      "durableStateMachine": true,
+      "crashRestartWorkers": 13,
+      "legalHoldBlocked": true,
+      "backupRetentionReported": true,
+      "backupExpiryResumed": true,
+      "cryptoErasure": { "keyVersion": 3, "restoreRejected": true },
+      "deletionReceipt": true,
+      "otherTenantPreserved": true,
+      "steps": [
+        { "step": "access_revoke", "attempts": 1 },
+        { "step": "admission_cordon", "attempts": 1 },
+        { "step": "active_job_drain", "attempts": 1 },
+        { "step": "session_token_revoke", "attempts": 1 },
+        { "step": "cache_purge", "attempts": 1 },
+        { "step": "index_purge", "attempts": 1 },
+        { "step": "object_delete", "attempts": 2 },
+        { "step": "metadata_cleanup", "attempts": 1 },
+        { "step": "backup_expiry", "attempts": 2 },
+        { "step": "kms_crypto_erasure", "attempts": 1 },
+        { "step": "deletion_receipt", "attempts": 1 }
+      ],
+      "previousEvidenceSha256": "96903f0db17a9aef4e079a308cf2e4e49f7ab328a1c6d081564ede0b2b307e58",
+      "evidenceSha256": "8af4d854c5d7bb5863cd0c7b40686292e3cf03b5040ba941bc28e41bc1416c2f"
     },
     {
       "gate": "wp28:residency",
       "accepted": true,
-      "scim": {
-        "duplicateIdempotent": true,
-        "outOfOrderIgnored": true,
-        "deprovisioned": true
+      "productionAdapters": ["scheduler", "minio", "postgres-index", "export"],
+      "failClosedNoRegion": true,
+      "forbiddenPaths": [
+        "backup-restore",
+        "backup-target",
+        "export",
+        "index",
+        "object-write",
+        "placement",
+        "transfer-without-approval"
+      ],
+      "transferAudit": {
+        "sourceRegion": "eu-1",
+        "destinationRegion": "eu-2",
+        "byteCount": 22
       },
-      "retention": { "legalHoldPrecedence": true },
-      "export": {
-        "tenantScoped": true,
-        "manifestSha256": "9108c23fc7104c9695475c5b11446a7dc5ff25c51e90f939842920f72d693af0",
-        "objects": 1,
-        "encrypted": true
-      },
-      "deletion": { "holdReported": true, "cryptoErasureStepRequired": true },
-      "residency": { "forbiddenRegionRejected": true, "audited": true },
-      "sensitiveEvidence": false,
-      "previousEvidenceSha256": "54879d96fe7fe12dfdd7422b0a02bbc49e730099d0d73236b6205ae0ce758dce",
-      "evidenceSha256": "f14dfe5faf8dc00a9f7614b30f4d522c416e0b11c270162df465f317757a0908"
+      "previousEvidenceSha256": "8af4d854c5d7bb5863cd0c7b40686292e3cf03b5040ba941bc28e41bc1416c2f",
+      "evidenceSha256": "0ff5847cc531d70b505878870d216e0aaf4971b5e79d2c20893e3b29198acaf5"
     },
     {
       "gate": "wp28:e2e",
       "accepted": true,
       "codexVersion": "0.144.2",
       "realAppServer": true,
+      "realPostgres": "17.5",
       "threadStarted": true,
       "turnStarted": true,
-      "scimHttp": true,
       "deprovisionDuringActiveTurn": true,
-      "sessionRevoked": true,
-      "leaseRevoked": true,
-      "turnInterrupted": true,
-      "credentialCachesPurged": true,
+      "durableRepositoryState": {
+        "principal_revoked": true,
+        "sessions_revoked": true,
+        "tokens_revoked": true,
+        "realtime_revoked": true,
+        "cache_revoked": true,
+        "support_revoked": true,
+        "lease_revoked": true,
+        "run_interrupted": true,
+        "bindings_drained": true
+      },
+      "appServerTurnInterrupt": true,
+      "clientStopUsedAsRevocation": false,
+      "admissions": { "turn": 403, "upload": 403, "export": 403, "share": 403 },
       "temporaryCodexHomeCleaned": true,
-      "previousEvidenceSha256": "f14dfe5faf8dc00a9f7614b30f4d522c416e0b11c270162df465f317757a0908",
-      "evidenceSha256": "b17ec8c257995b9a4a37438ca717a46890bf669eed4faa8737d4f82f692f50ec"
+      "previousEvidenceSha256": "0ff5847cc531d70b505878870d216e0aaf4971b5e79d2c20893e3b29198acaf5",
+      "evidenceSha256": "cc354e5a4738d808e21462104a22a40bbf053089dd8a01f8de9be71893b60df4"
     },
     {
       "gate": "wp28:browser",
       "accepted": true,
+      "browser": "Chromium via agent-browser 0.31.2",
+      "liveWebApp": true,
+      "liveControlPlaneApi": true,
+      "stateAuthority": ["PostgreSQL 17.5", "MinIO"],
       "viewports": ["390x844", "768x1024", "1280x720"],
-      "accessibleSections": 6,
-      "supportExportDenied": true,
-      "supportDeleteDenied": true,
-      "optimisticConcurrency": true,
-      "reAuthentication": true,
-      "previousEvidenceSha256": "b17ec8c257995b9a4a37438ca717a46890bf669eed4faa8737d4f82f692f50ec",
-      "evidenceSha256": "a3134358fd2523fac16c72d8a4d4df235313fd01c37652aeb9029470ef13d73c"
+      "visibleState": [
+        "domain-verification",
+        "sso-enforcement",
+        "scim",
+        "legal-hold",
+        "export-manifest-download",
+        "delete-progress"
+      ],
+      "supportHttp": { "export": 403, "delete": 403 },
+      "reAuthentication": { "legalHold": 401, "delete": 401 },
+      "optimisticConcurrency": { "legalHold": 409, "delete": 409 },
+      "rangeDownload": { "status": 206, "bytes": 32 },
+      "ssrStringAcceptedAsBrowserEvidence": false,
+      "previousEvidenceSha256": "cc354e5a4738d808e21462104a22a40bbf053089dd8a01f8de9be71893b60df4",
+      "evidenceSha256": "52dd3a097163e7b951793161abb8724afb6a2da5f678cd28ddd4592bb406d479"
     }
   ],
-  "evidenceChainHead": "a3134358fd2523fac16c72d8a4d4df235313fd01c37652aeb9029470ef13d73c",
-  "contentSafety": {
-    "pii": false,
-    "email": false,
-    "assertion": false,
-    "token": false,
-    "secret": false,
-    "exportPlaintext": false
-  },
-  "externalNotRun": {
-    "externalEnterpriseIdp": "not-run-no-external-enterprise-credential",
-    "managedScimProvider": "not-run-local-http-provider",
-    "managedKmsCryptoErasure": "not-run-local-key-fixture",
-    "managedCrossRegionTransfer": "not-run-local-region-topology"
-  },
+  "evidenceChainHead": "52dd3a097163e7b951793161abb8724afb6a2da5f678cd28ddd4592bb406d479",
   "cleanup": {
     "containers": 0,
-    "volumes": 0,
+    "anonymousVolumesFromHarness": 0,
     "processes": 0,
+    "browserSessions": 0,
+    "temporaryCodexHomes": 0,
     "temporaryCredentials": 0,
     "exportArchives": 0,
     "verified": true
+  },
+  "contentSafety": {
+    "pii": true,
+    "email": true,
+    "assertion": true,
+    "token": true,
+    "secret": true,
+    "providerCredential": true,
+    "exportPlaintext": true
+  },
+  "contentScanner": {
+    "scanner": "wp28-evidence-scanner-v1",
+    "sourcesScanned": 21,
+    "bytesScanned": 15183,
+    "findings": 0,
+    "failClosed": true
   }
 }
