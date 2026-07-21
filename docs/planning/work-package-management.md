@@ -82,8 +82,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP26 — HA topology ve kapasite               | Tamamlandı | Production HA, durable scheduler, fencing recovery ve noisy-neighbor sınırları bağımsız kabul edildi        |
 | WP27 — SLO ve DR                             | Tamamlandı | Gerçek PITR/restore, dependency game-day, SLO alertleri ve telemetry güvenliği bağımsız kabul edildi        |
 | WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                 |
-| WP29 — Supply-chain ve canary                | Aktif      | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
-| WP30 — Production kabul ve rollout           | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
+| WP29 — Supply-chain ve canary                | Tamamlandı | İmzalı build, provider canary, güvenli upgrade ve compliance evidence bağımsız kabul edildi                 |
+| WP30 — Production kabul ve rollout           | Aktif      | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
 
 ## WP1 nihai denetim sonucu
 
@@ -1248,3 +1248,28 @@ Karar: **Tamamlandı**
 - Repo genelinde format, typecheck, 362 test, build ve SSR HTTP smoke geçti.
 
 WP28 tamamlandı. Tek aktif iş paketi WP29'dur; WP29 kabul edilmeden WP30 başlatılmaz.
+
+## WP29 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `842708f` ve `81f2fd7` kabul edildi.
+- Temiz implementation commit'inde gerçek `wp29:accept` kapısı; 7 hedefli test,
+  reproducible build, OCI registry round-trip, Syft SBOM, Cosign imza/provenance,
+  Gitleaks/Semgrep/Trivy/Hadolint/Conftest/pnpm audit ve compliance bundle üretimini
+  tamamladı.
+- Gerçek Codex `0.144.2` generated schema hash'i repository ile eşleşti. Bozuk şema
+  `%4,76` unknown-event oranıyla `%1` eşiğini aştı ve rollout'u durdurdu; gerçek Codex
+  app-server E2E başarıyla tamamlandı.
+- PostgreSQL `17.5` migration ve durable rollout provalarında sekiz korunan domain'in
+  checksum'ları rollback sonrasında değişmedi; veri kaybı `0`, concurrent promotion,
+  stale/replay reddi, kill switch ve otomatik rollback doğrulandı.
+- Kayıtlı acceptance report checksum'ı
+  `716ddbd7824b6dfbd0fce8e5780e803685d2747b9261e719d2d48d60d16e56ac`;
+  bağımsız koşunun evidence chain head'i
+  `d4620173ec2e8b94cb0143fa29e3107d94930eeb25ec66e4602497c58e7f3d8c` ve cleanup
+  sonucu `verified-zero` oldu.
+- Repo genelinde format, typecheck, 369 test, production build ve SSR HTTP smoke geçti.
+
+WP29 tamamlandı. Tek aktif iş paketi WP30'dur; WP30 bağımsız kabul edilmeden Faz 5
+kapatılmaz.

@@ -61,7 +61,8 @@ WP21–WP25 bağımsız kabul edilerek Faz 4 kapatılmıştır. WP26 production 
 scheduler/fencing ve kapasite izolasyonu gerçek kabul kapılarıyla tamamlanmıştır. WP27
 gerçek PITR/restore, region failover, SLO alert ve güvenli telemetry kapılarıyla
 tamamlanmıştır. WP28 gerçek enterprise identity ve tenant data lifecycle kapılarıyla
-tamamlanmış; WP29 Faz 5'in tek aktif iş paketi olarak açılmıştır.
+tamamlanmış; WP29 supply-chain, provider canary, güvenli rollout ve compliance
+kapılarıyla tamamlanmış; WP30 Faz 5'in tek aktif iş paketi olarak açılmıştır.
 
 ## Uygulama sırası
 

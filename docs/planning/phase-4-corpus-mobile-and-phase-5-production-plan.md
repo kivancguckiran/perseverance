@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP29
+- Aktif iş paketi: WP30
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -31,8 +31,8 @@ lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine 
 | WP26  | 5   | Tamamlandı | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
 | WP27  | 5   | Tamamlandı | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
 | WP28  | 5   | Tamamlandı | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP29  | 5   | Aktif      | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP30  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| WP29  | 5   | Tamamlandı | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP30  | 5   | Aktif      | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; WP24 kabul
 edilmeden WP25; Faz 4 tamamlanmadan WP26; WP29 tamamlanmadan nihai WP30 aktive edilmez.
@@ -848,6 +848,32 @@ kontrollere bağlamak.
 #### Teslimat commit'i
 
 `feat: secure the release supply chain and provider upgrades`
+
+#### Nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `842708f` ve `81f2fd7` kabul edildi.
+- Temiz implementation commit'inde `wp29:accept`; 7 hedefli testi, iki ortamda
+  reproducible build'i, yerel OCI registry round-trip'ini, Syft SBOM'larını ve Cosign
+  artifact/image doğrulamasını gerçek araçlarla tamamladı.
+- Gitleaks, Semgrep, Trivy, Hadolint, Conftest ve pnpm audit kapıları sıfır blocker ile
+  geçti; secret, SAST, IaC ve vulnerable-image negatif fixture'ları yakalandı.
+- Gerçek Codex `0.144.2` binary'sinden `generate-ts` ve `generate-json-schema` çıktıları
+  repository hash'iyle eşleşti. Bozuk şema canary'si `%4,76` unknown-event oranında
+  `%1` eşiğini aşarak rollout'u production cohort'tan önce durdurdu.
+- PostgreSQL `17.5` migration ve rollout provalarında sekiz korunan domain'in
+  checksum'ları rollback öncesi/sonrası eşit kaldı; veri kaybı `0`, iki eşzamanlı
+  promoter'da tek kazanan ve otomatik halt/rollback doğrulandı.
+- Gerçek Codex app-server E2E, compliance bundle ve cleanup kapıları geçti. Kayıtlı
+  acceptance report checksum'ı
+  `716ddbd7824b6dfbd0fce8e5780e803685d2747b9261e719d2d48d60d16e56ac`;
+  bağımsız koşunun evidence chain head'i
+  `d4620173ec2e8b94cb0143fa29e3107d94930eeb25ec66e4602497c58e7f3d8c` oldu.
+- Repo genelinde format, typecheck, 369 test ve production build geçti; SSR HTTP smoke
+  localhost yetkisiyle `/` ve `/sessions/:sessionId` için başarıyla tamamlandı.
+
+WP29 tamamlandı. WP30 Faz 5'in tek aktif iş paketidir.
 
 ### WP30 — Pentest, performance ve kontrollü production rollout kabulü
 
