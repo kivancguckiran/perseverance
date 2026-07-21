@@ -1,5 +1,6 @@
 export * from './contracts'
 export * from './identity'
+export * from './durable'
 
 import {
   createCipheriv,
@@ -203,6 +204,7 @@ export function buildEncryptedExport(input: {
     keyVersion: number
   }[]
   key: Buffer
+  keyVersion?: number
   createdAt?: Date
 }) {
   if (input.objects.some((o) => o.tenantId !== input.tenantId))
@@ -234,7 +236,9 @@ export function buildEncryptedExport(input: {
     })),
     archiveSha256: createHash('sha256').update(archive).digest('hex'),
     archiveByteLength: archive.length,
-    keyVersion: Math.max(...input.objects.map((o) => o.keyVersion), 1),
+    keyVersion:
+      input.keyVersion ??
+      Math.max(...input.objects.map((o) => o.keyVersion), 1),
     createdAt: (input.createdAt ?? new Date()).toISOString(),
   }
   return { archive, manifest }

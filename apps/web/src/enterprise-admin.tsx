@@ -15,6 +15,12 @@ export type EnterpriseAdminState = {
   residency: { primaryRegion: string; allowedRegions: string[] }
   canExport: boolean
   canDelete: boolean
+  exportManifest?: {
+    watermark: string
+    archiveSha256: string
+    archiveByteLength: number
+    objects: unknown[]
+  } | null
 }
 export function destructiveConfirmationMatches(
   input: string,
@@ -64,6 +70,18 @@ export function EnterpriseAdmin({ state }: { state: EnterpriseAdminState }) {
         <h2 id="export-title">Tenant export</h2>
         <p role="status">{state.exportJob?.state ?? 'No export running'}</p>
         <button disabled={!state.canExport}>Request export</button>
+        {state.exportManifest ? (
+          <dl id="export-manifest">
+            <dt>Watermark</dt>
+            <dd>{state.exportManifest.watermark}</dd>
+            <dt>Objects</dt>
+            <dd>{state.exportManifest.objects.length}</dd>
+            <dt>Archive bytes</dt>
+            <dd>{state.exportManifest.archiveByteLength}</dd>
+            <dt>Checksum</dt>
+            <dd>{state.exportManifest.archiveSha256}</dd>
+          </dl>
+        ) : null}
       </section>
       <section className="danger-zone" aria-labelledby="delete-title">
         <h2 id="delete-title">Delete &amp; offboard</h2>

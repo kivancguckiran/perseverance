@@ -14,6 +14,10 @@ try {
     '-d',
     '--name',
     name,
+    '--label',
+    'persistent.wp28=true',
+    '--tmpfs',
+    '/var/lib/postgresql/data',
     '-e',
     'POSTGRES_PASSWORD=postgres',
     '-e',
@@ -22,6 +26,7 @@ try {
     '127.0.0.1::5432',
     'postgres:17.5-alpine',
   ])
+  let ready = false
   for (let i = 0; i < 80; i++) {
     if (
       spawnSync('docker', [
@@ -33,14 +38,20 @@ try {
         '-d',
         'wp28',
       ]).status === 0
-    )
+    ) {
+      ready = true
       break
+    }
     await new Promise((r) => setTimeout(r, 250))
   }
-  const sql = readFileSync(
+  assert.equal(ready, true, 'PostgreSQL did not become ready')
+  await new Promise((r) => setTimeout(r, 750))
+  const sql = [
     'infra/postgres/migrations/0031_wp28_enterprise_lifecycle.sql',
-    'utf8',
-  )
+    'infra/postgres/migrations/0032_wp28_durable_enterprise_lifecycle.sql',
+  ]
+    .map((path) => readFileSync(path, 'utf8'))
+    .join('\n')
   let r = spawnSync(
     'docker',
     [
@@ -86,9 +97,9 @@ try {
       forcedRls: true,
       tenants: 2,
       crossTenantRows: 0,
-      migration: '0031',
+      migration: '0032',
     }),
   )
 } finally {
-  docker(['rm', '-f', name], true)
+  docker(['rm', '-f', '-v', name], true)
 }

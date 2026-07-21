@@ -1,0 +1,65 @@
+{
+  "realm": "wp28",
+  "enabled": true,
+  "sslRequired": "none",
+  "loginWithEmailAllowed": false,
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 60,
+  "ssoSessionIdleTimeout": 300,
+  "clients": [
+    {
+      "clientId": "wp28-oidc",
+      "name": "WP28 OIDC PKCE",
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://127.0.0.1:43128/oidc/callback"],
+      "webOrigins": ["http://127.0.0.1:43128"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocolMappers": [
+        {
+          "name": "amr",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-amr-mapper",
+          "consentRequired": false,
+          "config": { "id.token.claim": "true", "access.token.claim": "true" }
+        }
+      ]
+    },
+    {
+      "clientId": "http://wp28.test/saml",
+      "name": "WP28 SAML SP",
+      "protocol": "saml",
+      "publicClient": true,
+      "redirectUris": ["http://127.0.0.1:43128/saml/acs"],
+      "attributes": {
+        "saml.authnstatement": "true",
+        "saml.server.signature": "true",
+        "saml.assertion.signature": "true",
+        "saml.signature.algorithm": "RSA_SHA256",
+        "saml_name_id_format": "persistent",
+        "saml.force.post.binding": "true"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "wp28-user",
+      "firstName": "Opaque",
+      "lastName": "Principal",
+      "email": "wp28-pii-marker@example.invalid",
+      "enabled": true,
+      "emailVerified": true,
+      "requiredActions": ["CONFIGURE_TOTP"],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Wp28-Strong-Password!",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

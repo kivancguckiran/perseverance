@@ -25,6 +25,85 @@ body {
     #09100f;
 }
 
+.enterprise-page {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 32px 0 56px;
+}
+.enterprise-admin {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.enterprise-admin > header {
+  grid-column: 1 / -1;
+}
+.enterprise-admin section,
+.acceptance-controls {
+  padding: 18px;
+  border: 1px solid #29443a;
+  border-radius: 14px;
+  background: #0d1814;
+  overflow-wrap: anywhere;
+}
+.enterprise-admin h1,
+.enterprise-admin h2,
+.acceptance-controls h2 {
+  margin-top: 0;
+}
+.enterprise-admin dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+}
+.enterprise-admin dd {
+  margin: 0;
+}
+.enterprise-admin button,
+.acceptance-controls button {
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #3b6555;
+  border-radius: 9px;
+  color: #dce8e3;
+  background: #14271f;
+}
+.enterprise-admin button:disabled {
+  opacity: 0.48;
+}
+.acceptance-controls {
+  display: grid;
+  margin-top: 16px;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+.acceptance-controls h2 {
+  grid-column: 1 / -1;
+}
+.acceptance-controls output {
+  min-height: 24px;
+  color: #9ee8c8;
+}
+@media (max-width: 800px) {
+  .enterprise-admin {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 520px) {
+  .enterprise-page {
+    width: min(100% - 20px, 1180px);
+    padding-top: 18px;
+  }
+  .enterprise-admin,
+  .acceptance-controls {
+    grid-template-columns: 1fr;
+  }
+  .acceptance-controls h2 {
+    grid-column: 1;
+  }
+}
+
 button,
 textarea,
 input,

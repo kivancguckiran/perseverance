@@ -63,15 +63,17 @@ export function validateOidcAssertion(input: {
   const amr = Array.isArray(claims.amr)
     ? claims.amr.filter((v): v is string => typeof v === 'string')
     : []
+  const assurance = claims.acr == null ? null : String(claims.acr)
   if (
     input.configuration.requiredMfa &&
-    !amr.some((v) => input.configuration.allowedAmr.includes(v))
+    !amr.some((v) => input.configuration.allowedAmr.includes(v)) &&
+    !(assurance && input.configuration.allowedAmr.includes(`acr:${assurance}`))
   )
     throw new EnterpriseBoundaryError('MFA_ASSURANCE_REQUIRED')
   return {
     subject: String(claims.sub),
     amr,
-    assurance: claims.acr == null ? null : String(claims.acr),
+    assurance,
   }
 }
 

@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./contracts": "./src/contracts.ts",
     "./identity": "./src/identity.ts",
+    "./durable": "./src/durable.ts",
     "./postgres": "./src/postgres.ts"
   },
   "scripts": {
