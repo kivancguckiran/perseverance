@@ -81,8 +81,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Tamamlandı | Davet, rol/ACL, durable ortak task/billing ve birleşik Faz 4 kabulü bağımsız doğrulandı                     |
 | WP26 — HA topology ve kapasite               | Tamamlandı | Production HA, durable scheduler, fencing recovery ve noisy-neighbor sınırları bağımsız kabul edildi        |
 | WP27 — SLO ve DR                             | Tamamlandı | Gerçek PITR/restore, dependency game-day, SLO alertleri ve telemetry güvenliği bağımsız kabul edildi        |
-| WP28 — Enterprise lifecycle                  | Aktif      | SSO/SCIM, retention/export/delete ve data-residency yaşam döngüsü kurulacak                                 |
-| WP29 — Supply-chain ve canary                | Planlandı  | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
+| WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                 |
+| WP29 — Supply-chain ve canary                | Aktif      | İmzalı build, provider canary, güvenli upgrade ve compliance evidence eklenecek                             |
 | WP30 — Production kabul ve rollout           | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
 
 ## WP1 nihai denetim sonucu
@@ -1225,3 +1225,26 @@ Karar: **Tamamlandı**
   geçici container, volume ve process kalmadı.
 
 WP27 tamamlandı. Tek aktif iş paketi WP28'dir; WP28 kabul edilmeden WP29 başlatılmaz.
+
+## WP28 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama commit'leri `dd225ff` ve `13cd5cf` kabul edildi.
+- Bağımsız `wp28:accept`; Keycloak OIDC/SAML, PostgreSQL durable SCIM, gerçek
+  retention/legal-hold, MinIO/Vault export, durable delete/crypto-erasure, residency,
+  gerçek Codex deprovision ve Chromium kapılarını geçti.
+- SCIM üç API instance'ında restart-safe ve idempotent kaldı. Aktif turn deprovision'u
+  session/token/realtime/cache/support/lease/run state'lerini kapattı; dört yeni
+  admission yolu `403` döndürdü.
+- Dokuz retention sınıfı hold-release sonrası temizlendi. Export checkpoint resume,
+  manifest/checksum, range download ve support denial geçti. Offboarding 11 durable
+  adımı crash/restart ile tamamladı; crypto-erasure restore'u reddetti.
+- Residency scheduler/object/index/export katmanlarında fail-closed çalıştı. Browser
+  üç viewport'ta canlı API state'i, `401/403/409/206` güvenlik akışlarını doğruladı.
+- İçerik tarayıcı 21 kaynağı taradı ve sıfır bulgu verdi. Acceptance report checksum'ı
+  `70da6992e5f0340e52c1696ea5c5966e903263180ce27f40dc33d96b620224cb` oldu;
+  geçici container, browser session, process, Codex home ve export archive kalmadı.
+- Repo genelinde format, typecheck, 362 test, build ve SSR HTTP smoke geçti.
+
+WP28 tamamlandı. Tek aktif iş paketi WP29'dur; WP29 kabul edilmeden WP30 başlatılmaz.

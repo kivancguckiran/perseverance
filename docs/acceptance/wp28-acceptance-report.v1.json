@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workPackage": "WP28",
-  "generatedAt": "2026-07-21T12:02:50.253Z",
+  "generatedAt": "2026-07-21T12:25:14.709Z",
   "status": "accepted-real-local-integration",
   "services": {
     "identityProvider": "Keycloak 26.3.2",
@@ -24,7 +24,7 @@
       "retention": { "legalHoldPrecedence": true },
       "export": {
         "tenantScoped": true,
-        "manifestSha256": "99441229c9b5c532a9dd277c19400bd56ffc66acdcc5fd4e282d791fee7d998b",
+        "manifestSha256": "d1eea5cd582f47c501e212fefcb7410c0c4b05028e4e68eefc1a5728dd2e961f",
         "objects": 1,
         "encrypted": true
       },
@@ -32,7 +32,7 @@
       "residency": { "forbiddenRegionRejected": true, "audited": true },
       "sensitiveEvidence": false,
       "previousEvidenceSha256": null,
-      "evidenceSha256": "2117a0700637d5729742d8ada2e2099a582609e9483c129f83aac70183bc056d"
+      "evidenceSha256": "c4525fc901f963f1986f0b1c86abff287a04dd710be62b0f506c998fe9fb5d5d"
     },
     {
       "gate": "wp28:postgres",
@@ -42,8 +42,8 @@
       "tenants": 2,
       "crossTenantRows": 0,
       "migration": "0032",
-      "previousEvidenceSha256": "2117a0700637d5729742d8ada2e2099a582609e9483c129f83aac70183bc056d",
-      "evidenceSha256": "5e260aa5a66e6982645ba6164ab9cb6f168787470878f772bf39c2893c27baa6"
+      "previousEvidenceSha256": "c4525fc901f963f1986f0b1c86abff287a04dd710be62b0f506c998fe9fb5d5d",
+      "evidenceSha256": "9216c85ba63e574ca040baa923c9434f850d0fc955e8f6f7362a1f90104b5954"
     },
     {
       "gate": "wp28:identity",
@@ -60,8 +60,8 @@
       "replayRejected": true,
       "issuerAudienceExpiryClockSkew": true,
       "syntheticAssertion": false,
-      "previousEvidenceSha256": "5e260aa5a66e6982645ba6164ab9cb6f168787470878f772bf39c2893c27baa6",
-      "evidenceSha256": "d63b6e2510d03d71dc70682fe1c51b5a0373428de771a177141595587238a123"
+      "previousEvidenceSha256": "9216c85ba63e574ca040baa923c9434f850d0fc955e8f6f7362a1f90104b5954",
+      "evidenceSha256": "d61bdbe4c6c910a0d2d70c2a542ffe3abd92fd0ba79c7cf859dbcf947c44dfe0"
     },
     {
       "gate": "wp28:scim",
@@ -77,8 +77,8 @@
       "groupMembershipRoleMapping": true,
       "resources": 3,
       "idempotencyRecords": 4,
-      "previousEvidenceSha256": "d63b6e2510d03d71dc70682fe1c51b5a0373428de771a177141595587238a123",
-      "evidenceSha256": "7746d3a203fecbcdeb33a8eda5f2718d2e8e0483219bb2c6e40e1e516447c770"
+      "previousEvidenceSha256": "d61bdbe4c6c910a0d2d70c2a542ffe3abd92fd0ba79c7cf859dbcf947c44dfe0",
+      "evidenceSha256": "a88f847b28aeae1ff6e4f5d38479091fe853ba8cffd5a958ad79c55e70d40487"
     },
     {
       "gate": "wp28:retention",
@@ -106,8 +106,8 @@
       "policyCasStaleRejected": true,
       "historicalEarlyDeleteRejected": true,
       "remaining": 0,
-      "previousEvidenceSha256": "7746d3a203fecbcdeb33a8eda5f2718d2e8e0483219bb2c6e40e1e516447c770",
-      "evidenceSha256": "76a2978457340c06d6793cb7b544a0ad4fb7f1410699511e69f3fea4fbfb8554"
+      "previousEvidenceSha256": "a88f847b28aeae1ff6e4f5d38479091fe853ba8cffd5a958ad79c55e70d40487",
+      "evidenceSha256": "9b25b617842ad9c3be243aedeecd89a0844dfb51cfffae4e4d695c4baf56b1a6"
     },
     {
       "gate": "wp28:export",
@@ -127,7 +127,7 @@
             "keyVersion": 1
           }
         ],
-        "archiveSha256": "26c66ffbdb6feea0971422486feb592cbb7622554f06e707cc71203ea88220ed",
+        "archiveSha256": "3aa4647091afa711ed403b63584a61726d6e4e7dfa1b79dd2ee5497b15250e2a",
         "archiveByteLength": 132
       },
       "rangeDownload": true,
@@ -135,8 +135,8 @@
       "crossTenantRejected": true,
       "supportHttpStatus": 403,
       "plaintextInEvidence": false,
-      "previousEvidenceSha256": "76a2978457340c06d6793cb7b544a0ad4fb7f1410699511e69f3fea4fbfb8554",
-      "evidenceSha256": "96903f0db17a9aef4e079a308cf2e4e49f7ab328a1c6d081564ede0b2b307e58"
+      "previousEvidenceSha256": "9b25b617842ad9c3be243aedeecd89a0844dfb51cfffae4e4d695c4baf56b1a6",
+      "evidenceSha256": "05f04ab991c117419bb5af4c63e239f351ca03f977046f2d2cb355170b0fc7f5"
     },
     {
       "gate": "wp28:delete",
@@ -162,8 +162,8 @@
         { "step": "kms_crypto_erasure", "attempts": 1 },
         { "step": "deletion_receipt", "attempts": 1 }
       ],
-      "previousEvidenceSha256": "96903f0db17a9aef4e079a308cf2e4e49f7ab328a1c6d081564ede0b2b307e58",
-      "evidenceSha256": "8af4d854c5d7bb5863cd0c7b40686292e3cf03b5040ba941bc28e41bc1416c2f"
+      "previousEvidenceSha256": "05f04ab991c117419bb5af4c63e239f351ca03f977046f2d2cb355170b0fc7f5",
+      "evidenceSha256": "a42ecf2324a98de5f14528c53980e6f421352d998208429bdc0f123387cb4103"
     },
     {
       "gate": "wp28:residency",
@@ -184,8 +184,8 @@
         "destinationRegion": "eu-2",
         "byteCount": 22
       },
-      "previousEvidenceSha256": "8af4d854c5d7bb5863cd0c7b40686292e3cf03b5040ba941bc28e41bc1416c2f",
-      "evidenceSha256": "0ff5847cc531d70b505878870d216e0aaf4971b5e79d2c20893e3b29198acaf5"
+      "previousEvidenceSha256": "a42ecf2324a98de5f14528c53980e6f421352d998208429bdc0f123387cb4103",
+      "evidenceSha256": "d87d1374579fa6b8560ac4e29c1a674d4bbbd43777b2e661d3db392c1c9bba15"
     },
     {
       "gate": "wp28:e2e",
@@ -211,8 +211,8 @@
       "clientStopUsedAsRevocation": false,
       "admissions": { "turn": 403, "upload": 403, "export": 403, "share": 403 },
       "temporaryCodexHomeCleaned": true,
-      "previousEvidenceSha256": "0ff5847cc531d70b505878870d216e0aaf4971b5e79d2c20893e3b29198acaf5",
-      "evidenceSha256": "cc354e5a4738d808e21462104a22a40bbf053089dd8a01f8de9be71893b60df4"
+      "previousEvidenceSha256": "d87d1374579fa6b8560ac4e29c1a674d4bbbd43777b2e661d3db392c1c9bba15",
+      "evidenceSha256": "508d47b5a5f8382a8bb1ac2fdb1ba52dbf66ebfc04ebd81c1d033a09b36d8c36"
     },
     {
       "gate": "wp28:browser",
@@ -235,11 +235,11 @@
       "optimisticConcurrency": { "legalHold": 409, "delete": 409 },
       "rangeDownload": { "status": 206, "bytes": 32 },
       "ssrStringAcceptedAsBrowserEvidence": false,
-      "previousEvidenceSha256": "cc354e5a4738d808e21462104a22a40bbf053089dd8a01f8de9be71893b60df4",
-      "evidenceSha256": "52dd3a097163e7b951793161abb8724afb6a2da5f678cd28ddd4592bb406d479"
+      "previousEvidenceSha256": "508d47b5a5f8382a8bb1ac2fdb1ba52dbf66ebfc04ebd81c1d033a09b36d8c36",
+      "evidenceSha256": "ca240d0fcc17bec40aa8cd84e029cbd1fcac64c9142d3ce386daa8879c22fd33"
     }
   ],
-  "evidenceChainHead": "52dd3a097163e7b951793161abb8724afb6a2da5f678cd28ddd4592bb406d479",
+  "evidenceChainHead": "ca240d0fcc17bec40aa8cd84e029cbd1fcac64c9142d3ce386daa8879c22fd33",
   "cleanup": {
     "containers": 0,
     "anonymousVolumesFromHarness": 0,
@@ -262,7 +262,7 @@
   "contentScanner": {
     "scanner": "wp28-evidence-scanner-v1",
     "sourcesScanned": 21,
-    "bytesScanned": 15183,
+    "bytesScanned": 15181,
     "findings": 0,
     "failClosed": true
   }

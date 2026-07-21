@@ -2,7 +2,7 @@
 
 - Plan durumu: Aktif
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP28
+- Aktif iş paketi: WP29
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -30,8 +30,8 @@ lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine 
 | WP25  | 4   | Tamamlandı | Paylaşımlı klasör, güvenli ortak çalışma ve birleşik Faz 4 kabulü        |
 | WP26  | 5   | Tamamlandı | HA production topology, multi-region yönü, scheduler ve kapasite sınırı  |
 | WP27  | 5   | Tamamlandı | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
-| WP28  | 5   | Aktif      | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
-| WP29  | 5   | Planlandı  | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
+| WP28  | 5   | Tamamlandı | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
+| WP29  | 5   | Aktif      | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
 | WP30  | 5   | Planlandı  | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; WP24 kabul
@@ -782,6 +782,37 @@ döngüsünü tenant izolasyonu ve crypto-erasure garantileriyle tamamlamak.
 #### Teslimat commit'i
 
 `feat: add enterprise identity and tenant data lifecycle`
+
+#### Bağımsız kabul sonucu
+
+Karar: **Tamamlandı**
+
+- Uygulama ve entegrasyon düzeltme commit'leri `dd225ff` ve `13cd5cf` kabul edildi.
+- Keycloak `26.3.2` ile gerçek OIDC authorization-code/PKCE, JWKS rotation ve SAML
+  AuthnRequest/signed response/ACS akışları geçti; replay, audience, expiry, clock-skew
+  ve MFA assurance kontrolleri doğrulandı.
+- Üç API instance'ı aynı PostgreSQL SCIM authority'sini kullandı. Restart persistence,
+  concurrent duplicate, out-of-order event, credential digest, group-role mapping ve
+  cross-tenant membership reddi geçti.
+- Retention/legal-hold worker dokuz veri sınıfında bounded, leased/fenced ve restart-safe
+  çalıştı. Hold release sonrası purge devam etti; stale policy CAS ve erken silme
+  reddedildi.
+- PostgreSQL/MinIO/Vault tenant export'u checkpoint'ten devam etti; duplicate archive
+  oluşmadı. Encrypted manifest, range download, expiring grant, cross-tenant ret ve
+  support `403` doğrulandı.
+- Durable offboarding 11 adımı crash/restart ile tamamladı; backup expiry sonrası
+  crypto-erasure eski ciphertext restore'unu reddetti ve diğer tenant korundu.
+- Scheduler, MinIO, index ve export residency adapter'ları yasak region yollarını
+  fail-closed reddetti; izinli transfer audit'i source/destination/byte count taşıdı.
+- Gerçek Codex `0.144.2` turn'ü sırasında deprovision durable session/lease/run ve
+  yetki state'lerini kapattı; turn/upload/export/share admission'ları `403` oldu.
+- Chromium kabulü üç viewport'ta canlı web/API, support `403`, re-auth `401`, stale
+  version `409` ve range download `206` akışlarını geçti.
+- `wp28:accept` gerçek servislerle `accepted:true` verdi; scanner 21 kaynakta sıfır
+  bulgu ve cleanup sıfır kaynak doğruladı. Repo genelinde 362 test, typecheck, build
+  ve SSR HTTP smoke geçti.
+
+WP28 tamamlandı. WP29 Faz 5'in tek aktif iş paketidir.
 
 ### WP29 — Supply-chain, provider canary ve compliance hazırlığı
 
