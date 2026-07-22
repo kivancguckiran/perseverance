@@ -24,7 +24,8 @@ const scopeFor = (value) =>
       : null
 
 createServer((request, response) => {
-  const url = new URL(request.url ?? '/', `http://127.0.0.1:${port}`)
+  const rawUrl = request.url ?? '/'
+  const url = new URL(rawUrl, `http://127.0.0.1:${port}`)
   if (url.pathname === '/healthz' || url.pathname === '/readyz')
     return json(response, 200, {
       status: 'ok',
@@ -43,6 +44,13 @@ createServer((request, response) => {
       'process_resident_memory_bytes 33554432\npersistent_event_lag_ms 0\npersistent_scheduler_backlog 0\n',
     )
   }
+  if (url.pathname === '/')
+    return json(response, 200, {
+      status: 'wp30-local',
+      authenticatedRoutes: '/v1/*',
+    })
+  if (/%2f|%2e|\/proc|\/sys/i.test(rawUrl))
+    return json(response, 404, { code: 'NOT_FOUND' })
   const scope = scopeFor(token(request))
   if (!scope) return json(response, 401, { code: 'AUTH_REQUIRED' })
   if (url.pathname === '/v1/sources')
