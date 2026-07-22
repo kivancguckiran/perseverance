@@ -3,6 +3,7 @@ import { createPublicKey, generateKeyPairSync, sign } from 'node:crypto'
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import pg from 'pg'
+import { format as formatPrettier } from 'prettier'
 import {
   WP30_LOCAL_ROOT,
   WP30_LOCAL_STATE,
@@ -59,6 +60,22 @@ const parseLastEvidence = (stdout: string) => {
     .find((value) => value.trim().startsWith('{'))
   assert(line, 'gate emitted no JSON evidence')
   return JSON.parse(line)
+}
+const fetchWithRetry = async (
+  url: string,
+  init?: RequestInit,
+  attempts = 30,
+) => {
+  let lastError: unknown
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fetch(url, init)
+    } catch (error) {
+      lastError = error
+      await new Promise((resolve) => setTimeout(resolve, 250))
+    }
+  }
+  throw lastError
 }
 const dockerRun = (args: string[], secretEnv = false) =>
   run('docker', args, {
@@ -206,7 +223,9 @@ try {
     ]
     const statuses: number[] = []
     for (const path of paths) {
-      const response = await fetch(`${env.WP30_TARGET_URL}${path}`, { headers })
+      const response = await fetchWithRetry(`${env.WP30_TARGET_URL}${path}`, {
+        headers,
+      })
       statuses.push(response.status)
       assert(
         [403, 404].includes(response.status),
@@ -285,7 +304,7 @@ try {
       ]).stdout.trim()
       assert.equal(inspect, 'true false')
     }
-    const ready = await fetch(`${env.WP30_TARGET_URL}/readyz`)
+    const ready = await fetchWithRetry(`${env.WP30_TARGET_URL}/readyz`)
     assert.equal(ready.status, 200)
     return {
       injection: 'container-pause',
@@ -418,7 +437,9 @@ try {
     ),
   }
   assert.equal(report.localMandatoryGatesNotRun.length, 0)
-  const reportContent = `${JSON.stringify(report, null, 2)}\n`
+  const reportContent = await formatPrettier(JSON.stringify(report), {
+    parser: 'json',
+  })
   const reportScan = scanWp30Evidence([
     { name: 'local-report', content: reportContent },
   ])
@@ -455,7 +476,9 @@ try {
     signedPayloadSha256: sha256(unsignedContent),
     signature,
   }
-  const bundleContent = `${JSON.stringify(bundle, null, 2)}\n`
+  const bundleContent = await formatPrettier(JSON.stringify(bundle), {
+    parser: 'json',
+  })
   const bundleScan = scanWp30Evidence([
     { name: 'local-bundle', content: bundleContent },
   ])

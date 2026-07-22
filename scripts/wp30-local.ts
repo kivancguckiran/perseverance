@@ -104,8 +104,10 @@ export const run = (
     input: options.input,
     env: options.env ?? process.env,
   })
-  if (!options.allowFailure && result.status !== 0)
-    throw new Error(`${command} failed: ${result.stderr || result.stdout}`)
+  if (!options.allowFailure && result.status !== 0) {
+    const output = [result.stderr, result.stdout].filter(Boolean).join('\n')
+    throw new Error(`${command} failed with status ${result.status}: ${output}`)
+  }
   return result
 }
 
