@@ -1,0 +1,5 @@
+
+> persistent-codex-workspace@0.0.0 wp30:local:preflight /Users/kivancguckiran/Desktop/Workspace/persistent-agent
+> node --import tsx scripts/wp30-local-preflight.ts
+
+{"gate":"wp30:local:preflight","accepted":true,"status":"passed","evidenceClass":"local-operator","externalProductionReady":false,"targetScope":"loopback-only","realSchemaSeedVerified":true,"authMiddlewareVerified":true,"tenantAuthorizationStatus":403,"rlsHiddenStatus":404,"codexVersion":"codex-cli 0.144.2","tokenFingerprints":["ba2a0899a9549a260dd269b30e3f587eeafe8f7b746e4b51b8bad59c432aa35b","93210ab48a8a6fba1b8d77f4ae2aa1ae3e16a66200adf06cdadb1512a08e2781"],"pinnedImagesVerified":["WP30_K6_IMAGE","WP30_NUCLEI_IMAGE","WP30_ZAP_IMAGE"]}

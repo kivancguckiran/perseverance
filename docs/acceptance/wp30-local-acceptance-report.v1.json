@@ -10,17 +10,17 @@
   "multiRegionFailover": "not-run",
   "productionKmsFailure": "not-run",
   "realPushBillingFailure": "not-run",
-  "sourceCommit": "b19a94f1ff73b50fc2d08f641f7a0ac3c6c90c19",
-  "startedAt": "2026-07-22T16:05:27.904Z",
-  "finishedAt": "2026-07-22T16:07:38.298Z",
-  "durationMs": 130394,
+  "sourceCommit": "27d8448edbc3c458c9b2399f606e79f01d635eaa",
+  "startedAt": "2026-07-22T18:00:00.583Z",
+  "finishedAt": "2026-07-22T18:08:14.185Z",
+  "durationMs": 493600,
   "gates": [
     {
       "gate": "wp30:local:preflight",
       "status": "passed",
-      "startedAt": "2026-07-22T16:05:27.904Z",
-      "finishedAt": "2026-07-22T16:05:29.755Z",
-      "durationMs": 1851,
+      "startedAt": "2026-07-22T18:00:00.583Z",
+      "finishedAt": "2026-07-22T18:00:02.922Z",
+      "durationMs": 2339,
       "measurements": {
         "gate": "wp30:local:preflight",
         "accepted": true,
@@ -28,7 +28,15 @@
         "evidenceClass": "local-operator",
         "externalProductionReady": false,
         "targetScope": "loopback-only",
-        "fixturesVerified": true,
+        "realSchemaSeedVerified": true,
+        "authMiddlewareVerified": true,
+        "tenantAuthorizationStatus": 403,
+        "rlsHiddenStatus": 404,
+        "codexVersion": "codex-cli 0.144.2",
+        "tokenFingerprints": [
+          "ba2a0899a9549a260dd269b30e3f587eeafe8f7b746e4b51b8bad59c432aa35b",
+          "93210ab48a8a6fba1b8d77f4ae2aa1ae3e16a66200adf06cdadb1512a08e2781"
+        ],
         "pinnedImagesVerified": [
           "WP30_K6_IMAGE",
           "WP30_NUCLEI_IMAGE",
@@ -39,9 +47,9 @@
     {
       "gate": "wp30:test",
       "status": "passed",
-      "startedAt": "2026-07-22T16:05:29.755Z",
-      "finishedAt": "2026-07-22T16:05:31.377Z",
-      "durationMs": 1622,
+      "startedAt": "2026-07-22T18:00:02.922Z",
+      "finishedAt": "2026-07-22T18:00:04.668Z",
+      "durationMs": 1746,
       "measurements": {
         "gate": "wp30:test",
         "accepted": true,
@@ -54,9 +62,9 @@
     {
       "gate": "wp30:postgres-migration",
       "status": "passed",
-      "startedAt": "2026-07-22T16:05:31.377Z",
-      "finishedAt": "2026-07-22T16:05:33.420Z",
-      "durationMs": 2043,
+      "startedAt": "2026-07-22T18:00:04.668Z",
+      "finishedAt": "2026-07-22T18:00:06.712Z",
+      "durationMs": 2044,
       "measurements": {
         "gate": "wp30:postgres-migration",
         "accepted": true,
@@ -71,58 +79,129 @@
     {
       "gate": "wp30:local:scanners",
       "status": "passed",
-      "startedAt": "2026-07-22T16:05:33.420Z",
-      "finishedAt": "2026-07-22T16:06:42.119Z",
-      "durationMs": 68699,
+      "startedAt": "2026-07-22T18:00:06.712Z",
+      "finishedAt": "2026-07-22T18:04:41.217Z",
+      "durationMs": 274505,
       "measurements": {
-        "zapAlerts": 2,
+        "targets": ["control-plane", "web-production-ssr"],
+        "zapAlerts": 9,
         "nucleiFindings": 0,
         "openHighOrCritical": 0,
-        "targetScope": "loopback-only",
-        "rawEvidenceSha256": {
-          "zap": "b60c0d5f46840c8d115da1951f58cc0152400ff107e1296d15ba6625081bc53b",
-          "nuclei": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        }
+        "rawEvidence": [
+          {
+            "path": "docs/acceptance/wp30-local-evidence/scanners/zap-control-plane.json",
+            "byteLength": 20702,
+            "sha256": "4d51886feb43aa10a2d609c490a4e78b67ad38e5dea594fc448ab065ca8e0633"
+          },
+          {
+            "path": "docs/acceptance/wp30-local-evidence/scanners/zap-control-plane-measurement.json",
+            "byteLength": 46,
+            "sha256": "e6b3993fe49b1872f65b45efe9adc204a149bb3995e29220101f6b8b45d773b5"
+          },
+          {
+            "path": "docs/acceptance/wp30-local-evidence/scanners/zap-web.json",
+            "byteLength": 1951341,
+            "sha256": "76f05f4d3cf1d90d30ba63e718e12e00a154c76928d64dd6fe9207f337897777"
+          },
+          {
+            "path": "docs/acceptance/wp30-local-evidence/scanners/zap-web-measurement.json",
+            "byteLength": 46,
+            "sha256": "848e876bae6161f0abafc86dadd54e8f89b588c19227bd07379f0d3d190b78de"
+          },
+          {
+            "path": "docs/acceptance/wp30-local-evidence/scanners/nuclei.jsonl",
+            "byteLength": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ]
       }
     },
     {
       "gate": "wp30:local:tenant-boundary",
       "status": "passed",
-      "startedAt": "2026-07-22T16:06:42.119Z",
-      "finishedAt": "2026-07-22T16:06:42.415Z",
-      "durationMs": 296,
+      "startedAt": "2026-07-22T18:04:41.218Z",
+      "finishedAt": "2026-07-22T18:04:41.623Z",
+      "durationMs": 405,
       "measurements": {
-        "attempts": 3,
-        "denied": 3,
-        "statuses": [404, 404, 404]
+        "statuses": [404, 404, 404],
+        "authzStatus": 403,
+        "rlsVisible": 0
       }
     },
     {
       "gate": "wp30:local:k6",
       "status": "passed",
-      "startedAt": "2026-07-22T16:06:42.415Z",
-      "finishedAt": "2026-07-22T16:07:33.892Z",
-      "durationMs": 51477,
+      "startedAt": "2026-07-22T18:04:41.624Z",
+      "finishedAt": "2026-07-22T18:05:32.869Z",
+      "durationMs": 51245,
       "measurements": {
-        "profile": "poc-local-short",
+        "profile": "real-service-local-short",
         "configuredLoadDuration": "20s",
         "configuredSoakDuration": "30s",
-        "actualDurationSeconds": 50.039908718,
-        "tenantFairnessRatio": 1,
+        "actualDurationSeconds": 50.21384987,
+        "tenantFairnessRatio": 0.9990925589836661,
+        "apiRealtimeSchedulerObjectFlows": true,
         "productionTwoHourSoak": false,
-        "rawEvidenceSha256": "fd5027deb54b0082c63ca220db3e30748a69b10287112b2d641befe20674e0f2"
+        "rawEvidence": [
+          {
+            "path": "docs/acceptance/wp30-local-evidence/load/k6-summary.json",
+            "byteLength": 3662,
+            "sha256": "00893d1163507b469e4fb042533ab3dacf1543b57bae1612c60e3ac64ed2050d"
+          },
+          {
+            "path": "docs/acceptance/wp30-local-evidence/load/k6-raw.json",
+            "byteLength": 6220,
+            "sha256": "0f6f47e5606b1320649379d9b80d2966b66f7a31daa55afe46c4fdcd05f87dd3"
+          }
+        ]
       }
     },
     {
       "gate": "wp30:local:chaos",
       "status": "passed",
-      "startedAt": "2026-07-22T16:07:33.892Z",
-      "finishedAt": "2026-07-22T16:07:35.824Z",
-      "durationMs": 1932,
+      "startedAt": "2026-07-22T18:05:32.869Z",
+      "finishedAt": "2026-07-22T18:05:38.113Z",
+      "durationMs": 5244,
       "measurements": {
-        "injection": "container-pause",
-        "scenarios": ["cache", "object-storage", "workspace-agent"],
-        "recovered": true,
+        "injection": "container-pause-with-live-request",
+        "observations": [
+          {
+            "service": "cache",
+            "degradedStatus": 200,
+            "boundedDurationMs": 4,
+            "recoveryStatus": 200
+          },
+          {
+            "service": "object-storage",
+            "degradedStatus": 503,
+            "boundedDurationMs": 2011,
+            "recoveryStatus": 200
+          },
+          {
+            "service": "workspace-agent",
+            "degradedStatus": 503,
+            "boundedDurationMs": 2006,
+            "recoveryStatus": 200
+          }
+        ],
+        "conversationId": "ses_312dd17d-18a7-48bf-85d9-76956e10e59d",
+        "runId": "run_563ce399-2eea-48be-9de2-58e9636b4115",
+        "before": {
+          "sessions": {
+            "count": 1,
+            "checksum": "65300268c2567325ffafcc08db55f1fd"
+          },
+          "run": { "count": 1, "checksum": "6494d2c65df17154eaa27a2313d1e076" },
+          "events": { "count": 0, "checksum": "empty" }
+        },
+        "after": {
+          "sessions": {
+            "count": 1,
+            "checksum": "65300268c2567325ffafcc08db55f1fd"
+          },
+          "run": { "count": 1, "checksum": "6494d2c65df17154eaa27a2313d1e076" },
+          "events": { "count": 0, "checksum": "empty" }
+        },
         "tenantMixing": 0,
         "uncontrolledDuplicates": 0,
         "dataLoss": 0
@@ -131,25 +210,86 @@
     {
       "gate": "wp30:local:rollout-rollback",
       "status": "passed",
-      "startedAt": "2026-07-22T16:07:35.824Z",
-      "finishedAt": "2026-07-22T16:07:35.861Z",
-      "durationMs": 37,
+      "startedAt": "2026-07-22T18:05:38.113Z",
+      "finishedAt": "2026-07-22T18:05:38.173Z",
+      "durationMs": 60,
       "measurements": {
-        "flow": ["rollout", "halt", "rollback"],
-        "rollbackVerified": true,
+        "authority": "production-readiness-domain-via-control-plane-api",
+        "flow": [
+          "internal",
+          "design_partner",
+          "limited_beta",
+          "production_cohort",
+          "halted",
+          "rolled_back"
+        ],
+        "concurrentPromotion": { "contenders": 2, "winners": 1 },
+        "optimisticLocking": true,
+        "replayStatus": 200,
+        "staleStatus": 409,
+        "protectedDomains": ["sessions", "events", "approvals", "artifacts"],
+        "integrityBeforeSha256": "44942337b16774cae0d07c499f08b5b2b18000313d2983fa7c3fe21ea0ceee40",
+        "integrityAfterSha256": "44942337b16774cae0d07c499f08b5b2b18000313d2983fa7c3fe21ea0ceee40",
         "dataLoss": 0
       }
     },
     {
       "gate": "wp30:local:browser-golden",
       "status": "passed",
-      "startedAt": "2026-07-22T16:07:35.861Z",
-      "finishedAt": "2026-07-22T16:07:38.298Z",
-      "durationMs": 2437,
+      "startedAt": "2026-07-22T18:05:38.173Z",
+      "finishedAt": "2026-07-22T18:08:06.821Z",
+      "durationMs": 148648,
       "measurements": {
-        "viewports": ["1280x720", "390x844"],
-        "approvalResolved": true,
-        "errorOverlay": false
+        "route": "/sessions/ses_312dd17d-18a7-48bf-85d9-76956e10e59d",
+        "productionSsr": true,
+        "approvalCreatedByApi": true,
+        "approvalResolvedInUi": true,
+        "viewports": [
+          {
+            "width": 1280,
+            "height": 720,
+            "overflow": false,
+            "errorOverlay": false,
+            "ready": true
+          },
+          {
+            "width": 390,
+            "height": 844,
+            "overflow": false,
+            "errorOverlay": false,
+            "ready": true
+          }
+        ],
+        "reconnect": {
+          "reconnectCount": 3,
+          "state": "connected",
+          "errorOverlay": false
+        },
+        "screenshot": {
+          "path": "docs/acceptance/wp30-local-evidence/browser/golden.png",
+          "byteLength": 42741,
+          "sha256": "191c49e4aae7c347c85ba9e6b2add477a8561a223145a34cc12d0c9c9d8c1134"
+        },
+        "snapshot": {
+          "path": "docs/acceptance/wp30-local-evidence/browser/snapshot.txt",
+          "byteLength": 596,
+          "sha256": "c718241164bb66777f44013498aed2692224bea0931f0074590b6d3897e622e0"
+        }
+      }
+    },
+    {
+      "gate": "wp30:lab:down",
+      "status": "passed",
+      "startedAt": "2026-07-22T18:08:06.821Z",
+      "finishedAt": "2026-07-22T18:08:14.185Z",
+      "durationMs": 7364,
+      "measurements": {
+        "cleanupStatus": "clean",
+        "remainingContainers": 0,
+        "remainingVolumes": 0,
+        "remainingNetworks": 0,
+        "browserSessionsClosed": true,
+        "secretsRemoved": true
       }
     }
   ],
@@ -158,47 +298,52 @@
     {
       "gate": "wp30:local:preflight",
       "status": "passed",
-      "sha256": "085b377e34953e5cf045996744ef8b21366f4371ca5b389383e7a0be3a07bc43"
+      "sha256": "00d4c3d21148f0f991a7f6c753ce7af3847880b91b08a1fdf14c48fbbc586313"
     },
     {
       "gate": "wp30:test",
       "status": "passed",
-      "sha256": "e22225aa2243d9edd4797d157b563d69c37ddddf396c0dc3dad44e9b35c2a9f2"
+      "sha256": "cf700abca81c27268c6558b1a73c17dc0b9a6efcff465c07c5ac6b3055357c00"
     },
     {
       "gate": "wp30:postgres-migration",
       "status": "passed",
-      "sha256": "c786adab6cf9c6472143f41169dce804e73cd939f9cb4ea842af8ce8fcc08e40"
+      "sha256": "5597d4fc54f26afdc946216a1d6e1444fbea11d11098975b3249e723d1849122"
     },
     {
       "gate": "wp30:local:scanners",
       "status": "passed",
-      "sha256": "588eb563430687f74d594495ab5d90f92562bafdc255ea7c5aabbc7f206df38e"
+      "sha256": "0f770c6d445bee97c472e3838e2cdf164d0b43448af1bd39ceac055129162369"
     },
     {
       "gate": "wp30:local:tenant-boundary",
       "status": "passed",
-      "sha256": "2fe97431d035a631b149cad9749ab3c80124009401ad32cdf07d9f5178952adf"
+      "sha256": "b97f83724ea1497d85f7cbb34497b933ddc7d35fefa361d3b0dab22dcc8a4ebe"
     },
     {
       "gate": "wp30:local:k6",
       "status": "passed",
-      "sha256": "59c190ff24d6699755bdd81e46896d6a79d6b59fe5c0ea2d2ec4e7380cc8210b"
+      "sha256": "d66f4b7c4361fb7a23f97b6d4116f2c3e47be9e23129ea8c60ee456efa20332f"
     },
     {
       "gate": "wp30:local:chaos",
       "status": "passed",
-      "sha256": "75414fae9699cda089b7ab09322dffb19ef9a122edf885c124ab88a6f11b5e5a"
+      "sha256": "f06e8fb5849adf983a7dd14fc412aba1dab904511dc7b6fe3248c99b51b76d8f"
     },
     {
       "gate": "wp30:local:rollout-rollback",
       "status": "passed",
-      "sha256": "ee93f93b2e53aed853529995b92bcaee600b4c9770302fb0d3d2c84ab22f5002"
+      "sha256": "880dc6c487bcc92e37e548616417844573678ab6ee24ba23179b0bc569537aa3"
     },
     {
       "gate": "wp30:local:browser-golden",
       "status": "passed",
-      "sha256": "4e9ff978b9f59f60fcb4c8dd64c5612722a94215f6be3db4314a68b0ce953f8d"
+      "sha256": "367ac79e95f6a0413d7539756755c7b5b5f46341af72e6cc01158daf78042fa1"
+    },
+    {
+      "gate": "wp30:lab:down",
+      "status": "passed",
+      "sha256": "34202cb38c9a82db3ba6a62c48ff56300d350b210cde2df6a3a2b883d99c9e49"
     }
   ]
 }

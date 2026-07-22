@@ -1,0 +1,18 @@
+
+> persistent-codex-workspace@0.0.0 wp30:test /Users/kivancguckiran/Desktop/Workspace/persistent-agent
+> node --import tsx scripts/wp30-test-gate.ts
+
+
+ RUN  v4.1.10 /Users/kivancguckiran/Desktop/Workspace/persistent-agent
+
+
+ Test Files  3 passed (3)
+      Tests  12 passed (12)
+   Start at  21:00:03
+   Duration  212ms (transform 88ms, setup 0ms, import 149ms, tests 24ms, environment 0ms)
+
+
+> @persistent-codex/production-readiness@0.0.0 typecheck /Users/kivancguckiran/Desktop/Workspace/persistent-agent/packages/production-readiness
+> tsc -p tsconfig.json --noEmit
+
+{"gate":"wp30:test","accepted":true,"status":"passed","realEvidenceClaimed":false,"purpose":"contract-and-state-machine-regression","checks":["unit","contracts"]}
