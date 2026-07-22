@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "workPackage": "WP30-L",
+  "status": "accepted-local-production-like",
+  "engineeringComplete": true,
+  "externalProductionReady": false,
+  "evidenceClass": "local-operator",
+  "targetScope": "loopback-only",
+  "independentPentest": "not-run",
+  "multiRegionFailover": "not-run",
+  "productionKmsFailure": "not-run",
+  "realPushBillingFailure": "not-run",
+  "sourceCommit": "b19a94f1ff73b50fc2d08f641f7a0ac3c6c90c19",
+  "startedAt": "2026-07-22T16:05:27.904Z",
+  "finishedAt": "2026-07-22T16:07:38.298Z",
+  "durationMs": 130394,
+  "gates": [
+    {
+      "gate": "wp30:local:preflight",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:05:27.904Z",
+      "finishedAt": "2026-07-22T16:05:29.755Z",
+      "durationMs": 1851,
+      "measurements": {
+        "gate": "wp30:local:preflight",
+        "accepted": true,
+        "status": "passed",
+        "evidenceClass": "local-operator",
+        "externalProductionReady": false,
+        "targetScope": "loopback-only",
+        "fixturesVerified": true,
+        "pinnedImagesVerified": [
+          "WP30_K6_IMAGE",
+          "WP30_NUCLEI_IMAGE",
+          "WP30_ZAP_IMAGE"
+        ]
+      }
+    },
+    {
+      "gate": "wp30:test",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:05:29.755Z",
+      "finishedAt": "2026-07-22T16:05:31.377Z",
+      "durationMs": 1622,
+      "measurements": {
+        "gate": "wp30:test",
+        "accepted": true,
+        "status": "passed",
+        "realEvidenceClaimed": false,
+        "purpose": "contract-and-state-machine-regression",
+        "checks": ["unit", "contracts"]
+      }
+    },
+    {
+      "gate": "wp30:postgres-migration",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:05:31.377Z",
+      "finishedAt": "2026-07-22T16:05:33.420Z",
+      "durationMs": 2043,
+      "measurements": {
+        "gate": "wp30:postgres-migration",
+        "accepted": true,
+        "status": "passed",
+        "postgres": "17.5",
+        "image": "postgres:17.5-alpine",
+        "migration": "0034",
+        "forcedRlsTables": 5,
+        "immutableHistory": true
+      }
+    },
+    {
+      "gate": "wp30:local:scanners",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:05:33.420Z",
+      "finishedAt": "2026-07-22T16:06:42.119Z",
+      "durationMs": 68699,
+      "measurements": {
+        "zapAlerts": 2,
+        "nucleiFindings": 0,
+        "openHighOrCritical": 0,
+        "targetScope": "loopback-only",
+        "rawEvidenceSha256": {
+          "zap": "b60c0d5f46840c8d115da1951f58cc0152400ff107e1296d15ba6625081bc53b",
+          "nuclei": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "gate": "wp30:local:tenant-boundary",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:06:42.119Z",
+      "finishedAt": "2026-07-22T16:06:42.415Z",
+      "durationMs": 296,
+      "measurements": {
+        "attempts": 3,
+        "denied": 3,
+        "statuses": [404, 404, 404]
+      }
+    },
+    {
+      "gate": "wp30:local:k6",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:06:42.415Z",
+      "finishedAt": "2026-07-22T16:07:33.892Z",
+      "durationMs": 51477,
+      "measurements": {
+        "profile": "poc-local-short",
+        "configuredLoadDuration": "20s",
+        "configuredSoakDuration": "30s",
+        "actualDurationSeconds": 50.039908718,
+        "tenantFairnessRatio": 1,
+        "productionTwoHourSoak": false,
+        "rawEvidenceSha256": "fd5027deb54b0082c63ca220db3e30748a69b10287112b2d641befe20674e0f2"
+      }
+    },
+    {
+      "gate": "wp30:local:chaos",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:07:33.892Z",
+      "finishedAt": "2026-07-22T16:07:35.824Z",
+      "durationMs": 1932,
+      "measurements": {
+        "injection": "container-pause",
+        "scenarios": ["cache", "object-storage", "workspace-agent"],
+        "recovered": true,
+        "tenantMixing": 0,
+        "uncontrolledDuplicates": 0,
+        "dataLoss": 0
+      }
+    },
+    {
+      "gate": "wp30:local:rollout-rollback",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:07:35.824Z",
+      "finishedAt": "2026-07-22T16:07:35.861Z",
+      "durationMs": 37,
+      "measurements": {
+        "flow": ["rollout", "halt", "rollback"],
+        "rollbackVerified": true,
+        "dataLoss": 0
+      }
+    },
+    {
+      "gate": "wp30:local:browser-golden",
+      "status": "passed",
+      "startedAt": "2026-07-22T16:07:35.861Z",
+      "finishedAt": "2026-07-22T16:07:38.298Z",
+      "durationMs": 2437,
+      "measurements": {
+        "viewports": ["1280x720", "390x844"],
+        "approvalResolved": true,
+        "errorOverlay": false
+      }
+    }
+  ],
+  "localMandatoryGatesNotRun": [],
+  "evidenceChain": [
+    {
+      "gate": "wp30:local:preflight",
+      "status": "passed",
+      "sha256": "085b377e34953e5cf045996744ef8b21366f4371ca5b389383e7a0be3a07bc43"
+    },
+    {
+      "gate": "wp30:test",
+      "status": "passed",
+      "sha256": "e22225aa2243d9edd4797d157b563d69c37ddddf396c0dc3dad44e9b35c2a9f2"
+    },
+    {
+      "gate": "wp30:postgres-migration",
+      "status": "passed",
+      "sha256": "c786adab6cf9c6472143f41169dce804e73cd939f9cb4ea842af8ce8fcc08e40"
+    },
+    {
+      "gate": "wp30:local:scanners",
+      "status": "passed",
+      "sha256": "588eb563430687f74d594495ab5d90f92562bafdc255ea7c5aabbc7f206df38e"
+    },
+    {
+      "gate": "wp30:local:tenant-boundary",
+      "status": "passed",
+      "sha256": "2fe97431d035a631b149cad9749ab3c80124009401ad32cdf07d9f5178952adf"
+    },
+    {
+      "gate": "wp30:local:k6",
+      "status": "passed",
+      "sha256": "59c190ff24d6699755bdd81e46896d6a79d6b59fe5c0ea2d2ec4e7380cc8210b"
+    },
+    {
+      "gate": "wp30:local:chaos",
+      "status": "passed",
+      "sha256": "75414fae9699cda089b7ab09322dffb19ef9a122edf885c124ab88a6f11b5e5a"
+    },
+    {
+      "gate": "wp30:local:rollout-rollback",
+      "status": "passed",
+      "sha256": "ee93f93b2e53aed853529995b92bcaee600b4c9770302fb0d3d2c84ab22f5002"
+    },
+    {
+      "gate": "wp30:local:browser-golden",
+      "status": "passed",
+      "sha256": "4e9ff978b9f59f60fcb4c8dd64c5612722a94215f6be3db4314a68b0ce953f8d"
+    }
+  ]
+}
