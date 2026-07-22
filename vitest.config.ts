@@ -5,7 +5,10 @@ export default defineConfig({
     coverage: {
       reporter: ['text', 'json-summary'],
     },
-    include: ['{agents,apps,packages,services}/**/*.test.ts'],
+    include: [
+      '{agents,apps,packages,services}/**/*.test.ts',
+      'scripts/**/*.test.ts',
+    ],
     exclude: ['**/node_modules/**', '**/.runtime/**'],
   },
 })
