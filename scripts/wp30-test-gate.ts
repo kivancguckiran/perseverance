@@ -11,6 +11,7 @@ const results = [
       'run',
       'packages/production-readiness/src/index.test.ts',
       'packages/production-readiness/src/evidence.test.ts',
+      'packages/production-readiness/src/local-lab.test.ts',
     ],
   ],
   [

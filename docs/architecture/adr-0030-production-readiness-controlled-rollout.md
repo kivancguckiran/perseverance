@@ -22,6 +22,21 @@ session, mevcut runtime RLS rolü veya bağımsız assessor imzasından biri eks
 preflight `not-run` üretir ve orchestrator başarısız olur. `not-run`, `skipped` veya
 fixture sonucu hiçbir koşulda başarıya yükseltilmez.
 
+WP30 iki ayrı kabul sınıfı taşır:
+
+- **WP30-L**, yalnız loopback ve Docker-internal hedeflerde çalışan, makine kanıtını
+  geçici Ed25519 `local-operator` anahtarıyla imzalayan production-like engineering
+  kabulüdür. Faz 5 engineering kapanışını sağlayabilir; bağımsız üçüncü taraf
+  attestation değildir ve `externalProductionReady` değeri daima `false` kalır.
+- **WP30-E**, mevcut `pnpm production:accept` kapısıdır. Bağımsız pentest/retest,
+  iki saatlik production soak, dış failure doğrulamaları ve production cohort
+  authority şartlarını aynen korur. Yalnız WP30-E production go-live yetkisi
+  üretebilir.
+
+WP30-L kabulü WP30-E'nin credential, attestation veya `not-run` kurallarını
+değiştirmez; local report dış production kanıtı olarak kullanılamaz. WP30 yönetim
+belgelerinde bağımsız kabul yapılmadan tamamlandı gösterilmez.
+
 Önceki faz acceptance kapıları yeniden çalıştırılır. WP30 pentest, load/soak, chaos,
 incident, rollout ve browser/mobile kapılarının her biri makine-okunur evidence üretir.
 Process stdout/stderr ve tool çıktıları hash zincirine alınır. Nihai report ve evidence
