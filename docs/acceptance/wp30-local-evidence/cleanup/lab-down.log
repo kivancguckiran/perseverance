@@ -1,5 +1,5 @@
 
-> persistent-codex-workspace@0.0.0 wp30:lab:down /Users/kivancguckiran/Desktop/Workspace/persistent-agent
+> persistent-codex-workspace@0.0.0 wp30:lab:down /private/tmp/persistent-agent-wp30-repro-final
 > node --import tsx scripts/wp30-local-lab.ts down
 
-{"gate":"wp30:lab:down","status":"clean","removedCount":13,"resources":["e1352b14d1c0","0feeef0ae8ba","bb9f8af32e6d","6bcbf83156e5","d9d9684a4605","1a88ae3408a6","0a43d3736494","b8c973137acf","[redacted-id]","[redacted-id]","[redacted-id]","[redacted-id]","796009961fd4"],"secretsRemoved":true}
+{"gate":"wp30:lab:down","status":"clean","removedCount":13,"resources":["322317701d2e","a072907d3ac0","6130e947b6c9","65b0356e2a1d","22ad934e296d","00c49be2905d","465fc51da487","fc4ae2b874b7","[redacted-id]","[redacted-id]","[redacted-id]","[redacted-id]","3fe863d95f03"],"secretsRemoved":true}

@@ -2,7 +2,7 @@
   - sectionheader
     - paragraph
       - StaticText "Production HA session"
-    - heading "ses_312dd17d-18a7-48bf-85d9-76956e10e59d" [level=1, ref=e2]
+    - heading "ses_aa42ccb2-246e-4f57-b1dd-9c8c5911df74" [level=1, ref=e2]
     - StaticText "active"
     - StaticText "connected"
     - StaticText "1"
