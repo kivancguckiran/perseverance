@@ -1,0 +1,213 @@
+{
+    "metrics": {
+        "http_req_blocked": {
+            "avg": 0.005315149841197755,
+            "min": 0.000459,
+            "med": 0.002042,
+            "max": 1.918375,
+            "p(90)": 0.00625,
+            "p(95)": 0.009291250000000001
+        },
+        "ws_msgs_sent": {
+            "rate": 0.039829648696083936,
+            "count": 2
+        },
+        "ws_msgs_received": {
+            "rate": 0.039829648696083936,
+            "count": 2
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0
+        },
+        "ws_session_duration": {
+            "avg": 22.072563,
+            "min": 19.001209,
+            "med": 22.072563,
+            "max": 25.143917,
+            "p(90)": 24.5296462,
+            "p(95)": 24.8367816
+        },
+        "http_req_connecting": {
+            "med": 0,
+            "max": 0.540875,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.0007840100952813065,
+            "min": 0
+        },
+        "http_req_waiting": {
+            "avg": 9.611944962794883,
+            "min": 1.220583,
+            "med": 8.675333,
+            "max": 191.34725,
+            "p(90)": 14.461666500000002,
+            "p(95)": 17.126312499999997
+        },
+        "ws_connecting": {
+            "p(95)": 13.029817,
+            "avg": 9.725916999999999,
+            "min": 6.054917,
+            "med": 9.725916999999999,
+            "max": 13.396917,
+            "p(90)": 12.662717
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 9.661680126488964,
+            "min": 1.249542,
+            "med": 8.731625,
+            "max": 191.391708,
+            "p(90)": 14.5070582,
+            "p(95)": 17.178566099999994
+        },
+        "data_sent": {
+            "count": 7802247,
+            "rate": 155380.3785250374
+        },
+        "http_req_receiving": {
+            "med": 0.025708,
+            "max": 2.058125,
+            "p(90)": 0.055875,
+            "p(95)": 0.07653074999999981,
+            "avg": 0.033473162999092504,
+            "min": 0.00575
+        },
+        "vus": {
+            "min": 2,
+            "max": 4,
+            "value": 2
+        },
+        "wp30_local_tenant_a": {
+            "count": 1101,
+            "rate": 21.926221607194208
+        },
+        "http_req_failed": {
+            "passes": 1,
+            "fails": 8815,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0.00011343012704174228
+        },
+        "http_reqs": {
+            "count": 8816,
+            "rate": 175.569091452338
+        },
+        "checks": {
+            "passes": 2208,
+            "fails": 1,
+            "value": 0.9995473064735174
+        },
+        "iteration_duration": {
+            "avg": 63.60873630204082,
+            "min": 19.597584,
+            "med": 62.624417,
+            "max": 243.622208,
+            "p(90)": 69.6828502,
+            "p(95)": 72.2010922
+        },
+        "iterations": {
+            "count": 2205,
+            "rate": 43.91218768743254
+        },
+        "data_received": {
+            "count": 6505248,
+            "rate": 129550.87126045133
+        },
+        "ws_sessions": {
+            "count": 2,
+            "rate": 0.039829648696083936
+        },
+        "wp30_local_failures": {
+            "passes": 0,
+            "fails": 2203,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "vus_max": {
+            "value": 8,
+            "min": 8,
+            "max": 8
+        },
+        "http_req_duration": {
+            "avg": 9.661314738089864,
+            "min": 1.249542,
+            "med": 8.731375,
+            "max": 191.391708,
+            "p(90)": 14.506979,
+            "p(95)": 17.177895249999995,
+            "thresholds": {
+                "p(95)<1000": false
+            }
+        },
+        "http_req_sending": {
+            "max": 3.722292,
+            "p(90)": 0.022167,
+            "p(95)": 0.03475,
+            "avg": 0.015896612295825757,
+            "min": 0.002375,
+            "med": 0.007708
+        },
+        "wp30_local_tenant_b": {
+            "rate": 21.94613643154225,
+            "count": 1102
+        }
+    },
+    "setup_data": {
+        "sessions": [
+            "ses_a29624f2-d269-40f3-b56a-56d297effa0a",
+            "ses_3f0879c3-2d68-4479-8096-18380a9d4c32"
+        ]
+    },
+    "root_group": {
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {
+                        "real session created": {
+                            "id": "d5e52e8ae4872fb0b1f49e03d10f3392",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "real session created",
+                            "path": "::setup::real session created"
+                        },
+                        "scheduler job queued": {
+                            "id": "5e467e69a1c2d66bbec3cbe0157f918e",
+                            "passes": 1,
+                            "fails": 1,
+                            "name": "scheduler job queued",
+                            "path": "::setup::scheduler job queued"
+                        }
+                    }
+            }
+        },
+        "checks": {
+            "realtime upgraded": {
+                "name": "realtime upgraded",
+                "path": "::realtime upgraded",
+                "id": "91954bf3993e1d91e5d7f355e84da3ce",
+                "passes": 2,
+                "fails": 0
+            },
+            "api realtime scheduler object flow accepted": {
+                "id": "0249da52fcd83e89473b1273777a0935",
+                "passes": 2203,
+                "fails": 0,
+                "name": "api realtime scheduler object flow accepted",
+                "path": "::api realtime scheduler object flow accepted"
+            }
+        },
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e"
+    }
+}
