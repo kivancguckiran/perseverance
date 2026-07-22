@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "evidenceClass": "local-operator",
+  "independentAttestation": false,
+  "externalProductionReady": false,
+  "sourceCommit": "b19a94f1ff73b50fc2d08f641f7a0ac3c6c90c19",
+  "reportSha256": "0d94d086cbf0357293f466f13063f5c7add20139b776ef2c66757704db79660f",
+  "evidenceChain": [
+    {
+      "gate": "wp30:local:preflight",
+      "status": "passed",
+      "sha256": "085b377e34953e5cf045996744ef8b21366f4371ca5b389383e7a0be3a07bc43"
+    },
+    {
+      "gate": "wp30:test",
+      "status": "passed",
+      "sha256": "e22225aa2243d9edd4797d157b563d69c37ddddf396c0dc3dad44e9b35c2a9f2"
+    },
+    {
+      "gate": "wp30:postgres-migration",
+      "status": "passed",
+      "sha256": "c786adab6cf9c6472143f41169dce804e73cd939f9cb4ea842af8ce8fcc08e40"
+    },
+    {
+      "gate": "wp30:local:scanners",
+      "status": "passed",
+      "sha256": "588eb563430687f74d594495ab5d90f92562bafdc255ea7c5aabbc7f206df38e"
+    },
+    {
+      "gate": "wp30:local:tenant-boundary",
+      "status": "passed",
+      "sha256": "2fe97431d035a631b149cad9749ab3c80124009401ad32cdf07d9f5178952adf"
+    },
+    {
+      "gate": "wp30:local:k6",
+      "status": "passed",
+      "sha256": "59c190ff24d6699755bdd81e46896d6a79d6b59fe5c0ea2d2ec4e7380cc8210b"
+    },
+    {
+      "gate": "wp30:local:chaos",
+      "status": "passed",
+      "sha256": "75414fae9699cda089b7ab09322dffb19ef9a122edf885c124ab88a6f11b5e5a"
+    },
+    {
+      "gate": "wp30:local:rollout-rollback",
+      "status": "passed",
+      "sha256": "ee93f93b2e53aed853529995b92bcaee600b4c9770302fb0d3d2c84ab22f5002"
+    },
+    {
+      "gate": "wp30:local:browser-golden",
+      "status": "passed",
+      "sha256": "4e9ff978b9f59f60fcb4c8dd64c5612722a94215f6be3db4314a68b0ce953f8d"
+    }
+  ],
+  "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAdQIamAdUFpFT7N/hP3VDUv/J44c/nwfv265z3KZN0c8=\n-----END PUBLIC KEY-----\n",
+  "signatureAlgorithm": "Ed25519",
+  "generatedAt": "2026-07-22T16:07:38.298Z",
+  "signedPayloadSha256": "146bb326353984547b7bdd6bde8217885ecdca42986af8849847bc7f30823fa4",
+  "signature": "4xic3RlBYpgxJUfxenkm8FRpirQN7xZCcky+njkgmxKeisRbV5HLEOdc67hD24ziYxhA3dCRV/r0ujRZ7zEYCg=="
+}
