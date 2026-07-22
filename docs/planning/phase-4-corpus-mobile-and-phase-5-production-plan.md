@@ -1,8 +1,8 @@
 # Faz 4 Corpus ve mobil ürün, Faz 5 Production hardening planı
 
-- Plan durumu: Aktif
+- Plan durumu: Engineering tamamlandı; external production validation bekliyor
 - Plan tarihi: 17 Temmuz 2026
-- Aktif iş paketi: WP30
+- Aktif iş paketi: Yok
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -32,7 +32,7 @@ lifecycle, supply-chain güvenliği ve kontrollü production rollout seviyesine 
 | WP27  | 5   | Tamamlandı | Observability/SLO, backup/restore, DR ve region-failover tatbikatı       |
 | WP28  | 5   | Tamamlandı | Enterprise SSO/SCIM, retention/export/delete ve data-residency lifecycle |
 | WP29  | 5   | Tamamlandı | Supply-chain, provider canary, güvenli upgrade ve compliance kontrolleri |
-| WP30  | 5   | Aktif      | Pentest, load/soak/chaos ve kontrollü production rollout kabulü          |
+| WP30  | 5   | Tamamlandı | Yerel production-like kabul tamamlandı; external go-live kabulü bekliyor |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP21 kabul edilmeden WP22; WP24 kabul
 edilmeden WP25; Faz 4 tamamlanmadan WP26; WP29 tamamlanmadan nihai WP30 aktive edilmez.
@@ -910,6 +910,33 @@ geçmek.
 
 `feat: complete production readiness and controlled rollout`
 
+#### WP30-L bağımsız kabul sonucu
+
+Karar: **Tamamlandı — local production-like engineering kabulü**
+
+- WP30 implementation commit'i `0b6dedf`; gerçek servisli local acceptance ve scanner
+  reproducibility düzeltmeleri `27d8448` ve `5195b8e`; kayıtlı kanıt commit'leri
+  `3c67d08` ve `d0f4c69` olarak doğrulandı.
+- Temiz ve detached `5195b8e` worktree'sinde `pnpm wp30:lab:up` ardından
+  `pnpm wp30:local:accept` bağımsız yeniden çalıştırıldı. Preflight, hedefli test,
+  PostgreSQL migration, ZAP/Nuclei, tenant boundary, K6, chaos, rollout/rollback,
+  browser golden ve cleanup olmak üzere 10/10 yerel gate geçti.
+- Yeniden koşunun report SHA-256 değeri
+  `276203dedc91d32e538f0c6e6ff7266c6d22fa02778eb021ea6bacf56dcd20ac` oldu.
+  Evidence bundle içindeki 22/22 ham kanıtın byte/hash değerleri ile Ed25519 imzası
+  bağımsız doğrulandı; zorunlu yerel `not-run` gate kalmadı.
+- Acceptance sonrasında WP30 etiketli container, volume veya network kalmadı.
+  Repo genelinde format, typecheck, 45 test dosyasında 389 test, production build ve
+  SSR HTTP smoke geçti.
+- Kanıt sınıfı açıkça `local-operator`, hedef kapsamı `loopback-only` ve
+  `externalProductionReady:false` kaldı. Bu kabul bağımsız pentest, uzun production
+  soak, gerçek cloud/region/KMS/provider arızası veya gerçek cohort go-live kanıtı
+  değildir.
+
+WP30-L ve Faz 5 engineering kapsamı tamamlandı. Aktif iş paketi yoktur. Production
+go-live öncesinde ADR-0030'daki WP30-E `pnpm production:accept` external validation
+kapısı zorunludur.
+
 ## 6. Faz 5 exit kriteri
 
 Ürün belgelenmiş SLO, RPO/RTO ve kapasite hedeflerinde tenant-fair çalışır; node/region
@@ -917,6 +944,9 @@ ve bağımlılık arızalarından veri karışması olmadan kurtulur. Enterprise
 lifecycle politikaları uygulanır. Release artifact'leri doğrulanabilir provenance ve
 canary ile dağıtılır. Bağımsız pentest, load/soak/chaos ve rollback kanıtlarıyla
 kontrollü production rollout tamamlanır.
+
+Engineering exit, WP30-L ile sağlanmıştır. Yukarıdaki bağımsız/external production
+iddialarını sağlayan nihai go-live exit'i ise WP30-E tamamlanana kadar açık kalır.
 
 ## 7. Faz geçiş kuralları
 
