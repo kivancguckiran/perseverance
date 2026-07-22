@@ -15,6 +15,10 @@ export const WP30_LOCAL_IMAGES = join(
   WP30_LOCAL_ROOT,
   'infra/wp30-local/images.env',
 )
+export const WP30_ZAP_IMAGE_MANIFEST = join(
+  WP30_LOCAL_ROOT,
+  'infra/wp30-local/zap-image-manifest.json',
+)
 export const WP30_LOCAL_LABEL = 'persistent.wp30.local=true'
 
 export const sha256 = (value: string | Buffer) =>
@@ -35,6 +39,89 @@ export const parseEnv = (content: string) =>
 export const readLocalEnv = () => parseEnv(readFileSync(WP30_LOCAL_ENV, 'utf8'))
 export const readPinnedImages = () =>
   parseEnv(readFileSync(WP30_LOCAL_IMAGES, 'utf8'))
+
+export type PinnedImageManifest = {
+  image: string
+  mediaType: string
+  indexDigest: string
+  platforms: Array<{ platform: string; digest: string }>
+}
+
+export const readZapImageManifest = () =>
+  JSON.parse(
+    readFileSync(WP30_ZAP_IMAGE_MANIFEST, 'utf8'),
+  ) as PinnedImageManifest
+
+export const normalizeDockerPlatform = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace('/aarch64', '/arm64')
+    .replace('/x86_64', '/amd64')
+
+export const validatePinnedImagePlatform = (input: {
+  image: string
+  manifest: PinnedImageManifest
+  hostPlatform: string
+  imagePlatform: string
+}) => {
+  const hostPlatform = normalizeDockerPlatform(input.hostPlatform)
+  const imagePlatform = normalizeDockerPlatform(input.imagePlatform)
+  assert.equal(input.manifest.image, input.image)
+  assert.equal(
+    input.manifest.mediaType,
+    'application/vnd.oci.image.index.v1+json',
+  )
+  assert.equal(
+    input.image.slice(input.image.indexOf('@') + 1),
+    input.manifest.indexDigest,
+  )
+  assert.match(input.manifest.indexDigest, /^sha256:[a-f0-9]{64}$/)
+  for (const entry of input.manifest.platforms) {
+    assert.match(entry.platform, /^linux\/(?:amd64|arm64)$/)
+    assert.match(entry.digest, /^sha256:[a-f0-9]{64}$/)
+  }
+  const selected = input.manifest.platforms.find(
+    (entry) => normalizeDockerPlatform(entry.platform) === hostPlatform,
+  )
+  assert(selected, `ZAP image manifest does not support host ${hostPlatform}`)
+  assert.equal(
+    imagePlatform,
+    hostPlatform,
+    `ZAP image ${imagePlatform} does not match host ${hostPlatform}`,
+  )
+  return {
+    hostPlatform,
+    imagePlatform,
+    indexDigest: input.manifest.indexDigest,
+    platformManifestDigest: selected.digest,
+    manifestPlatforms: input.manifest.platforms.map((entry) => entry.platform),
+  }
+}
+
+export const assertPinnedImagePlatform = (
+  image: string,
+  manifest: PinnedImageManifest,
+) => {
+  const hostPlatform = run('docker', [
+    'info',
+    '--format',
+    '{{.OSType}}/{{.Architecture}}',
+  ]).stdout.trim()
+  const inspected = run('docker', [
+    'image',
+    'inspect',
+    image,
+    '--format',
+    '{{.Os}}/{{.Architecture}}',
+  ]).stdout.trim()
+  return validatePinnedImagePlatform({
+    image,
+    manifest,
+    hostPlatform,
+    imagePlatform: inspected,
+  })
+}
 
 export const isAllowedLocalHostname = (hostname: string) =>
   hostname === '127.0.0.1' ||

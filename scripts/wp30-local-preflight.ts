@@ -8,9 +8,11 @@ import {
   assertLocalInvariant,
   assertLocalUrl,
   assertPinnedImage,
+  assertPinnedImagePlatform,
   composeArgs,
   readLocalEnv,
   readPinnedImages,
+  readZapImageManifest,
   run,
   sha256,
 } from './wp30-local'
@@ -37,6 +39,10 @@ for (const [name, image] of Object.entries(readPinnedImages())) {
   assert.equal(env[name], image, `${name} differs from the reviewed pin`)
   assertPinnedImage(image)
 }
+const zapImagePlatform = assertPinnedImagePlatform(
+  env.WP30_ZAP_IMAGE,
+  readZapImageManifest(),
+)
 const serviceOutput = run(
   'docker',
   composeArgs('ps', '--format', 'json'),
@@ -168,4 +174,5 @@ machineEvidence('wp30:local:preflight', {
     sha256(env.WP30_TENANT_B_TOKEN),
   ],
   pinnedImagesVerified: Object.keys(readPinnedImages()).sort(),
+  zapImagePlatform,
 })

@@ -20,6 +20,7 @@ import {
   sha256,
 } from './wp30-local'
 import { scanWp30Evidence } from './wp30-evidence'
+import { runZapScan } from './wp30-zap-scanner'
 
 type Gate = {
   gate: string
@@ -209,18 +210,24 @@ try {
       join(WP30_LOCAL_ROOT, 'infra/security/wp30/zap-automation.yaml'),
       'utf8',
     )
-    const zapDescriptors = []
+    const zapDescriptors: typeof rawEvidence = []
+    const zapExitCodes: Record<string, number> = {}
+    const zapRetryCounts: Record<string, number> = {}
+    const zapReportSha256: Record<string, string> = {}
     let zapAlerts = 0
     for (const [label, target] of [
       ['control-plane', env.WP30_DOCKER_TARGET_URL],
       ['web', 'http://web:3301'],
     ]) {
       const work = join(scannerWork, `zap-${label}`)
-      mkdirSync(join(work, 'raw'), { recursive: true })
       const escapedTarget = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      writeFileSync(
-        join(work, 'zap.yaml'),
-        zapSource
+      const descriptorStart = rawEvidence.length
+      const scan = runZapScan({
+        label,
+        target,
+        work,
+        image: env.WP30_ZAP_IMAGE,
+        planContent: zapSource
           .replaceAll('__WP30_TARGET_URL__', target)
           .replaceAll('__WP30_TARGET_REGEX__', escapedTarget)
           .replace(
@@ -228,55 +235,15 @@ try {
             `maxScanDurationInMins: ${zapMaxScanDuration}`,
           )
           .replace('maxRuleDurationInMins: 5', 'maxRuleDurationInMins: 2'),
-      )
-      const result = dockerRun(
-        [
-          'run',
-          '--rm',
-          '--label',
-          'persistent.wp30.local=true',
-          '--network',
-          'persistent-wp30-local',
-          '-v',
-          `${work}:/zap/wrk:rw`,
-          env.WP30_ZAP_IMAGE,
-          'zap.sh',
-          '-cmd',
-          '-autorun',
-          '/zap/wrk/zap.yaml',
-        ],
-        false,
-        true,
-      )
-      persistRaw(
-        `scanners/zap-${label}.log`,
-        `${result.stdout}${result.stderr}`,
-      )
-      const content = readFileSync(join(work, 'raw/zap-report.json'), 'utf8')
-      zapDescriptors.push(persistRaw(`scanners/zap-${label}.json`, content))
-      const report = JSON.parse(content)
-      const alerts = (report.site ?? []).flatMap(
-        (site: { alerts?: unknown[] }) => site.alerts ?? [],
-      )
-      zapAlerts += alerts.length
-      const highOrCritical = alerts.filter((item: { riskdesc?: string }) =>
-        ['High', 'Critical'].includes(item.riskdesc?.split(' ')[0] ?? ''),
-      ).length
-      assert.equal(highOrCritical, 0)
-      assert(
-        [0, 2].includes(result.status ?? -1),
-        `unexpected ZAP exit status ${result.status}`,
-      )
-      zapDescriptors.push(
-        persistRaw(
-          `scanners/zap-${label}-measurement.json`,
-          JSON.stringify({
-            exitStatus: result.status,
-            alerts: alerts.length,
-            highOrCritical,
-          }),
-        ),
-      )
+        execute: (args) => dockerRun(args, false, true),
+        persistRaw,
+      })
+      zapDescriptors.push(...rawEvidence.slice(descriptorStart))
+      zapAlerts += scan.alerts.length
+      zapExitCodes[label] = scan.exitCode
+      zapRetryCounts[label] = scan.retryCount
+      zapReportSha256[label] = sha256(scan.content)
+      assert.equal(scan.highOrCritical, 0)
     }
 
     const nucleiWork = join(scannerWork, 'nuclei')
@@ -353,6 +320,9 @@ try {
     return {
       targets: ['control-plane', 'web-production-ssr'],
       zapAlerts,
+      zapExitCodes,
+      zapRetryCounts,
+      zapReportSha256,
       nucleiFindings: findings.length,
       openHighOrCritical: 0,
       rawEvidence: [...zapDescriptors, nucleiDescriptor],
@@ -843,18 +813,40 @@ try {
       assert(reconnect.reconnectCount >= 1)
       assert.equal(reconnect.state, 'connected')
       assert.equal(reconnect.errorOverlay, false)
-      const screenshotPath = join(rawDirectory, 'browser/golden.png')
-      mkdirSync(join(screenshotPath, '..'), { recursive: true })
-      browser('screenshot', screenshotPath)
-      const screenshot = Buffer.from(readFileSync(screenshotPath))
-      const screenshotDescriptor = {
-        path: relative(WP30_LOCAL_ROOT, screenshotPath),
-        byteLength: screenshot.byteLength,
-        sha256: sha256(screenshot),
-      }
-      rawEvidence.push(screenshotDescriptor)
       const snapshot = browser('snapshot').stdout
       const snapshotDescriptor = persistRaw('browser/snapshot.txt', snapshot)
+      assert(snapshotDescriptor.byteLength > 0, 'browser snapshot is empty')
+      const screenshotPath = join(rawDirectory, 'browser/golden.png')
+      mkdirSync(join(screenshotPath, '..'), { recursive: true })
+      const screenshotResult = run(
+        'agent-browser',
+        ['screenshot', screenshotPath],
+        {
+          env: { ...process.env, AGENT_BROWSER_SESSION: browserSession },
+          allowFailure: true,
+        },
+      )
+      persistRaw(
+        'browser/screenshot.log',
+        `${screenshotResult.stdout}${screenshotResult.stderr}`,
+      )
+      let screenshotDescriptor: (typeof rawEvidence)[number] | null = null
+      try {
+        const screenshot = Buffer.from(readFileSync(screenshotPath))
+        assert(screenshot.byteLength > 0)
+        screenshotDescriptor = {
+          path: relative(WP30_LOCAL_ROOT, screenshotPath),
+          byteLength: screenshot.byteLength,
+          sha256: sha256(screenshot),
+        }
+        rawEvidence.push(screenshotDescriptor)
+      } catch {
+        assert.notEqual(
+          screenshotResult.status,
+          0,
+          'browser reported screenshot success without an artifact',
+        )
+      }
       return {
         route: `/sessions/${seed.sessionA}`,
         productionSsr: true,
@@ -863,6 +855,7 @@ try {
         viewports,
         reconnect,
         screenshot: screenshotDescriptor,
+        screenshotExitCode: screenshotResult.status,
         snapshot: snapshotDescriptor,
       }
     } finally {

@@ -12,6 +12,7 @@ const results = [
       'packages/production-readiness/src/index.test.ts',
       'packages/production-readiness/src/evidence.test.ts',
       'packages/production-readiness/src/local-lab.test.ts',
+      'scripts/wp30-zap-scanner.test.ts',
     ],
   ],
   [

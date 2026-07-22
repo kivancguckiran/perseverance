@@ -12,6 +12,7 @@ import {
   assertLocalInvariant,
   assertLocalUrl,
   parseEnv,
+  validatePinnedImagePlatform,
 } from '../../../scripts/wp30-local'
 
 describe('WP30-L local acceptance contract', () => {
@@ -60,6 +61,14 @@ describe('WP30-L local acceptance contract', () => {
     ])
     for (const image of Object.values(images))
       expect(image).toMatch(/:[^@]+@sha256:[a-f0-9]{64}$/)
+    const zapManifest = JSON.parse(
+      readFileSync(resolve('infra/wp30-local/zap-image-manifest.json'), 'utf8'),
+    )
+    expect(zapManifest.image).toBe(images.WP30_ZAP_IMAGE)
+    expect(zapManifest.platforms.map(({ platform }: any) => platform)).toEqual([
+      'linux/amd64',
+      'linux/arm64',
+    ])
     const compose = readFileSync(
       resolve('infra/wp30-local/compose.yml'),
       'utf8',
@@ -78,6 +87,49 @@ describe('WP30-L local acceptance contract', () => {
     expect(compose).not.toContain('fixture-server.mjs')
   })
 
+  it('rejects a ZAP image whose local platform does not match the host', () => {
+    const image =
+      'ghcr.io/zaproxy/zaproxy:stable@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2'
+    const manifest = {
+      image,
+      mediaType: 'application/vnd.oci.image.index.v1+json',
+      indexDigest:
+        'sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2',
+      platforms: [
+        {
+          platform: 'linux/amd64',
+          digest:
+            'sha256:c558ee87358911ab17278c70991e856f57793e115d9cd0f88ca475cf82907a1a',
+        },
+        {
+          platform: 'linux/arm64',
+          digest:
+            'sha256:1110082c94217b6e9592b18934740108839a44c02f1d0e961e4933bbb98bab45',
+        },
+      ],
+    }
+    expect(
+      validatePinnedImagePlatform({
+        image,
+        manifest,
+        hostPlatform: 'linux/aarch64',
+        imagePlatform: 'linux/arm64',
+      }),
+    ).toMatchObject({
+      hostPlatform: 'linux/arm64',
+      imagePlatform: 'linux/arm64',
+      platformManifestDigest: manifest.platforms[1]!.digest,
+    })
+    expect(() =>
+      validatePinnedImagePlatform({
+        image,
+        manifest,
+        hostPlatform: 'linux/aarch64',
+        imagePlatform: 'linux/amd64',
+      }),
+    ).toThrow(/does not match host/)
+  })
+
   it('retains redacted raw evidence and makes cleanup a report gate', () => {
     const acceptance = readFileSync(
       resolve('scripts/wp30-local-accept.ts'),
@@ -87,6 +139,11 @@ describe('WP30-L local acceptance contract', () => {
     expect(acceptance).toContain('assert(cleaned')
     expect(acceptance).toContain('rawEvidence: embeddedRawEvidence')
     expect(acceptance).toContain('signatureVerified')
+    expect(acceptance).toContain('runZapScan')
+    expect(acceptance.indexOf("browser('snapshot')")).toBeLessThan(
+      acceptance.indexOf("['screenshot', screenshotPath]"),
+    )
+    expect(acceptance).toContain("'browser/screenshot.log'")
     expect(acceptance).not.toContain('tenantMixing: 0')
     expect(acceptance).not.toContain('dataLoss: 0')
   })

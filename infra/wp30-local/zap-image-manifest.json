@@ -1,0 +1,15 @@
+{
+  "image": "ghcr.io/zaproxy/zaproxy:stable@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2",
+  "mediaType": "application/vnd.oci.image.index.v1+json",
+  "indexDigest": "sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2",
+  "platforms": [
+    {
+      "platform": "linux/amd64",
+      "digest": "sha256:c558ee87358911ab17278c70991e856f57793e115d9cd0f88ca475cf82907a1a"
+    },
+    {
+      "platform": "linux/arm64",
+      "digest": "sha256:1110082c94217b6e9592b18934740108839a44c02f1d0e961e4933bbb98bab45"
+    }
+  ]
+}
