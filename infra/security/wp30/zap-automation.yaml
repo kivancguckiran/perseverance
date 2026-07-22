@@ -1,0 +1,52 @@
+env:
+  contexts:
+    - name: wp30-production
+      urls:
+        - __WP30_TARGET_URL__
+      includePaths:
+        - __WP30_TARGET_REGEX__.*
+      excludePaths:
+        - __WP30_TARGET_REGEX__/(logout|billing/webhook).*
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+jobs:
+  - type: passiveScan-config
+    parameters:
+      enableTags: false
+      maxAlertsPerRule: 50
+      scanOnlyInScope: true
+  - type: spider
+    parameters:
+      context: wp30-production
+      maxDuration: 10
+      maxDepth: 8
+      maxChildren: 100
+  - type: spiderAjax
+    parameters:
+      context: wp30-production
+      maxDuration: 10
+      maxCrawlDepth: 8
+      numberOfBrowsers: 1
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 10
+  - type: activeScan
+    parameters:
+      context: wp30-production
+      maxScanDurationInMins: 30
+      maxRuleDurationInMins: 5
+    policyDefinition:
+      defaultStrength: medium
+      defaultThreshold: medium
+  - type: report
+    parameters:
+      template: traditional-json-plus
+      reportDir: /zap/wrk/raw
+      reportFile: zap-report.json
+      reportTitle: WP30 authorized production-readiness scan
+  - type: exitStatus
+    parameters:
+      errorLevel: High
+      warnLevel: Medium

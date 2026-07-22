@@ -1,0 +1,26 @@
+id: persistent-codex-wp30-realtime-boundary
+
+info:
+  name: Persistent Codex cross-tenant realtime upgrade probe
+  author: persistent-codex-security
+  severity: high
+  description: A foreign workspace subscription must never upgrade successfully.
+  tags: wp30,websocket,idor
+
+http:
+  - raw:
+      - |
+        GET /v1/realtime?workspaceId=__WP30_TENANT_B_WORKSPACE_ID__ HTTP/1.1
+        Host: {{Hostname}}
+        Authorization: Bearer __WP30_TENANT_A_TOKEN__
+        X-Tenant-Id: __WP30_TENANT_A_ID__
+        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
+        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+        Connection: Upgrade
+        Upgrade: websocket
+        Sec-WebSocket-Version: 13
+        Sec-WebSocket-Key: d3AzMC1vcGFxdWUtcHJvYmU=
+    matchers:
+      - type: status
+        status:
+          - 101

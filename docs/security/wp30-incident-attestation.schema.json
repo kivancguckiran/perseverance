@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://persistent-codex.invalid/security/wp30-incident-attestation.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "independent",
+    "incidentId",
+    "completedAt",
+    "onCallAcknowledgeMs",
+    "breakGlassAccessMs",
+    "revocationMs",
+    "notificationDelivered",
+    "immutableAuditVerified",
+    "accessRevoked",
+    "postmortemRecorded"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "independent": { "const": true },
+    "incidentId": { "type": "string", "minLength": 1 },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "onCallAcknowledgeMs": { "type": "number", "exclusiveMinimum": 0 },
+    "breakGlassAccessMs": { "type": "number", "exclusiveMinimum": 0 },
+    "revocationMs": { "type": "number", "exclusiveMinimum": 0 },
+    "notificationDelivered": { "const": true },
+    "immutableAuditVerified": { "const": true },
+    "accessRevoked": { "const": true },
+    "postmortemRecorded": { "const": true }
+  }
+}

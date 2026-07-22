@@ -4,6 +4,7 @@
 !.env.example
 node_modules/
 .wp29/
+.wp30/
 .next/
 dist/
 coverage/

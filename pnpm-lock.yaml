@@ -167,6 +167,9 @@ importers:
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../domain-events
+      '@persistent-codex/production-readiness':
+        specifier: workspace:*
+        version: link:../production-readiness
       '@persistent-codex/production-topology':
         specifier: workspace:*
         version: link:../production-topology
@@ -233,6 +236,16 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.4.3
+
+  packages/production-readiness:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
 
   packages/production-topology:
     dependencies:

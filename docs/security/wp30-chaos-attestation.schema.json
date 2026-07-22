@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://persistent-codex.invalid/security/wp30-chaos-attestation.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "independent", "completedAt", "scenarios"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "independent": { "const": true },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "scenarios": {
+      "type": "array",
+      "minItems": 11,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component",
+          "injection",
+          "tenantMixing",
+          "uncontrolledDuplicates",
+          "fenceViolations",
+          "recovered",
+          "recoveryMs"
+        ],
+        "properties": {
+          "component": {
+            "enum": [
+              "api",
+              "worker",
+              "node",
+              "region",
+              "broker",
+              "cache",
+              "postgres_replica",
+              "provider",
+              "kms",
+              "push",
+              "billing"
+            ]
+          },
+          "injection": { "enum": ["process", "container"] },
+          "tenantMixing": { "const": 0 },
+          "uncontrolledDuplicates": { "const": 0 },
+          "fenceViolations": { "const": 0 },
+          "recovered": { "const": true },
+          "recoveryMs": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

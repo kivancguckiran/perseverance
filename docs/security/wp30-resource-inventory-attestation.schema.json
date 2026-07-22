@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://persistent-codex.invalid/security/wp30-resource-inventory-attestation.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "independent",
+    "observedAt",
+    "temporaryCloudResources",
+    "paidResourcesRemaining",
+    "temporaryCredentialsRemaining"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "independent": { "const": true },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "temporaryCloudResources": { "const": 0 },
+    "paidResourcesRemaining": { "const": 0 },
+    "temporaryCredentialsRemaining": { "const": 0 }
+  }
+}

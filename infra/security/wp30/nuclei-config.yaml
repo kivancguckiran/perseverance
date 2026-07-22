@@ -1,0 +1,16 @@
+severity:
+  - critical
+  - high
+  - medium
+rate-limit: 25
+bulk-size: 5
+concurrency: 5
+timeout: 10
+retries: 1
+disable-update-check: true
+no-color: true
+jsonl: true
+exclude-tags:
+  - dos
+  - fuzz
+  - intrusive

