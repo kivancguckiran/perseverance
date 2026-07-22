@@ -1,11 +1,11 @@
-Found Java version 17.0.17
-Available memory: 7836 MB
-Using JVM args: -Xmx1959m
-334 [main] INFO  org.parosproxy.paros.Constant - Copying default configuration to /home/zap/.ZAP/config.xml
-410 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/session
-410 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/dirbuster
-410 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/fuzzers
-410 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/plugin
+Found Java version 17.0.19
+Read custom JVM args from /home/zap//.ZAP/.ZAP_JVM.properties
+Using JVM args: -Xms512m -Xmx1536m -XX:+ExitOnOutOfMemoryError -XX:ErrorFile=/zap/wrk/crash/hs_err_pid%p.log
+244 [main] INFO  org.parosproxy.paros.Constant - Copying default configuration to /home/zap/.ZAP/config.xml
+300 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/session
+300 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/dirbuster
+301 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/fuzzers
+302 [main] INFO  org.parosproxy.paros.Constant - Creating directory /home/zap/.ZAP/plugin
 Job passiveScan-config set enableTags = false
 Job passiveScan-config set maxAlertsPerRule = 50
 Job passiveScan-config set scanOnlyInScope = true
@@ -32,24 +32,25 @@ Job exitStatus set warnLevel = Medium
 Job passiveScan-config started
 Job passiveScan-config finished, time taken: 00:00:00
 Job spider started
-Job spider requesting URL http://control-plane:3300
-Job spider found 3 URLs
+Job spider requesting URL http://web:3301
+Job spider found 36 URLs
 Job spider finished, time taken: 00:00:00
 Job spiderAjax started
-Job spiderAjax found 3 URLs
-Job spiderAjax finished, time taken: 00:00:05
+Job spiderAjax found 84 URLs
+Job spiderAjax finished, time taken: 00:00:31
 Job passiveScan-wait started
 Job passiveScan-wait finished, time taken: 00:00:00
 Job activeScan started
 Job activeScan set default strength to MEDIUM
 Job activeScan set default threshold to MEDIUM
-Job activeScan finished, time taken: 00:00:08
+Job activeScan finished, time taken: 00:02:35
 Job report started
 Job report generated report /zap/wrk/raw/zap-report.json
 Job report finished, time taken: 00:00:00
 Job exitStatus started
+An alert has been raised with a risk of at least: Medium
 Job exitStatus finished, time taken: 00:00:00
-Automation plan succeeded!
-Jul 22, 2026 6:00:09 PM java.util.prefs.FileSystemPreferences$1 run
+Automation plan warnings:
+	An alert has been raised with a risk of at least: Medium
+Jul 22, 2026 8:21:01 PM java.util.prefs.FileSystemPreferences$1 run
 INFO: Created user preferences directory.
-This ZAP installation is over a year old - its probably very out of date

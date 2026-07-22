@@ -1,12 +1,12 @@
 {
     "@programName": "ZAP",
-    "@version": "2.16.1",
-    "@generated": "Wed, 22 Jul 2026 18:00:25",
-    "created": "2026-07-22T18:00:25.628650296Z",
-    "site":[ 
+    "@version": "2.17.0",
+    "@generated": "Wed, 22 Jul 2026 20:20:04",
+	"created": "2026-07-22T20:20:04.530762261Z",
+	"site":[ 
         {
-            "@name": "https://content-signature-2.cdn.mozilla.net",
-            "@host": "content-signature-2.cdn.mozilla.net",
+            "@name": "https://firefox-settings-attachments.cdn.mozilla.net",
+            "@host": "firefox-settings-attachments.cdn.mozilla.net",
             "@port": "443",
             "@ssl": "true",
             "alerts": [ 
@@ -33,7 +33,7 @@
                         {
                             "id": "0",
                             "uri": "http://control-plane:3300",
-                            "nodeName": null,
+                            "nodeName": "http:\/\/control-plane:3300",
                             "method": "GET",
                             "param": "x-content-type-options",
                             "attack": "",
@@ -41,13 +41,13 @@
                             "otherinfo": "This issue still applies to error type pages (401, 403, 500, etc.) as those pages are often still affected by injection issues, in which case there is still concern for browsers sniffing pages away from their actual content type.\nAt \"High\" threshold this scan rule will not alert on client or server error responses.",
                             "request-header": "GET http://control-plane:3300 HTTP/1.1\r\nhost: control-plane:3300\r\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36\r\npragma: no-cache\r\ncache-control: no-cache\r\n\r\n",
                             "request-body": "",
-                            "response-header": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\naccess-control-allow-origin: http://127.0.0.1:3301\r\naccess-control-allow-headers: authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\nvary: origin\r\ncontent-length: 106\r\nDate: Wed, 22 Jul 2026 18:00:11 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=72\r\n\r\n",
+                            "response-header": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\naccess-control-allow-origin: http://127.0.0.1:3301\r\naccess-control-allow-headers: authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\nvary: origin\r\ncontent-length: 106\r\nDate: Wed, 22 Jul 2026 20:19:51 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=72\r\n\r\n",
                             "response-body": "{\"service\":\"persistent-codex-control-plane\",\"mode\":\"production\",\"health\":\"/healthz\",\"readiness\":\"/readyz\"}"
                         },
                         {
-                            "id": "3",
+                            "id": "2",
                             "uri": "http://control-plane:3300/",
-                            "nodeName": null,
+                            "nodeName": "http:\/\/control-plane:3300\/",
                             "method": "GET",
                             "param": "x-content-type-options",
                             "attack": "",
@@ -55,7 +55,7 @@
                             "otherinfo": "This issue still applies to error type pages (401, 403, 500, etc.) as those pages are often still affected by injection issues, in which case there is still concern for browsers sniffing pages away from their actual content type.\nAt \"High\" threshold this scan rule will not alert on client or server error responses.",
                             "request-header": "GET http://control-plane:3300/ HTTP/1.1\r\nhost: control-plane:3300\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0\r\nAccept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\nAccept-Language: en-US,en;q=0.5\r\nConnection: keep-alive\r\nUpgrade-Insecure-Requests: 1\r\nPriority: u=0, i\r\n\r\n",
                             "request-body": "",
-                            "response-header": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\naccess-control-allow-origin: http://127.0.0.1:3301\r\naccess-control-allow-headers: authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\nvary: origin\r\ncontent-length: 106\r\nDate: Wed, 22 Jul 2026 18:00:14 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=72\r\n\r\n",
+                            "response-header": "HTTP/1.1 200 OK\r\ncontent-type: application/json; charset=utf-8\r\naccess-control-allow-origin: http://127.0.0.1:3301\r\naccess-control-allow-headers: authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\nvary: origin\r\ncontent-length: 106\r\nDate: Wed, 22 Jul 2026 20:19:54 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=72\r\n\r\n",
                             "response-body": "{\"service\":\"persistent-codex-control-plane\",\"mode\":\"production\",\"health\":\"/healthz\",\"readiness\":\"/readyz\"}"
                         }
                     ],
@@ -69,16 +69,8 @@
                     "sourceid": "1",
                     "tags":[ 
                         {
-                            "tag": "CWE-693",
-                            "link": "https:\/\/cwe.mitre.org\/data\/definitions\/693.html"
-                        },
-                        {
                             "tag": "OWASP_2021_A05",
                             "link": "https:\/\/owasp.org\/Top10\/A05_2021-Security_Misconfiguration\/"
-                        },
-                        {
-                            "tag": "OWASP_2017_A06",
-                            "link": "https:\/\/owasp.org\/www-project-top-ten\/2017\/A6_2017-Security_Misconfiguration.html"
                         },
                         {
                             "tag": "POLICY_QA_STD",
@@ -91,66 +83,34 @@
                         {
                             "tag": "SYSTEMIC",
                             "link": "https:\/\/www.zaproxy.org\/docs\/desktop\/addons\/common-library\/alerttags\/#systemic"
-                        }
-                    ]
-                },
-                {
-                    "pluginid": "10116",
-                    "alertRef": "10116",
-                    "alert": "ZAP is Out of Date",
-                    "name": "ZAP is Out of Date",
-                    "riskcode": "1",
-                    "confidence": "3",
-                    "riskdesc": "Low (High)",
-                    "desc": "<p>The version of ZAP you are using to test your app is out of date and is no longer being updated.</p><p>The risk level is set based on how out of date your ZAP version is.</p>",
-                    "instances":[ 
+                        },
                         {
-                            "id": "2",
-                            "uri": "http://control-plane:3300/sitemap.xml",
-                            "nodeName": null,
-                            "method": "GET",
-                            "param": "",
-                            "attack": "",
-                            "evidence": "",
-                            "otherinfo": "The latest version of ZAP is 2.17.0",
-                            "request-header": "GET http://control-plane:3300/sitemap.xml HTTP/1.1\r\nhost: control-plane:3300\r\nuser-agent: \r\npragma: no-cache\r\ncache-control: no-cache\r\n\r\n",
-                            "request-body": "",
-                            "response-header": "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json; charset=utf-8\r\naccess-control-allow-origin: http://127.0.0.1:3301\r\naccess-control-allow-headers: authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id\r\naccess-control-allow-methods: GET,POST,OPTIONS\r\nvary: origin\r\ncontent-length: 24\r\nDate: Wed, 22 Jul 2026 18:00:11 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=72\r\n\r\n",
-                            "response-body": "{\"code\":\"AUTH_REQUIRED\"}"
-                        }
-                    ],
-                    "count": "1",
-                    "systemic": false,
-                    "solution": "<p>Download the latest version of ZAP from https://www.zaproxy.org/download/ and install it.</p>",
-                    "otherinfo": "<p>The latest version of ZAP is 2.17.0</p>",
-                    "reference": "<p>https://www.zaproxy.org/download/</p>",
-                    "cweid": "1104",
-                    "wascid": "45",
-                    "sourceid": "8",
-                    "tags":[ 
+                            "tag": "CWE-693",
+                            "link": "https:\/\/cwe.mitre.org\/data\/definitions\/693.html"
+                        },
                         {
-                            "tag": "CWE-1104",
-                            "link": "https:\/\/cwe.mitre.org\/data\/definitions\/1104.html"
+                            "tag": "OWASP_2017_A06",
+                            "link": "https:\/\/owasp.org\/www-project-top-ten\/2017\/A6_2017-Security_Misconfiguration.html"
+                        },
+                        {
+                            "tag": "OWASP_2025_A02",
+                            "link": "https:\/\/owasp.org\/Top10\/2025\/A02_2025-Security_Misconfiguration\/"
                         }
                     ]
                 }
             ],
             "statistics":{ 
-                "stats.responseTime.16": 4
+                "stats.contentType.application\/json; charset=utf-8": 7
                 ,
-                "stats.contentType.application\/json; charset=utf-8": 41
+                "stats.responseTime.2": 1
                 ,
-                "stats.responseTime.0": 1
+                "stats.responseTime.4": 5
                 ,
-                "stats.responseTime.2": 17
+                "stats.code.200": 3
                 ,
-                "stats.responseTime.4": 14
+                "stats.responseTime.8": 1
                 ,
-                "stats.code.200": 7
-                ,
-                "stats.responseTime.8": 5
-                ,
-                "stats.code.401": 34
+                "stats.code.401": 4
                 
             }
         }
@@ -162,7 +122,7 @@
         ,
         "stats.auto.job.spider.run": 1
         ,
-        "stats.pscan.10027.time": 2
+        "stats.pscan.10027.time": 1
         ,
         "stats.ascan.40035.started": 1
         ,
@@ -172,35 +132,39 @@
         ,
         "stats.ascan.20017.urls": 2
         ,
-        "stats.pscan.90022.time": 37
+        "stats.pscan.90022.time": 46
         ,
-        "stats.selenium.launch.firefox-headless": 6
+        "stats.ascan.20017.time": 9
         ,
-        "stats.ascan.20017.time": 8
-        ,
-        "stats.pscan.10112.time": 16
+        "stats.pscan.10112.time": 6
         ,
         "stats.ascan.40026.started": 1
         ,
-        "stats.pscan.10042.time": 0
+        "stats.pscan.10042.time": 1
+        ,
+        "stats.ascan.40044.time": 30
         ,
         "stats.ascan.10058.started": 1
         ,
-        "stats.pscan.10056.time": 0
+        "stats.pscan.10056.time": 1
         ,
         "stats.ascan.40029.started": 1
         ,
         "stats.pscan.10061.time": 0
         ,
+        "stats.ascan.10106.started": 1
+        ,
         "stats.spider.url.found": 3
         ,
         "stats.pscan.10109.time": 0
         ,
-        "stats.ascan.40008.time": 2
+        "stats.ascan.40008.time": 1
         ,
         "stats.ascan.90029.started": 1
         ,
-        "stats.ascan.20015.time": 6
+        "stats.ascan.40044.started": 1
+        ,
+        "stats.ascan.20015.time": 5
         ,
         "stats.ascan.20015.urls": 3
         ,
@@ -220,29 +184,31 @@
         ,
         "stats.ascan.0.started": 1
         ,
-        "stats.ascan.90034.time": 13
+        "stats.ascan.90034.time": 7
+        ,
+        "stats.pscan.90003.time": 4
         ,
         "stats.pscan.10040.time": 0
         ,
-        "stats.pscan.10023.time": 1
-        ,
-        "stats.pscan.10116.alerts": 1
+        "stats.pscan.10023.time": 14
         ,
         "stats.ascan.90023.started": 1
         ,
-        "stats.ascan.90034.urls": 9
-        ,
-        "stats.log.error.org.parosproxy.paros.CommandLine": 1
+        "stats.ascan.90034.urls": 13
         ,
         "stats.pscan.10029.time": 0
         ,
         "stats.ascan.90017.started": 1
         ,
+        "stats.ascan.10047.time": 1
+        ,
         "stats.pscan.10017.time": 0
         ,
         "stats.ascan.40014.started": 1
         ,
-        "stats.pscan.10011.time": 1
+        "stats.ascan.10047.started": 1
+        ,
+        "stats.pscan.10011.time": 0
         ,
         "stats.ascan.40034.urls": 1
         ,
@@ -250,7 +216,7 @@
         ,
         "domxss.scan.count": 5
         ,
-        "stats.ascan.40034.time": 2
+        "stats.ascan.40034.time": 1
         ,
         "stats.pscan.10039.time": 0
         ,
@@ -266,7 +232,7 @@
         ,
         "stats.ascan.90037.started": 1
         ,
-        "stats.pscan.90001.time": 0
+        "stats.pscan.90001.time": 1
         ,
         "stats.ascan.90036.time": 1
         ,
@@ -274,17 +240,15 @@
         ,
         "stats.pscan.10020.time": 0
         ,
-        "stats.ascan.40024.started": 1
-        ,
         "stats.ascan.90020.started": 1
         ,
         "stats.pscan.10034.time": 0
         ,
         "stats.ascan.10058.time": 1
         ,
-        "stats.ascan.40022.time": 5
+        "stats.ascan.40022.time": 3
         ,
-        "stats.ascan.90035.time": 14
+        "stats.ascan.90035.time": 8
         ,
         "stats.ascan.30001.started": 1
         ,
@@ -298,7 +262,7 @@
         ,
         "stats.ascan.40019.time": 2
         ,
-        "stats.ascan.40003.time": 2
+        "stats.ascan.40003.time": 1
         ,
         "stats.spider.started": 1
         ,
@@ -306,29 +270,27 @@
         ,
         "stats.auto.job.passiveScan-config.run": 1
         ,
-        "stats.pscan.10202.time": 0
+        "stats.pscan.10202.time": 1
         ,
-        "stats.ascan.6.time": 8
+        "stats.ascan.6.time": 11
         ,
         "stats.ascan.40008.started": 1
         ,
         "stats.ascan.40021.started": 1
         ,
-        "stats.log.error": 1
+        "stats.ascan.40029.time": 2
         ,
-        "stats.ascan.40029.time": 3
-        ,
-        "stats.ascan.90020.time": 2
+        "stats.ascan.90020.time": 1
         ,
         "stats.pscan.10054.time": 0
         ,
         "stats.auto.job.activeScan.run": 1
         ,
-        "stats.ascan.0.time": 3
+        "stats.ascan.0.time": 2
         ,
-        "stats.ascan.40032.time": 2
+        "stats.ascan.40032.time": 1
         ,
-        "stats.ascan.90017.time": 32
+        "stats.ascan.90017.time": 2
         ,
         "stats.ascan.40032.urls": 1
         ,
@@ -342,15 +304,17 @@
         ,
         "stats.ascan.40042.started": 1
         ,
-        "stats.ascan.50000.time": 1
+        "stats.ascan.50000.time": 106
         ,
-        "stats.ascan.40029.urls": 1
+        "stats.ascan.40029.urls": 2
+        ,
+        "stats.pscan.90002.time": 0
         ,
         "stats.ascan.40045.started": 1
         ,
         "stats.pscan.10025.time": 0
         ,
-        "stats.pscan.10098.time": 1
+        "stats.pscan.10098.time": 0
         ,
         "stats.ascan.0.urls": 5
         ,
@@ -360,7 +324,7 @@
         ,
         "stats.ascan.30002.time": 2
         ,
-        "stats.network.send.success": 194
+        "stats.network.send.success": 210
         ,
         "stats.pscan.50001.time": 0
         ,
@@ -370,15 +334,17 @@
         ,
         "stats.pscan.10044.time": 1
         ,
-        "stats.pscan.10113.time": 3
+        "stats.pscan.10113.time": 4
         ,
-        "stats.pscan.Parameter Scanner": 41
+        "stats.pscan.Parameter Scanner": 32
         ,
         "stats.ascan.40048.urls": 1
         ,
-        "stats.ascan.40042.time": 4
+        "stats.ascan.40042.time": 3
         ,
         "stats.ascan.90026.time": 1
+        ,
+        "stats.network.send.failure": 16
         ,
         "stats.ascan.40043.time": 1
         ,
@@ -388,43 +354,53 @@
         ,
         "stats.ascan.40043.skipped": 1
         ,
-        "stats.ascan.10104.time": 21
+        "stats.ascan.10104.time": 14
         ,
-        "stats.pscan.10043.time": 0
+        "stats.script.call.Graal.js.active": 21
+        ,
+        "stats.pscan.10043.time": 1
         ,
         "stats.ascan.40009.time": 3
         ,
-        "stats.pscan.10057.time": 17
+        "stats.pscan.10057.time": 74
         ,
-        "stats.ascan.30001.time": 1
+        "stats.ascan.30001.time": 4
         ,
         "stats.ascan.10104.urls": 60
         ,
-        "stats.ascan.40028.time": 2
+        "stats.ascan.40028.time": 1
         ,
-        "stats.pscan.10111.time": 17
+        "stats.pscan.10111.time": 0
         ,
         "automation.spider.urls.added": 3
         ,
-        "stats.ascan.20018.time": 7
+        "stats.ascan.10048.started": 1
         ,
-        "stats.ascan.40014.time": 2
+        "stats.ascan.20018.time": 8
+        ,
+        "stats.ascan.40014.time": 4
         ,
         "stats.spiderAjax.started": 1
         ,
-        "stats.pscan.50003.time": 5
+        "stats.pscan.50003.time": 2
         ,
         "stats.ascan.20018.urls": 10
         ,
+        "stats.ascan.10106.time": 5
+        ,
+        "stats.ascan.100043.started": 1
+        ,
         "stats.ascan.40028.urls": 1
+        ,
+        "stats.ascan.10048.time": 6
         ,
         "stats.client.ajax.scan": 1
         ,
         "stats.ascan.40048.started": 1
         ,
-        "stats.pscan.10010.time": 11
+        "stats.pscan.10010.time": 4
         ,
-        "stats.pscan.2.time": 5
+        "stats.pscan.2.time": 2
         ,
         "stats.ascan.90034.started": 1
         ,
@@ -432,21 +408,21 @@
         ,
         "stats.pscan.10021.alerts": 3
         ,
-        "stats.ascan.40024.time": 3
-        ,
         "stats.ascan.10104.started": 1
         ,
-        "stats.pscan.10062.time": 49
+        "stats.pscan.10062.time": 42
         ,
-        "stats.pscan.10115.time": 0
+        "stats.pscan.10115.time": 1
         ,
-        "stats.ascan.90021.time": 1
+        "stats.ascan.90021.time": 2
         ,
         "stats.ascan.40043.started": 1
         ,
-        "stats.spiderAjax.time": 5097
+        "stats.spiderAjax.time": 4184
         ,
         "stats.ascan.7.started": 1
+        ,
+        "stats.ascan.100043.time": 307
         ,
         "stats.ascan.40018.started": 1
         ,
@@ -458,17 +434,17 @@
         ,
         "stats.pscan.10036.time": 0
         ,
-        "stats.ascan.40012.time": 2
+        "stats.ascan.40012.time": 3
         ,
         "stats.pscan.10055.time": 0
         ,
         "stats.ascan.30002.started": 1
         ,
-        "stats.pscan.10021.time": 36
+        "stats.pscan.10021.time": 31
         ,
         "stats.ascan.40018.time": 3
         ,
-        "stats.pscan.recordsToScan": 22
+        "stats.pscan.recordsToScan": 32
         ,
         "stats.ascan.40009.started": 1
         ,
@@ -476,29 +452,31 @@
         ,
         "stats.ascan.90023.time": 1
         ,
-        "stats.pscan.Anti CSRF Token [REDACTED]": 0
+        "stats.pscan.Anti CSRF Token [REDACTED]": 3
         ,
-        "stats.ascan.40035.time": 39
+        "stats.ascan.40035.time": 36
         ,
-        "stats.pscan.10096.time": 2
+        "stats.pscan.10096.time": 1
         ,
         "stats.ascan.40035.urls": 52
         ,
         "stats.ascan.40021.time": 4
         ,
+        "stats.ascan.100043.urls": 12
+        ,
         "stats.ascan.90019.time": 2
         ,
-        "stats.ascan.time": 8280
+        "stats.ascan.time": 7517
         ,
         "stats.auto.plans.run": 1
         ,
-        "stats.ascan.90024.time": 1
+        "stats.ascan.90024.time": 2
         ,
         "stats.pscan.10050.time": 0
         ,
-        "stats.ascan.40017.time": 7
+        "stats.ascan.40017.time": 4
         ,
-        "stats.pscan.90033.time": 2
+        "stats.pscan.90033.time": 0
         ,
         "stats.ascan.10045.urls": 2
         ,
@@ -510,21 +488,21 @@
         ,
         "domxss.gets.count": 60
         ,
-        "stats.ascan.urls": 180
+        "stats.ascan.urls": 197
         ,
-        "stats.spider.time": 34
+        "stats.spider.time": 17
         ,
         "stats.ascan.40034.started": 1
         ,
-        "stats.pscan.3.time": 0
+        "stats.pscan.3.time": 1
+        ,
+        "stats.ascan.started.policy.user": 1
         ,
         "stats.ascan.20019.started": 1
         ,
-        "stats.ascan.10045.time": 6
+        "stats.ascan.10045.time": 7
         ,
-        "stats.ascan.50000.skipped": 1
-        ,
-        "stats.pscan.10032.time": 1
+        "stats.pscan.10032.time": 0
         ,
         "stats.ascan.90036.started": 1
         ,
@@ -532,13 +510,13 @@
         ,
         "stats.pscan.10038.time": 0
         ,
-        "stats.ascan.40016.time": 3
+        "stats.ascan.40016.time": 4
         ,
         "stats.pscan.10037.time": 0
         ,
         "stats.ascan.90021.started": 1
         ,
-        "stats.pscan.10031.time": 1
+        "stats.pscan.10031.time": 0
         ,
         "stats.ascan.40026.urls": 14
         ,
@@ -546,9 +524,11 @@
         ,
         "stats.ascan.10045.started": 1
         ,
-        "stats.pscan.10003.time": 1
+        "stats.pscan.10003.time": 0
         ,
         "stats.ascan.40028.started": 1
+        ,
+        "stats.pscan.10009.time": 0
         ,
         "stats.ascan.40045.urls": 11
         ,
@@ -556,17 +536,17 @@
         ,
         "stats.pscan.10041.time": 0
         ,
-        "stats.ascan.40020.time": 4
+        "stats.ascan.40020.time": 3
         ,
-        "stats.ascan.40045.time": 8
+        "stats.ascan.40045.time": 6
         ,
-        "stats.pscan.10116.time": 4045
+        "stats.pscan.10116.time": 9031
         ,
         "stats.ascan.50000.started": 1
         ,
-        "stats.ascan.40026.time": 4876
+        "stats.ascan.40026.time": 3966
         ,
-        "stats.ascan.90029.time": 1
+        "stats.ascan.90029.time": 2
         ,
         "stats.ascan.20019.time": 3
         ,

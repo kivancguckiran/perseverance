@@ -14,7 +14,7 @@ runtime/debug.Stack()
 	runtime/debug/stack.go:26 +0x64
 github.com/projectdiscovery/nuclei/v3/pkg/catalog/config.ReadIgnoreFile()
 	github.com/projectdiscovery/nuclei/v3/pkg/catalog/config/ignorefile.go:21 +0x9c
-github.com/projectdiscovery/nuclei/v3/internal/runner.(*Runner).RunEnumeration(0x4000b0e360)
+github.com/projectdiscovery/nuclei/v3/internal/runner.(*Runner).RunEnumeration(0x400088c240)
 	github.com/projectdiscovery/nuclei/v3/internal/runner/runner.go:541 +0x244
 main.main()
 	./main.go:223 +0x9cc
@@ -24,4 +24,4 @@ main.main()
 [INF] New templates added in latest release: 0
 [INF] Templates loaded for current scan: 2
 [INF] Targets loaded for current scan: 2
-[INF] Scan completed in 489.252583ms. No results found.
+[INF] Scan completed in 437.111959ms. No results found.

@@ -15,257 +15,257 @@
               * soak: 2 looping VUs for 30s (exec: flow, startTime: 20s, gracefulStop: 30s)
 
 
-running (00m01.0s), 4/8 VUs, 38 complete and 0 interrupted iterations
-load       [   4% ] 4 VUs    00.8s/20s      
+running (00m01.0s), 4/8 VUs, 43 complete and 0 interrupted iterations
+load       [   3% ] 4 VUs    00.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  19.2s          
+soak     • [   0% ] waiting  19.3s          
 
 running (00m02.0s), 4/8 VUs, 102 complete and 0 interrupted iterations
-load       [   9% ] 4 VUs    01.8s/20s      
+load       [   8% ] 4 VUs    01.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  18.2s          
+soak     • [   0% ] waiting  18.3s          
 
 running (00m03.0s), 4/8 VUs, 162 complete and 0 interrupted iterations
-load       [  14% ] 4 VUs    02.8s/20s      
+load       [  13% ] 4 VUs    02.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  17.2s          
+soak     • [   0% ] waiting  17.3s          
 
 running (00m04.0s), 4/8 VUs, 226 complete and 0 interrupted iterations
-load       [  19% ] 4 VUs    03.8s/20s      
+load       [  18% ] 4 VUs    03.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  16.2s          
+soak     • [   0% ] waiting  16.3s          
 
-running (00m05.0s), 4/8 VUs, 290 complete and 0 interrupted iterations
-load       [  24% ] 4 VUs    04.8s/20s      
+running (00m05.0s), 4/8 VUs, 291 complete and 0 interrupted iterations
+load       [  23% ] 4 VUs    04.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  15.2s          
+soak     • [   0% ] waiting  15.3s          
 
-running (00m06.0s), 4/8 VUs, 354 complete and 0 interrupted iterations
-load       [  29% ] 4 VUs    05.8s/20s      
+running (00m06.0s), 4/8 VUs, 355 complete and 0 interrupted iterations
+load       [  28% ] 4 VUs    05.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  14.2s          
+soak     • [   0% ] waiting  14.3s          
 
-running (00m07.0s), 4/8 VUs, 414 complete and 0 interrupted iterations
-load       [  34% ] 4 VUs    06.8s/20s      
+running (00m07.0s), 4/8 VUs, 419 complete and 0 interrupted iterations
+load       [  33% ] 4 VUs    06.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  13.2s          
+soak     • [   0% ] waiting  13.3s          
 
-running (00m08.0s), 4/8 VUs, 474 complete and 0 interrupted iterations
-load       [  39% ] 4 VUs    07.8s/20s      
+running (00m08.0s), 4/8 VUs, 483 complete and 0 interrupted iterations
+load       [  38% ] 4 VUs    07.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  12.2s          
+soak     • [   0% ] waiting  12.3s          
 
-running (00m09.0s), 4/8 VUs, 534 complete and 0 interrupted iterations
-load       [  44% ] 4 VUs    08.8s/20s      
+running (00m09.0s), 4/8 VUs, 547 complete and 0 interrupted iterations
+load       [  43% ] 4 VUs    08.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  11.2s          
+soak     • [   0% ] waiting  11.3s          
 
-running (00m10.0s), 4/8 VUs, 598 complete and 0 interrupted iterations
-load       [  49% ] 4 VUs    09.8s/20s      
+running (00m10.0s), 4/8 VUs, 611 complete and 0 interrupted iterations
+load       [  48% ] 4 VUs    09.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  10.2s          
+soak     • [   0% ] waiting  10.3s          
 
-running (00m11.0s), 4/8 VUs, 658 complete and 0 interrupted iterations
-load       [  54% ] 4 VUs    10.8s/20s      
+running (00m11.0s), 4/8 VUs, 676 complete and 0 interrupted iterations
+load       [  53% ] 4 VUs    10.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  09.2s          
+soak     • [   0% ] waiting  09.3s          
 
-running (00m12.0s), 4/8 VUs, 726 complete and 0 interrupted iterations
-load       [  59% ] 4 VUs    11.8s/20s      
+running (00m12.0s), 4/8 VUs, 740 complete and 0 interrupted iterations
+load       [  58% ] 4 VUs    11.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  08.2s          
+soak     • [   0% ] waiting  08.3s          
 
-running (00m13.0s), 4/8 VUs, 795 complete and 0 interrupted iterations
-load       [  64% ] 4 VUs    12.8s/20s      
+running (00m13.0s), 4/8 VUs, 804 complete and 0 interrupted iterations
+load       [  63% ] 4 VUs    12.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  07.2s          
+soak     • [   0% ] waiting  07.3s          
 
-running (00m14.0s), 4/8 VUs, 860 complete and 0 interrupted iterations
-load       [  69% ] 4 VUs    13.8s/20s      
+running (00m14.0s), 4/8 VUs, 868 complete and 0 interrupted iterations
+load       [  68% ] 4 VUs    13.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  06.2s          
+soak     • [   0% ] waiting  06.3s          
 
-running (00m15.0s), 4/8 VUs, 924 complete and 0 interrupted iterations
-load       [  74% ] 4 VUs    14.8s/20s      
+running (00m15.0s), 4/8 VUs, 932 complete and 0 interrupted iterations
+load       [  73% ] 4 VUs    14.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  05.2s          
+soak     • [   0% ] waiting  05.3s          
 
-running (00m16.0s), 4/8 VUs, 993 complete and 0 interrupted iterations
-load       [  79% ] 4 VUs    15.8s/20s      
+running (00m16.0s), 4/8 VUs, 992 complete and 0 interrupted iterations
+load       [  78% ] 4 VUs    15.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  04.2s          
+soak     • [   0% ] waiting  04.3s          
 
-running (00m17.0s), 4/8 VUs, 1057 complete and 0 interrupted iterations
-load       [  84% ] 4 VUs    16.8s/20s      
+running (00m17.0s), 4/8 VUs, 1056 complete and 0 interrupted iterations
+load       [  83% ] 4 VUs    16.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  03.2s          
+soak     • [   0% ] waiting  03.3s          
 
-running (00m18.0s), 4/8 VUs, 1117 complete and 0 interrupted iterations
-load       [  89% ] 4 VUs    17.8s/20s      
+running (00m18.0s), 4/8 VUs, 1125 complete and 0 interrupted iterations
+load       [  88% ] 4 VUs    17.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  02.2s          
+soak     • [   0% ] waiting  02.3s          
 
-running (00m19.0s), 4/8 VUs, 1181 complete and 0 interrupted iterations
-load       [  94% ] 4 VUs    18.8s/20s      
+running (00m19.0s), 4/8 VUs, 1185 complete and 0 interrupted iterations
+load       [  93% ] 4 VUs    18.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  01.2s          
+soak     • [   0% ] waiting  01.3s          
 
-running (00m20.0s), 4/8 VUs, 1241 complete and 0 interrupted iterations
-load       [  99% ] 4 VUs    19.8s/20s      
+running (00m20.0s), 4/8 VUs, 1245 complete and 0 interrupted iterations
+load       [  98% ] 4 VUs    19.7s/20s      
 realtime ✓ [ 100% ] 2 VUs    00m00.0s/10m0s  2/2 iters, 1 per VU
-soak     • [   0% ] waiting  00.2s          
+soak     • [   0% ] waiting  00.3s          
 
-running (00m21.0s), 2/8 VUs, 1287 complete and 0 interrupted iterations
+running (00m21.0s), 2/8 VUs, 1292 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [   3% ] 2 VUs  00.8s/30s      
+soak       [   2% ] 2 VUs  00.7s/30s      
 
-running (00m22.0s), 2/8 VUs, 1319 complete and 0 interrupted iterations
+running (00m22.0s), 2/8 VUs, 1324 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [   6% ] 2 VUs  01.8s/30s      
+soak       [   6% ] 2 VUs  01.7s/30s      
 
-running (00m23.0s), 2/8 VUs, 1353 complete and 0 interrupted iterations
+running (00m23.0s), 2/8 VUs, 1356 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [   9% ] 2 VUs  02.8s/30s      
+soak       [   9% ] 2 VUs  02.7s/30s      
 
-running (00m24.0s), 2/8 VUs, 1385 complete and 0 interrupted iterations
+running (00m24.0s), 2/8 VUs, 1390 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  13% ] 2 VUs  03.8s/30s      
+soak       [  12% ] 2 VUs  03.7s/30s      
 
-running (00m25.0s), 2/8 VUs, 1419 complete and 0 interrupted iterations
+running (00m25.0s), 2/8 VUs, 1422 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  16% ] 2 VUs  04.8s/30s      
+soak       [  16% ] 2 VUs  04.7s/30s      
 
-running (00m26.0s), 2/8 VUs, 1443 complete and 0 interrupted iterations
+running (00m26.0s), 2/8 VUs, 1454 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  19% ] 2 VUs  05.8s/30s      
+soak       [  19% ] 2 VUs  05.7s/30s      
 
-running (00m27.0s), 2/8 VUs, 1467 complete and 0 interrupted iterations
+running (00m27.0s), 2/8 VUs, 1488 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  23% ] 2 VUs  06.8s/30s      
+soak       [  22% ] 2 VUs  06.7s/30s      
 
-running (00m28.0s), 2/8 VUs, 1497 complete and 0 interrupted iterations
+running (00m28.0s), 2/8 VUs, 1519 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  26% ] 2 VUs  07.8s/30s      
+soak       [  26% ] 2 VUs  07.7s/30s      
 
-running (00m29.0s), 2/8 VUs, 1531 complete and 0 interrupted iterations
+running (00m29.0s), 2/8 VUs, 1550 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  29% ] 2 VUs  08.8s/30s      
+soak       [  29% ] 2 VUs  08.7s/30s      
 
-running (00m30.0s), 2/8 VUs, 1561 complete and 0 interrupted iterations
+running (00m30.0s), 2/8 VUs, 1582 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  33% ] 2 VUs  09.8s/30s      
+soak       [  32% ] 2 VUs  09.7s/30s      
 
-running (00m31.0s), 2/8 VUs, 1593 complete and 0 interrupted iterations
+running (00m31.0s), 2/8 VUs, 1616 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  36% ] 2 VUs  10.8s/30s      
+soak       [  36% ] 2 VUs  10.7s/30s      
 
-running (00m32.0s), 2/8 VUs, 1627 complete and 0 interrupted iterations
+running (00m32.0s), 2/8 VUs, 1648 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  39% ] 2 VUs  11.8s/30s      
+soak       [  39% ] 2 VUs  11.7s/30s      
 
-running (00m33.0s), 2/8 VUs, 1659 complete and 0 interrupted iterations
+running (00m33.0s), 2/8 VUs, 1680 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  43% ] 2 VUs  12.8s/30s      
+soak       [  42% ] 2 VUs  12.7s/30s      
 
-running (00m34.0s), 2/8 VUs, 1689 complete and 0 interrupted iterations
+running (00m34.0s), 2/8 VUs, 1712 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  46% ] 2 VUs  13.8s/30s      
+soak       [  46% ] 2 VUs  13.7s/30s      
 
-running (00m35.0s), 2/8 VUs, 1721 complete and 0 interrupted iterations
+running (00m35.0s), 2/8 VUs, 1744 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  49% ] 2 VUs  14.8s/30s      
+soak       [  49% ] 2 VUs  14.7s/30s      
 
-running (00m36.0s), 2/8 VUs, 1753 complete and 0 interrupted iterations
+running (00m36.0s), 2/8 VUs, 1776 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  53% ] 2 VUs  15.8s/30s      
+soak       [  52% ] 2 VUs  15.7s/30s      
 
-running (00m37.0s), 2/8 VUs, 1785 complete and 0 interrupted iterations
+running (00m37.0s), 2/8 VUs, 1808 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  56% ] 2 VUs  16.8s/30s      
+soak       [  56% ] 2 VUs  16.7s/30s      
 
-running (00m38.0s), 2/8 VUs, 1815 complete and 0 interrupted iterations
+running (00m38.0s), 2/8 VUs, 1837 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  59% ] 2 VUs  17.8s/30s      
+soak       [  59% ] 2 VUs  17.7s/30s      
 
-running (00m39.0s), 2/8 VUs, 1847 complete and 0 interrupted iterations
+running (00m39.0s), 2/8 VUs, 1869 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  63% ] 2 VUs  18.8s/30s      
+soak       [  62% ] 2 VUs  18.7s/30s      
 
-running (00m40.0s), 2/8 VUs, 1877 complete and 0 interrupted iterations
+running (00m40.0s), 2/8 VUs, 1901 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  66% ] 2 VUs  19.8s/30s      
+soak       [  66% ] 2 VUs  19.7s/30s      
 
-running (00m41.0s), 2/8 VUs, 1909 complete and 0 interrupted iterations
+running (00m41.0s), 2/8 VUs, 1933 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  69% ] 2 VUs  20.8s/30s      
+soak       [  69% ] 2 VUs  20.7s/30s      
 
-running (00m42.0s), 2/8 VUs, 1943 complete and 0 interrupted iterations
+running (00m42.0s), 2/8 VUs, 1965 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  73% ] 2 VUs  21.8s/30s      
+soak       [  72% ] 2 VUs  21.7s/30s      
 
-running (00m43.0s), 2/8 VUs, 1977 complete and 0 interrupted iterations
+running (00m43.0s), 2/8 VUs, 1997 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  76% ] 2 VUs  22.8s/30s      
+soak       [  76% ] 2 VUs  22.7s/30s      
 
-running (00m44.0s), 2/8 VUs, 2007 complete and 0 interrupted iterations
+running (00m44.0s), 2/8 VUs, 2029 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  79% ] 2 VUs  23.8s/30s      
+soak       [  79% ] 2 VUs  23.7s/30s      
 
-running (00m45.0s), 2/8 VUs, 2039 complete and 0 interrupted iterations
+running (00m45.0s), 2/8 VUs, 2063 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  83% ] 2 VUs  24.8s/30s      
+soak       [  82% ] 2 VUs  24.7s/30s      
 
-running (00m46.0s), 2/8 VUs, 2072 complete and 0 interrupted iterations
+running (00m46.0s), 2/8 VUs, 2093 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  86% ] 2 VUs  25.8s/30s      
+soak       [  86% ] 2 VUs  25.7s/30s      
 
-running (00m47.0s), 2/8 VUs, 2103 complete and 0 interrupted iterations
+running (00m47.0s), 2/8 VUs, 2123 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  89% ] 2 VUs  26.8s/30s      
+soak       [  89% ] 2 VUs  26.7s/30s      
 
-running (00m48.0s), 2/8 VUs, 2133 complete and 0 interrupted iterations
+running (00m48.0s), 2/8 VUs, 2151 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  93% ] 2 VUs  27.8s/30s      
+soak       [  92% ] 2 VUs  27.7s/30s      
 
-running (00m49.0s), 2/8 VUs, 2167 complete and 0 interrupted iterations
+running (00m49.0s), 2/8 VUs, 2169 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  96% ] 2 VUs  28.8s/30s      
+soak       [  96% ] 2 VUs  28.7s/30s      
 
-running (00m50.0s), 2/8 VUs, 2197 complete and 0 interrupted iterations
+running (00m50.0s), 2/8 VUs, 2193 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
-soak       [  99% ] 2 VUs  29.8s/30s      
+soak       [  99% ] 2 VUs  29.7s/30s      
 
-running (00m50.2s), 0/8 VUs, 2205 complete and 0 interrupted iterations
+running (00m50.3s), 0/8 VUs, 2205 complete and 0 interrupted iterations
 load     ✓ [ 100% ] 4 VUs  20s            
 realtime ✓ [ 100% ] 2 VUs  00m00.0s/10m0s  2/2 iters, 1 per VU
 soak     ✓ [ 100% ] 2 VUs  30s            
