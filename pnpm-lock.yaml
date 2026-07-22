@@ -372,6 +372,9 @@ importers:
       '@persistent-codex/production-observability':
         specifier: workspace:*
         version: link:../../packages/production-observability
+      '@persistent-codex/production-readiness':
+        specifier: workspace:*
+        version: link:../../packages/production-readiness
       '@persistent-codex/production-topology':
         specifier: workspace:*
         version: link:../../packages/production-topology

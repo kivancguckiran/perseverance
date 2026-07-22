@@ -6,3 +6,4 @@ packages/codex-protocol-generated/src/generated/
 apps/web/src/routeTree.gen.ts
 docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md
 services/control-plane/corpus/raw/
+docs/acceptance/wp30-local-evidence/

@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto'
 import websocket from '@fastify/websocket'
 import Fastify from 'fastify'
 import {
+  AuthenticationError,
+  OidcAuthenticationAdapter,
+  type AuthenticationAdapter,
+} from '@persistent-codex/authz'
+import type { AuthPrincipal } from '@persistent-codex/control-plane-contracts'
+import {
   ProductionTelemetry,
   OtlpHttpExporter,
   opaqueScope,
@@ -24,6 +30,7 @@ import {
   type DurableEventBroker,
   type ObjectStore,
 } from '@persistent-codex/production-topology/durable-dependencies'
+import { ProductionRolloutAuthority } from './production-rollout-authority'
 
 export interface ProductionControlPlaneOptions {
   instanceId: string
@@ -39,6 +46,8 @@ export interface ProductionControlPlaneOptions {
   now?: () => Date
   telemetry?: ProductionTelemetry
   telemetryScopeSalt?: string
+  authentication?: AuthenticationAdapter
+  allowedWebOrigin?: string
 }
 
 function header(value: string | string[] | undefined) {
@@ -92,6 +101,25 @@ export async function buildProductionControlPlane(
       started: number
     }
   >()
+  const requestPrincipals = new WeakMap<object, AuthPrincipal>()
+  const rolloutAuthority = new ProductionRolloutAuthority(
+    options.repository.pool,
+  )
+
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (options.allowedWebOrigin) {
+      reply.header('access-control-allow-origin', options.allowedWebOrigin)
+      reply.header(
+        'access-control-allow-headers',
+        'authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id',
+      )
+      reply.header('access-control-allow-methods', 'GET,POST,OPTIONS')
+      reply.header('vary', 'origin')
+    }
+    return payload
+  })
+
+  app.options('*', async (_request, reply) => reply.code(204).send())
 
   app.addHook('onRequest', async (request) => {
     const requestScope = scope(request.headers)
@@ -117,6 +145,43 @@ export async function buildProductionControlPlane(
       },
     })
     requestTelemetry.set(request, { ...span, started: performance.now() })
+  })
+  app.addHook('onRequest', async (request, reply) => {
+    if (
+      !options.authentication ||
+      request.method === 'OPTIONS' ||
+      request.url === '/' ||
+      request.url === '/healthz' ||
+      request.url === '/readyz' ||
+      request.url === '/v1/meta' ||
+      request.url.startsWith('/v1/realtime')
+    )
+      return
+    try {
+      const principal = await options.authentication.authenticate({
+        headers: request.headers,
+        ...(header(request.headers.authorization)
+          ? { authorization: header(request.headers.authorization)! }
+          : {}),
+      })
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const membership = await options.repository.pool.query(
+        `SELECT m.role FROM persistent_codex.principal_identities p
+         JOIN persistent_codex.organization_memberships m
+           ON m.issuer=p.issuer AND m.subject=p.subject
+         WHERE p.issuer=$1 AND p.subject=$2 AND p.status='active'
+           AND m.organization_id=$3 AND m.status='active'`,
+        [principal.issuer, principal.subject, requestScope.organizationId],
+      )
+      if (!membership.rowCount)
+        return reply.code(403).send({ code: 'AUTHORIZATION_DENIED' })
+      requestPrincipals.set(request, principal)
+    } catch (error) {
+      if (error instanceof AuthenticationError)
+        return reply.code(401).send({ code: error.code })
+      throw error
+    }
   })
   app.addHook('onResponse', async (request, reply) => {
     const observed = requestTelemetry.get(request)
@@ -188,6 +253,12 @@ export async function buildProductionControlPlane(
     instanceId: options.instanceId,
     mode: 'production',
   }))
+  app.get('/', async () => ({
+    service: 'persistent-codex-control-plane',
+    mode: 'production',
+    health: '/healthz',
+    readiness: '/readyz',
+  }))
   app.get('/readyz', async (_request, reply) => {
     const readiness = await dependencyReadiness()
     return reply.code(readiness.ready ? 200 : 503).send(readiness)
@@ -199,6 +270,130 @@ export async function buildProductionControlPlane(
     instanceId: options.instanceId,
     codexVersion: '0.144.2',
   }))
+
+  app.get<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const workspace = await options.repository.getWorkspace(
+        requestScope,
+        request.params.workspaceId,
+      )
+      if (!workspace)
+        return reply.code(404).send({ code: 'WORKSPACE_NOT_FOUND' })
+      return workspace
+    },
+  )
+
+  app.get<{ Params: { artifactId: string } }>(
+    '/v1/artifacts/:artifactId',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const artifact = await options.repository.getArtifact(
+        requestScope,
+        request.params.artifactId,
+      )
+      if (!artifact) return reply.code(404).send({ code: 'ARTIFACT_NOT_FOUND' })
+      const bytes = await options.objectStore.get(artifact.objectKey)
+      return reply
+        .header('x-artifact-id', artifact.artifactId)
+        .type('application/octet-stream')
+        .send(Buffer.from(bytes))
+    },
+  )
+
+  app.post<{
+    Body: {
+      rolloutId?: unknown
+      cohortId?: unknown
+      artifactSha256?: unknown
+      previousArtifactSha256?: unknown
+    }
+  }>('/v1/production-rollouts', async (request, reply) => {
+    const requestScope = scope(request.headers)
+    if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+    const body = request.body
+    if (
+      typeof body?.rolloutId !== 'string' ||
+      typeof body.cohortId !== 'string' ||
+      typeof body.artifactSha256 !== 'string' ||
+      typeof body.previousArtifactSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(body.artifactSha256) ||
+      !/^[a-f0-9]{64}$/.test(body.previousArtifactSha256)
+    )
+      return reply.code(400).send({ code: 'INVALID_ROLLOUT' })
+    const created = await rolloutAuthority.create({
+      ...requestScope,
+      rolloutId: body.rolloutId,
+      cohortId: body.cohortId,
+      artifactSha256: body.artifactSha256,
+      previousArtifactSha256: body.previousArtifactSha256,
+    })
+    return reply.code(201).send(created)
+  })
+
+  app.post<{
+    Params: { rolloutId: string }
+    Body: {
+      expectedVersion?: unknown
+      idempotencyKey?: unknown
+      next?: unknown
+      cohortId?: unknown
+      operatorHalt?: unknown
+      rollbackVerified?: unknown
+      budgetHealthy?: unknown
+    }
+  }>(
+    '/v1/production-rollouts/:rolloutId/transitions',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const body = request.body
+      if (
+        !Number.isInteger(body?.expectedVersion) ||
+        typeof body.idempotencyKey !== 'string' ||
+        typeof body.cohortId !== 'string' ||
+        ![
+          'design_partner',
+          'limited_beta',
+          'production_cohort',
+          'halted',
+          'rolled_back',
+        ].includes(String(body.next))
+      )
+        return reply.code(400).send({ code: 'INVALID_ROLLOUT_TRANSITION' })
+      try {
+        return await rolloutAuthority.transition({
+          ...requestScope,
+          rolloutId: request.params.rolloutId,
+          expectedVersion: Number(body.expectedVersion),
+          idempotencyKey: body.idempotencyKey,
+          next: body.next as
+            | 'design_partner'
+            | 'limited_beta'
+            | 'production_cohort'
+            | 'halted'
+            | 'rolled_back',
+          cohortId: body.cohortId,
+          ...(body.operatorHalt === true ? { operatorHalt: true } : {}),
+          ...(body.rollbackVerified === true ? { rollbackVerified: true } : {}),
+          ...(typeof body.budgetHealthy === 'boolean'
+            ? { budgetHealthy: body.budgetHealthy }
+            : {}),
+        })
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.includes('VERSION_CONFLICT') ||
+            error.message.includes('IDEMPOTENCY_CONFLICT'))
+        )
+          return reply.code(409).send({ code: error.message })
+        throw error
+      }
+    },
+  )
 
   app.post('/v1/sessions', async (request, reply) => {
     const requestScope = scope(request.headers)
@@ -432,7 +627,7 @@ export async function buildProductionControlPlane(
       expectedVersion: Number(request.body.expectedVersion),
       decision: request.body.decision,
       principalId:
-        header(request.headers['x-principal-id']) ?? 'opaque-principal',
+        requestPrincipals.get(request)?.subject ?? 'opaque-principal',
     })
     if (!decided)
       return reply.code(409).send({ code: 'APPROVAL_VERSION_CONFLICT' })
@@ -470,6 +665,12 @@ export async function buildProductionControlPlane(
     })
     const requestScope = scope(request.headers)
     if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+    const storedSession = await options.repository.getSession(
+      requestScope,
+      request.params.sessionId,
+    )
+    if (!storedSession)
+      return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
     const after = Number.parseInt(request.query.after ?? '0', 10)
     const limit = Math.min(
       500,
@@ -541,35 +742,23 @@ export async function buildProductionControlPlane(
   )
 
   app.get('/v1/realtime', { websocket: true }, (socket, request) => {
-    const query = request.query as {
-      sessionId?: string
-      after?: string
-      tenant?: string
-      workspace?: string
-    }
-    const requestScope =
-      scope(request.headers) ??
-      (query.tenant && query.workspace
-        ? {
-            tenantId: query.tenant,
-            organizationId: query.tenant,
-            workspaceId: query.workspace,
-          }
-        : null)
-    if (!requestScope || !query.sessionId) return socket.close(4400)
-    socket.send(
-      JSON.stringify({ type: 'hello', instanceId: options.instanceId }),
-    )
-    let after = Number.parseInt(query.after ?? '0', 10) || 0
     let closed = false
     socket.on('close', () => {
       closed = true
     })
-    const pump = async () => {
+    const pump = async (
+      requestScope: ProductionScope,
+      sessionId: string,
+      initialAfter: number,
+    ) => {
+      let after = initialAfter
+      socket.send(
+        JSON.stringify({ type: 'hello', instanceId: options.instanceId }),
+      )
       while (!closed) {
         const replay = await options.repository.replay(
           requestScope,
-          query.sessionId!,
+          sessionId,
           after,
           100,
         )
@@ -586,7 +775,55 @@ export async function buildProductionControlPlane(
         await new Promise((resolve) => setTimeout(resolve, 100))
       }
     }
-    void pump().catch(() => socket.close(1011))
+    socket.once('message', (raw: unknown) => {
+      void (async () => {
+        const message = JSON.parse(String(raw)) as {
+          type?: unknown
+          accessToken?: unknown
+          tenantId?: unknown
+          organizationId?: unknown
+          workspaceId?: unknown
+          sessionId?: unknown
+          afterSequence?: unknown
+        }
+        if (
+          message.type !== 'subscribe' ||
+          typeof message.accessToken !== 'string' ||
+          typeof message.tenantId !== 'string' ||
+          typeof message.organizationId !== 'string' ||
+          typeof message.workspaceId !== 'string' ||
+          typeof message.sessionId !== 'string' ||
+          !options.authentication
+        )
+          return socket.close(4400)
+        const principal = await options.authentication.authenticate({
+          authorization: `Bearer ${message.accessToken}`,
+          headers: request.headers,
+        })
+        const requestScope = {
+          tenantId: message.tenantId,
+          organizationId: message.organizationId,
+          workspaceId: message.workspaceId,
+        }
+        const membership = await options.repository.pool.query(
+          `SELECT 1 FROM persistent_codex.organization_memberships m
+           WHERE m.issuer=$1 AND m.subject=$2 AND m.organization_id=$3
+             AND m.status='active'`,
+          [principal.issuer, principal.subject, requestScope.organizationId],
+        )
+        if (!membership.rowCount) return socket.close(4403)
+        const storedSession = await options.repository.getSession(
+          requestScope,
+          message.sessionId,
+        )
+        if (!storedSession) return socket.close(4404)
+        await pump(
+          requestScope,
+          message.sessionId,
+          Number(message.afterSequence) || 0,
+        )
+      })().catch(() => socket.close(4401))
+    })
   })
 
   const outboxTimer = setInterval(() => {
@@ -658,6 +895,13 @@ export async function buildProductionControlPlaneFromEnv(
     logger: env.PERSISTENT_LOGGER === '1',
     telemetryScopeSalt: required('TELEMETRY_SCOPE_SALT'),
     telemetry,
+    authentication: new OidcAuthenticationAdapter({
+      issuer: required('OIDC_ISSUER'),
+      audience: required('OIDC_AUDIENCE'),
+    }),
+    ...(env.WEB_ALLOWED_ORIGIN
+      ? { allowedWebOrigin: env.WEB_ALLOWED_ORIGIN }
+      : {}),
   })
   const exporter = env.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OtlpHttpExporter(telemetry, env.OTEL_EXPORTER_OTLP_ENDPOINT)

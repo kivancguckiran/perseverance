@@ -47,6 +47,7 @@ export interface ProductionSchedulerWorkerOptions {
   codexProvisioningSource?: string
   workspaceCwd: string
   healthPort?: number
+  healthHost?: string
   runtimeTimeoutMs?: number
   billing: BillingPostgresRepository
   telemetry?: ProductionTelemetry
@@ -90,7 +91,7 @@ export class ProductionSchedulerWorker {
         this.#healthServer!.once('error', reject)
         this.#healthServer!.listen(
           this.options.healthPort,
-          '127.0.0.1',
+          this.options.healthHost ?? '127.0.0.1',
           resolve,
         )
       })
@@ -532,7 +533,10 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
       : {}),
     workspaceCwd: env.WORKSPACE_CWD ?? process.cwd(),
     ...(Number(env.SCHEDULER_HEALTH_PORT ?? 0) > 0
-      ? { healthPort: Number(env.SCHEDULER_HEALTH_PORT) }
+      ? {
+          healthPort: Number(env.SCHEDULER_HEALTH_PORT),
+          healthHost: env.SCHEDULER_HEALTH_HOST ?? '127.0.0.1',
+        }
       : {}),
     runtimeTimeoutMs: Number(env.SCHEDULER_RUNTIME_TIMEOUT_MS ?? 180_000),
     telemetry,

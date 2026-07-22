@@ -1,8 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { WorkspacePage } from '../workspace-page'
+import { ProductionSessionPage } from '../production-session-page'
 
 function SessionPage() {
   const { sessionId } = Route.useParams()
+  const productionSurface =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('surface') ===
+      'production-ha'
+  if (productionSurface) return <ProductionSessionPage sessionId={sessionId} />
   return <WorkspacePage sessionId={sessionId} />
 }
 
