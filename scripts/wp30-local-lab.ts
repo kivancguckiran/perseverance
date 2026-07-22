@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createSign, generateKeyPairSync, type JsonWebKey } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -8,6 +9,8 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import pg from 'pg'
+import { createBillingPostgresRepository } from '../packages/billing-platform/src/index'
+import { S3CompatibleObjectStore } from '../packages/production-topology/src/durable-dependencies'
 import {
   WP30_LOCAL_ENV,
   WP30_LOCAL_LABEL,
@@ -27,10 +30,31 @@ import { machineEvidence } from './wp30-evidence'
 const sourceCommit = run('git', ['rev-parse', 'HEAD']).stdout.trim()
 const codexBin = join(WP30_LOCAL_ROOT, 'node_modules/.bin/codex')
 
+const jwt = (
+  privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'],
+  subject: string,
+) => {
+  const now = Math.floor(Date.now() / 1_000)
+  const encode = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString('base64url')
+  const unsigned = `${encode({ alg: 'RS256', kid: 'wp30-local', typ: 'JWT' })}.${encode({ iss: 'http://oidc-stub:3303', aud: 'persistent-codex-wp30-local', sub: subject, iat: now, auth_time: now, exp: now + 4 * 60 * 60, amr: ['pwd', 'mfa'] })}`
+  const signer = createSign('RSA-SHA256')
+  signer.update(unsigned)
+  signer.end()
+  return `${unsigned}.${signer.sign(privateKey).toString('base64url')}`
+}
+
 const writeEnvironment = () => {
   mkdirSync(WP30_LOCAL_STATE, { recursive: true, mode: 0o700 })
   if (!existsSync(WP30_LOCAL_ENV)) {
     const password = randomSecret()
+    const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+    })
+    const publicJwk = publicKey.export({ format: 'jwk' }) as JsonWebKey
+    publicJwk.kid = 'wp30-local'
+    publicJwk.use = 'sig'
+    publicJwk.alg = 'RS256'
     const values = {
       ...readPinnedImages(),
       WP30_MODE: 'local-production-like',
@@ -48,16 +72,18 @@ const writeEnvironment = () => {
       WP30_POSTGRES_DATABASE: 'wp30_local',
       WP30_POSTGRES_USER: 'wp30_admin',
       WP30_POSTGRES_PASSWORD: password,
+      WP30_BROKER_PASSWORD: randomSecret(),
       WP30_CODEX_BIN: codexBin,
-      WP30_TENANT_A_ID: 'tenant-a',
+      WP30_TENANT_A_ID: 'organization-a',
       WP30_TENANT_A_ORG_ID: 'organization-a',
       WP30_TENANT_A_WORKSPACE_ID: 'workspace-a',
-      WP30_TENANT_A_TOKEN: randomSecret(),
-      WP30_TENANT_B_ID: 'tenant-b',
+      WP30_TENANT_A_TOKEN: jwt(privateKey, 'user-a'),
+      WP30_TENANT_B_ID: 'organization-b',
       WP30_TENANT_B_ORG_ID: 'organization-b',
       WP30_TENANT_B_WORKSPACE_ID: 'workspace-b',
-      WP30_TENANT_B_TOKEN: randomSecret(),
+      WP30_TENANT_B_TOKEN: jwt(privateKey, 'user-b'),
       WP30_FOREIGN_SESSION_ID: 'session-b',
+      WP30_OBJECT_A_ID: 'object-a',
       WP30_OBJECT_ID: 'object-b',
       WP30_COHORT_ID: 'cohort-a',
       WP30_ROLLOUT_ID: 'rollout-local-a',
@@ -74,6 +100,16 @@ const writeEnvironment = () => {
       { mode: 0o600 },
     )
     writeFileSync(
+      join(WP30_LOCAL_STATE, 'oidc-public.jwk'),
+      `${JSON.stringify(publicJwk)}\n`,
+      { mode: 0o600 },
+    )
+    writeFileSync(
+      join(WP30_LOCAL_STATE, 'oidc-private.pem'),
+      privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      { mode: 0o600 },
+    )
+    writeFileSync(
       join(WP30_LOCAL_STATE, 'postgres-password'),
       `${password}\n`,
       {
@@ -83,6 +119,8 @@ const writeEnvironment = () => {
   }
   chmodSync(WP30_LOCAL_ENV, 0o600)
   chmodSync(join(WP30_LOCAL_STATE, 'postgres-password'), 0o600)
+  chmodSync(join(WP30_LOCAL_STATE, 'oidc-public.jwk'), 0o600)
+  chmodSync(join(WP30_LOCAL_STATE, 'oidc-private.pem'), 0o600)
 }
 
 const seed = async () => {
@@ -95,47 +133,255 @@ const seed = async () => {
     password: env.WP30_POSTGRES_PASSWORD,
   })
   try {
-    const fixtures = [
-      ['tenant', 'tenant-a', 'tenant-a', 'organization-a', 'workspace-a', null],
-      ['tenant', 'tenant-b', 'tenant-b', 'organization-b', 'workspace-b', null],
-      [
-        'token',
-        'token-a',
-        'tenant-a',
-        'organization-a',
-        'workspace-a',
-        sha256(env.WP30_TENANT_A_TOKEN),
-      ],
-      [
-        'token',
-        'token-b',
-        'tenant-b',
-        'organization-b',
-        'workspace-b',
-        sha256(env.WP30_TENANT_B_TOKEN),
-      ],
-      [
-        'session',
-        'session-b',
-        'tenant-b',
-        'organization-b',
-        'workspace-b',
-        null,
-      ],
-      ['object', 'object-b', 'tenant-b', 'organization-b', 'workspace-b', null],
-      ['cohort', 'cohort-a', 'tenant-a', 'organization-a', 'workspace-a', null],
-    ]
     await pool.query('BEGIN')
-    for (const fixture of fixtures)
+    await pool.query(
+      `INSERT INTO persistent_codex.organizations(organization_id,name,status)
+       VALUES ($1,'Tenant A','active'),($2,'Tenant B','active')`,
+      [env.WP30_TENANT_A_ORG_ID, env.WP30_TENANT_B_ORG_ID],
+    )
+    await pool.query(
+      `INSERT INTO persistent_codex.principal_identities(issuer,subject,status)
+       VALUES ('http://oidc-stub:3303','user-a','active'),('http://oidc-stub:3303','user-b','active')`,
+    )
+    await pool.query(
+      `INSERT INTO persistent_codex.organization_memberships(organization_id,issuer,subject,role,status)
+       VALUES ($1,'http://oidc-stub:3303','user-a','owner','active'),($2,'http://oidc-stub:3303','user-b','owner','active')`,
+      [env.WP30_TENANT_A_ORG_ID, env.WP30_TENANT_B_ORG_ID],
+    )
+    await pool.query(
+      `INSERT INTO persistent_codex.workspaces(tenant_id,organization_id,workspace_id,name)
+       VALUES ($1,$1,$2,'Workspace A'),($3,$3,$4,'Workspace B')`,
+      [
+        env.WP30_TENANT_A_ORG_ID,
+        env.WP30_TENANT_A_WORKSPACE_ID,
+        env.WP30_TENANT_B_ORG_ID,
+        env.WP30_TENANT_B_WORKSPACE_ID,
+      ],
+    )
+    await pool.query(
+      `INSERT INTO persistent_codex.regions(region_id,state,control_plane_role)
+       VALUES ('local-1','ready','active')`,
+    )
+    const capacity = {
+      schemaVersion: 1,
+      cpuMillis: 8000,
+      memoryBytes: 8589934592,
+      pids: 1024,
+      ioBytesPerSecond: 200000000,
+      diskBytes: 200000000000,
+      diskInodes: 2000000,
+      diskIops: 20000,
+      egressBytesPerSecond: 200000000,
+      egressRequestsPerMinute: 20000,
+      eventBytesPerSecond: 20000000,
+      artifactBytes: 100000000000,
+      outputBytes: 20000000000,
+      corpusIndexBytes: 100000000000,
+    }
+    const zeroCapacity = Object.fromEntries(
+      Object.entries(capacity).map(([key, value]) => [
+        key,
+        key === 'schemaVersion' ? value : 0,
+      ]),
+    )
+    await pool.query(
+      `INSERT INTO persistent_codex.runtime_nodes(region_id,node_id,state,capacity_total,capacity_reserved,capacity_score,heartbeat_at)
+       VALUES ('local-1','node-1','ready',$1,$2,100,now())`,
+      [capacity, zeroCapacity],
+    )
+    for (const tenant of [
+      [env.WP30_TENANT_A_ID, env.WP30_TENANT_A_ORG_ID],
+      [env.WP30_TENANT_B_ID, env.WP30_TENANT_B_ORG_ID],
+    ])
       await pool.query(
-        `INSERT INTO persistent_codex.wp30_local_fixtures(fixture_type,fixture_id,tenant_id,organization_id,workspace_id,token_sha256,expires_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $1='token' THEN now()+interval '4 hours' ELSE NULL END) ON CONFLICT(fixture_type,fixture_id) DO UPDATE SET token_sha256=excluded.token_sha256,expires_at=excluded.expires_at`,
-        fixture,
+        `INSERT INTO persistent_codex.tenant_scheduling_policies
+         (tenant_id,organization_id,policy_version,algorithm,weight,tenant_concurrency,workspace_concurrency,provider_concurrency,provider_requests_per_minute,starvation_age_ms,retry_policy,effective_at)
+         VALUES ($1,$2,30,'weighted-fair-v1',1,2,1,'{"codex":2}','{"codex":120}',5000,'{"maxAttempts":4,"initialBackoffMs":100,"maxBackoffMs":1000,"poisonAfterAttempts":4}',now())`,
+        tenant,
       )
     await pool.query(
-      `INSERT INTO persistent_codex.production_rollouts(tenant_id,organization_id,workspace_id,rollout_id,stage,cohort_id,artifact_sha256,previous_artifact_sha256,feature_flag_enabled) VALUES('tenant-a','organization-a','workspace-a',$1,'internal','cohort-a',$2,$3,true) ON CONFLICT DO NOTHING`,
-      [env.WP30_ROLLOUT_ID, sha256('local-candidate'), sha256('local-stable')],
+      `INSERT INTO persistent_codex.sessions(organization_id,workspace_id,session_id,status)
+       VALUES ($1,$2,$3,'active')`,
+      [
+        env.WP30_TENANT_B_ORG_ID,
+        env.WP30_TENANT_B_WORKSPACE_ID,
+        env.WP30_FOREIGN_SESSION_ID,
+      ],
+    )
+    await pool.query(
+      `INSERT INTO persistent_codex.artifacts(organization_id,workspace_id,session_id,artifact_id,object_key)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [
+        env.WP30_TENANT_B_ORG_ID,
+        env.WP30_TENANT_B_WORKSPACE_ID,
+        env.WP30_FOREIGN_SESSION_ID,
+        env.WP30_OBJECT_ID,
+        `${env.WP30_TENANT_B_ORG_ID}/${env.WP30_TENANT_B_WORKSPACE_ID}/artifacts/${env.WP30_OBJECT_ID}`,
+      ],
     )
     await pool.query('COMMIT')
+
+    const billingSeed = {
+      initialPromotionalCreditsMicros: 10_000_000,
+      plan: {
+        schemaVersion: 1 as const,
+        planId: 'wp30-local',
+        planVersion: 30,
+        displayName: 'WP30 Local',
+        currency: 'USD' as const,
+        effectiveAt: '2026-01-01T00:00:00.000Z',
+        retiredAt: null,
+        billingMode: 'platform_managed' as const,
+        taxBehavior: 'unknown' as const,
+      },
+      entitlements: ['turn.start', 'workspace.concurrency'].map(
+        (key, index) => ({
+          schemaVersion: 1 as const,
+          entitlementId: `wp30-entitlement-${index}`,
+          planId: 'wp30-local',
+          planVersion: 30,
+          key: key as 'turn.start' | 'workspace.concurrency',
+          enabled: true,
+          effectiveAt: '2026-01-01T00:00:00.000Z',
+          expiresAt: null,
+          sourceWebhookEventId: null,
+        }),
+      ),
+      budgets: [
+        {
+          schemaVersion: 1 as const,
+          budgetId: 'wp30-monthly',
+          period: 'month' as const,
+          currency: 'USD' as const,
+          softLimitMicros: 8_000_000,
+          hardLimitMicros: 10_000_000,
+          effectiveAt: '2026-01-01T00:00:00.000Z',
+          expiresAt: null,
+        },
+      ],
+      quotas: [
+        {
+          schemaVersion: 1 as const,
+          quotaId: 'wp30-concurrency',
+          policyVersion: 30,
+          meter: 'tenant_concurrent_turn' as const,
+          softLimit: 3,
+          hardLimit: 4,
+          inFlightPolicy: 'continue' as const,
+          effectiveAt: '2026-01-01T00:00:00.000Z',
+          expiresAt: null,
+        },
+      ],
+      retailPriceCatalog: {
+        schemaVersion: 1 as const,
+        catalogId: 'wp30-retail',
+        catalogVersion: 'wp30-retail-v1',
+        currency: 'USD' as const,
+        rates: [
+          { meter: 'provider_input_token' as const, creditsMicrosPerUnit: 1 },
+          { meter: 'provider_output_token' as const, creditsMicrosPerUnit: 2 },
+          { meter: 'compute_millisecond' as const, creditsMicrosPerUnit: 1 },
+        ],
+        operationMaximums: [
+          { operation: 'turn.start' as const, maximumCreditsMicros: 100_000 },
+          {
+            operation: 'workspace.concurrency' as const,
+            maximumCreditsMicros: 100_000,
+          },
+        ],
+        idempotencyKey: 'wp30-retail-v1',
+        paymentReference: null,
+        usageDedupeKey: null,
+        runId: null,
+        operationReference: null,
+        occurredAt: '2026-01-01T00:00:00.000Z',
+        effectiveAt: '2026-01-01T00:00:00.000Z',
+        retiredAt: null,
+      },
+    }
+    const databaseUrl = `postgresql://${env.WP30_POSTGRES_USER}:${env.WP30_POSTGRES_PASSWORD}@${env.WP30_POSTGRES_HOST}:${env.WP30_POSTGRES_PORT}/${env.WP30_POSTGRES_DATABASE}`
+    const billing = createBillingPostgresRepository(databaseUrl, {
+      developmentSeed: billingSeed,
+    })
+    try {
+      for (const scope of [
+        {
+          tenantId: env.WP30_TENANT_A_ID,
+          organizationId: env.WP30_TENANT_A_ORG_ID,
+          workspaceId: env.WP30_TENANT_A_WORKSPACE_ID,
+        },
+        {
+          tenantId: env.WP30_TENANT_B_ID,
+          organizationId: env.WP30_TENANT_B_ORG_ID,
+          workspaceId: env.WP30_TENANT_B_WORKSPACE_ID,
+        },
+      ])
+        await billing.snapshot(scope)
+    } finally {
+      await billing.close()
+    }
+    const objects = new S3CompatibleObjectStore({
+      endpoint: 'http://127.0.0.1:59000',
+      bucket: 'wp30-local',
+      accessKeyId: env.MINIO_ROOT_USER,
+      secretAccessKey: env.MINIO_ROOT_PASSWORD,
+    })
+    await objects.ensureBucket()
+    await objects.put(
+      `${env.WP30_TENANT_B_ORG_ID}/${env.WP30_TENANT_B_WORKSPACE_ID}/artifacts/${env.WP30_OBJECT_ID}`,
+      new TextEncoder().encode('tenant-b-artifact'),
+      'text/plain',
+    )
+
+    const createSession = async (prefix: 'A' | 'B') => {
+      const upper = prefix === 'A' ? 'A' : 'B'
+      const response = await fetch(`${env.WP30_TARGET_URL}/v1/sessions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${env[`WP30_TENANT_${upper}_TOKEN`]}`,
+          'content-type': 'application/json',
+          'x-tenant-id': env[`WP30_TENANT_${upper}_ID`],
+          'x-organization-id': env[`WP30_TENANT_${upper}_ORG_ID`],
+          'x-workspace-id': env[`WP30_TENANT_${upper}_WORKSPACE_ID`],
+        },
+        body: '{}',
+      })
+      const responseBody = await response.text()
+      assert.equal(response.status, 201, responseBody)
+      return JSON.parse(responseBody) as { sessionId: string }
+    }
+    const sessionA = await createSession('A')
+    const sessionB = await createSession('B')
+    await pool.query(
+      `INSERT INTO persistent_codex.sessions(organization_id,workspace_id,session_id,status)
+       VALUES ($1,$2,$3,'active')`,
+      [
+        env.WP30_TENANT_A_ORG_ID,
+        env.WP30_TENANT_A_WORKSPACE_ID,
+        sessionA.sessionId,
+      ],
+    )
+    await pool.query(
+      `INSERT INTO persistent_codex.artifacts(organization_id,workspace_id,session_id,artifact_id,object_key)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [
+        env.WP30_TENANT_A_ORG_ID,
+        env.WP30_TENANT_A_WORKSPACE_ID,
+        sessionA.sessionId,
+        env.WP30_OBJECT_A_ID,
+        `${env.WP30_TENANT_A_ORG_ID}/${env.WP30_TENANT_A_WORKSPACE_ID}/artifacts/${env.WP30_OBJECT_A_ID}`,
+      ],
+    )
+    await objects.put(
+      `${env.WP30_TENANT_A_ORG_ID}/${env.WP30_TENANT_A_WORKSPACE_ID}/artifacts/${env.WP30_OBJECT_A_ID}`,
+      new TextEncoder().encode('tenant-a-artifact'),
+      'text/plain',
+    )
+    writeFileSync(
+      join(WP30_LOCAL_STATE, 'seed.json'),
+      `${JSON.stringify({ sessionA: sessionA.sessionId, sessionB: sessionB.sessionId })}\n`,
+      { mode: 0o600 },
+    )
   } catch (error) {
     await pool.query('ROLLBACK').catch(() => undefined)
     throw error
@@ -155,7 +401,42 @@ const up = async () => {
   assertAbsoluteCodex(env.WP30_CODEX_BIN)
   for (const image of Object.values(readPinnedImages()))
     run('docker', ['pull', image])
-  run('docker', composeArgs('up', '-d', '--wait', '--wait-timeout', '240'))
+  const buildDirectory = join(WP30_LOCAL_STATE, 'build')
+  mkdirSync(buildDirectory, { recursive: true, mode: 0o700 })
+  const bundle = (entry: string, output: string) =>
+    run('pnpm', [
+      'exec',
+      'esbuild',
+      entry,
+      '--bundle',
+      '--platform=node',
+      '--format=esm',
+      '--external:pg-native',
+      "--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+      `--outfile=${join(buildDirectory, output)}`,
+    ])
+  bundle(
+    'services/control-plane/src/production-api-process.ts',
+    'control-plane.mjs',
+  )
+  bundle(
+    'services/control-plane/src/production-worker-process.ts',
+    'workspace-agent.mjs',
+  )
+  const productImage = `persistent-wp30-local-product:${sourceCommit}`
+  if (
+    run('docker', ['image', 'inspect', productImage], { allowFailure: true })
+      .status !== 0
+  )
+    run('docker', [
+      'build',
+      '--tag',
+      productImage,
+      '--file',
+      'infra/wp30-local/product.Dockerfile',
+      '.',
+    ])
+  run('docker', composeArgs('up', '-d', '--wait', '--wait-timeout', '600'))
   await seed()
   for (const url of [
     env.WP30_TARGET_URL,
@@ -221,6 +502,10 @@ export const down = () => {
   rmSync(WP30_LOCAL_ENV, { force: true })
   rmSync(join(WP30_LOCAL_STATE, 'postgres-password'), { force: true })
   rmSync(join(WP30_LOCAL_STATE, 'local-operator-private.pem'), { force: true })
+  rmSync(join(WP30_LOCAL_STATE, 'oidc-private.pem'), { force: true })
+  rmSync(join(WP30_LOCAL_STATE, 'oidc-public.jwk'), { force: true })
+  rmSync(join(WP30_LOCAL_STATE, 'seed.json'), { force: true })
+  rmSync(join(WP30_LOCAL_STATE, 'build'), { recursive: true, force: true })
   machineEvidence('wp30:lab:down', {
     status: 'clean',
     removedCount: inventory.length,

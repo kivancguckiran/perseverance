@@ -16,6 +16,13 @@ http:
         X-Tenant-Id: __WP30_TENANT_A_ID__
         X-Organization-Id: __WP30_TENANT_A_ORG_ID__
         X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 201
+          - 202
+  - raw:
       - |
         GET /v1/artifacts/..%2f..%2fproc%2fself%2fenviron HTTP/1.1
         Host: {{Hostname}}
@@ -23,24 +30,6 @@ http:
         X-Tenant-Id: __WP30_TENANT_A_ID__
         X-Organization-Id: __WP30_TENANT_A_ORG_ID__
         X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
-      - |
-        GET /v1/artifacts/%2e%2e/%2e%2e/sys/kernel/hostname HTTP/1.1
-        Host: {{Hostname}}
-        Authorization: Bearer __WP30_TENANT_A_TOKEN__
-        X-Tenant-Id: __WP30_TENANT_A_ID__
-        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
-        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
-      - |
-        POST /v1/sources HTTP/1.1
-        Host: {{Hostname}}
-        Authorization: Bearer __WP30_TENANT_A_TOKEN__
-        Content-Type: application/json
-        X-Tenant-Id: __WP30_TENANT_A_ID__
-        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
-        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
-
-        {"kind":"url","url":"http://169.254.169.254/latest/meta-data/"}
-    stop-at-first-match: false
     matchers-condition: or
     matchers:
       - type: status
@@ -51,4 +40,35 @@ http:
       - type: regex
         part: body
         regex:
-          - '(?i)(authorization|bearer|api[_-]?key|secret|169\.254\.169\.254|/proc/|/sys/)'
+          - '(?i)(^|["\\n])(PATH|HOME|HOSTNAME|AWS_SECRET_ACCESS_KEY|OPENAI_API_KEY)='
+  - raw:
+      - |
+        GET /v1/artifacts/%2e%2e/%2e%2e/sys/kernel/hostname HTTP/1.1
+        Host: {{Hostname}}
+        Authorization: Bearer __WP30_TENANT_A_TOKEN__
+        X-Tenant-Id: __WP30_TENANT_A_ID__
+        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
+        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 201
+          - 202
+  - raw:
+      - |
+        POST /v1/sources HTTP/1.1
+        Host: {{Hostname}}
+        Authorization: Bearer __WP30_TENANT_A_TOKEN__
+        Content-Type: application/json
+        X-Tenant-Id: __WP30_TENANT_A_ID__
+        X-Organization-Id: __WP30_TENANT_A_ORG_ID__
+        X-Workspace-Id: __WP30_TENANT_A_WORKSPACE_ID__
+
+        {"kind":"url","url":"http://169.254.169.254/latest/meta-data/"}
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 201
+          - 202

@@ -3,19 +3,16 @@ name: persistent-wp30-local
 x-local-labels: &local-labels
   persistent.wp30.local: 'true'
 
-x-fixture: &fixture
-  image: node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
+x-product: &product
+  image: persistent-wp30-local-product:${WP30_SOURCE_COMMIT}
   restart: unless-stopped
   labels: *local-labels
   env_file: ../../.wp30/local.env
-  volumes:
-    - ./fixture-server.mjs:/opt/wp30/fixture-server.mjs:ro
-  command: ['node', '/opt/wp30/fixture-server.mjs']
   networks: [wp30-local]
 
 services:
   postgres:
-    image: postgres:17.5-alpine
+    image: pgvector/pgvector:pg17
     restart: unless-stopped
     labels: *local-labels
     environment:
@@ -26,13 +23,14 @@ services:
     ports: ['127.0.0.1:55430:5432']
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/00-wp30-local.sql:ro
-      - ../postgres/migrations/0034_wp30_production_rollout.sql:/docker-entrypoint-initdb.d/34-wp30-rollout.sql:ro
+      - ../postgres/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      - ./init-migrations.sh:/docker-entrypoint-initdb.d/01-migrations.sh:ro
+      - ./init.sql:/opt/wp30/init.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U wp30_admin -d wp30_local']
       interval: 2s
       timeout: 3s
-      retries: 60
+      retries: 90
     networks: [wp30-local]
 
   cache:
@@ -47,6 +45,23 @@ services:
       retries: 60
     networks: [wp30-local]
 
+  broker:
+    image: rabbitmq:4-management
+    restart: unless-stopped
+    labels: *local-labels
+    environment:
+      RABBITMQ_DEFAULT_USER: wp30
+      RABBITMQ_DEFAULT_PASS: ${WP30_BROKER_PASSWORD}
+    ports:
+      - '127.0.0.1:55672:15672'
+      - '127.0.0.1:55673:5672'
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
+      interval: 3s
+      timeout: 5s
+      retries: 90
+    networks: [wp30-local]
+
   object-storage:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     restart: unless-stopped
@@ -59,57 +74,118 @@ services:
       test: ['CMD', 'curl', '-f', 'http://127.0.0.1:9000/minio/health/ready']
       interval: 2s
       timeout: 3s
+      retries: 90
+    networks: [wp30-local]
+
+  oidc-stub:
+    image: node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
+    restart: unless-stopped
+    labels: *local-labels
+    environment:
+      OIDC_ISSUER: http://oidc-stub:3303
+    volumes:
+      - ./oidc-stub.mjs:/opt/wp30/oidc-stub.mjs:ro
+      - ../../.wp30/oidc-public.jwk:/run/wp30/oidc-public.jwk:ro
+    command: ['node', '/opt/wp30/oidc-stub.mjs']
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3303/readyz']
+      interval: 2s
+      timeout: 3s
       retries: 60
     networks: [wp30-local]
 
   workspace-agent:
-    <<: *fixture
+    <<: *product
+    command: ['node', '/app/workspace-agent.mjs']
     environment:
-      WP30_LOCAL_ROLE: workspace-agent
-      PORT: '3302'
+      TOPOLOGY_DATABASE_URL: postgresql://wp30_runtime:${WP30_POSTGRES_PASSWORD}@postgres:5432/wp30_local
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_BUCKET: wp30-local
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      SCHEDULER_OWNER_ID: wp30-local-agent
+      SCHEDULER_HEALTH_PORT: '3302'
+      SCHEDULER_HEALTH_HOST: 0.0.0.0
+      SCHEDULER_LEASE_MS: '5000'
+      SCHEDULER_POLL_MS: '100'
+      SCHEDULER_RUNTIME_TIMEOUT_MS: '30000'
+      PERSISTENT_REGION_ID: local-1
+      WORKSPACE_CWD: /workspace
+      CODEX_HOME: /codex-home
     ports: ['127.0.0.1:3302:3302']
-    healthcheck:
-      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3302/readyz']
-      interval: 2s
-      timeout: 3s
-      retries: 60
-
-  control-plane:
-    <<: *fixture
-    environment:
-      WP30_LOCAL_ROLE: control-plane
-      PORT: '3300'
-    ports: ['127.0.0.1:3300:3300']
+    volumes:
+      - ../../.wp30/build/workspace-agent.mjs:/app/workspace-agent.mjs:ro
+      - workspace-data:/workspace
+      - codex-home:/codex-home
     depends_on:
       postgres: { condition: service_healthy }
-      cache: { condition: service_healthy }
       object-storage: { condition: service_healthy }
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3302/']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+
+  control-plane:
+    <<: *product
+    command: ['node', '/app/control-plane.mjs']
+    environment:
+      HOST: 0.0.0.0
+      PORT: '3300'
+      TOPOLOGY_DATABASE_URL: postgresql://wp30_runtime:${WP30_POSTGRES_PASSWORD}@postgres:5432/wp30_local
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_BUCKET: wp30-local
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      EVENT_BROKER_MANAGEMENT_URL: http://broker:15672
+      EVENT_BROKER_USERNAME: wp30
+      EVENT_BROKER_PASSWORD: ${WP30_BROKER_PASSWORD}
+      EVENT_BROKER_QUEUE: wp30-events
+      RUNTIME_CONTROL_READINESS_URL: http://workspace-agent:3302
+      KMS_READINESS_URL: http://oidc-stub:3303/readyz
+      PERSISTENT_INSTANCE_ID: wp30-local-control-plane
+      PERSISTENT_REGION_ID: local-1
+      TELEMETRY_SCOPE_SALT: wp30-local-opaque-scope
+      OIDC_ISSUER: http://oidc-stub:3303
+      OIDC_AUDIENCE: persistent-codex-wp30-local
+      WEB_ALLOWED_ORIGIN: http://127.0.0.1:3301
+    ports: ['127.0.0.1:3300:3300']
+    volumes:
+      - ../../.wp30/build/control-plane.mjs:/app/control-plane.mjs:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+      broker: { condition: service_healthy }
+      object-storage: { condition: service_healthy }
+      oidc-stub: { condition: service_healthy }
       workspace-agent: { condition: service_healthy }
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3300/readyz']
       interval: 2s
       timeout: 3s
-      retries: 60
+      retries: 90
 
   web:
-    <<: *fixture
+    <<: *product
+    command: ['node', '/app/web-production-server.mjs']
     environment:
-      WP30_LOCAL_ROLE: web
+      HOST: 0.0.0.0
       PORT: '3301'
     ports: ['127.0.0.1:3301:3301']
+    volumes:
+      - ./web-production-server.mjs:/app/web-production-server.mjs:ro
     depends_on:
       control-plane: { condition: service_healthy }
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3301/readyz']
       interval: 2s
       timeout: 3s
-      retries: 60
+      retries: 90
 
 volumes:
-  postgres-data:
-    labels: *local-labels
-  object-data:
-    labels: *local-labels
+  postgres-data: { labels: { persistent.wp30.local: 'true' } }
+  object-data: { labels: { persistent.wp30.local: 'true' } }
+  workspace-data: { labels: { persistent.wp30.local: 'true' } }
+  codex-home: { labels: { persistent.wp30.local: 'true' } }
 
 networks:
   wp30-local:

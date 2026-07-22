@@ -24,6 +24,7 @@
     "@persistent-codex/enterprise-lifecycle": "workspace:*",
     "@persistent-codex/provider-platform": "workspace:*",
     "@persistent-codex/production-topology": "workspace:*",
+    "@persistent-codex/production-readiness": "workspace:*",
     "@persistent-codex/production-observability": "workspace:*",
     "@persistent-codex/shared-folders": "workspace:*",
     "@persistent-codex/push-notifications": "workspace:*",

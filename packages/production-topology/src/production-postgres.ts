@@ -80,6 +80,14 @@ export interface ProductionApproval extends ProductionScope {
   decidedAt: string | null
 }
 
+export interface ProductionArtifact {
+  organizationId: string
+  workspaceId: string
+  sessionId: string
+  artifactId: string
+  objectKey: string
+}
+
 type Row = Record<string, unknown>
 const iso = (value: unknown) =>
   value instanceof Date ? value.toISOString() : String(value)
@@ -234,6 +242,47 @@ export class ProductionPostgresRepository {
         [input.tenantId, input.organizationId, input.workspaceId, sessionId],
       )
       return session(result.rows[0] as Row)
+    })
+  }
+
+  async getWorkspace(scope: ProductionScope, workspaceId: string) {
+    return this.#tx(scope, async (client) => {
+      const result = await client.query(
+        `SELECT organization_id,workspace_id,name
+         FROM persistent_codex.workspaces
+         WHERE organization_id=$1 AND workspace_id=$2`,
+        [scope.organizationId, workspaceId],
+      )
+      if (!result.rowCount) return null
+      return {
+        tenantId: scope.tenantId,
+        organizationId: String(result.rows[0]!.organization_id),
+        workspaceId: String(result.rows[0]!.workspace_id),
+        name: String(result.rows[0]!.name),
+      }
+    })
+  }
+
+  async getArtifact(
+    scope: ProductionScope,
+    artifactId: string,
+  ): Promise<ProductionArtifact | null> {
+    return this.#tx(scope, async (client) => {
+      const result = await client.query(
+        `SELECT organization_id,workspace_id,session_id,artifact_id,object_key
+         FROM persistent_codex.artifacts
+         WHERE organization_id=$1 AND workspace_id=$2 AND artifact_id=$3`,
+        [scope.organizationId, scope.workspaceId, artifactId],
+      )
+      if (!result.rowCount) return null
+      const row = result.rows[0]!
+      return {
+        organizationId: String(row.organization_id),
+        workspaceId: String(row.workspace_id),
+        sessionId: String(row.session_id),
+        artifactId: String(row.artifact_id),
+        objectKey: String(row.object_key),
+      }
     })
   }
 

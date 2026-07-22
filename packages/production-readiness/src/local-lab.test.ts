@@ -67,6 +67,28 @@ describe('WP30-L local acceptance contract', () => {
     expect(compose).toMatch(/persistent\.wp30\.local: ['"]true['"]/)
     expect(compose).toContain('127.0.0.1:3300:3300')
     expect(compose).not.toMatch(/(?:^|["'])0\.0\.0\.0:/m)
+    expect(
+      readFileSync(resolve('scripts/wp30-local-lab.ts'), 'utf8'),
+    ).toContain('product.Dockerfile')
+    expect(compose).toContain("command: ['node', '/app/control-plane.mjs']")
+    expect(compose).toContain("command: ['node', '/app/workspace-agent.mjs']")
+    expect(compose).toContain(
+      "command: ['node', '/app/web-production-server.mjs']",
+    )
+    expect(compose).not.toContain('fixture-server.mjs')
+  })
+
+  it('retains redacted raw evidence and makes cleanup a report gate', () => {
+    const acceptance = readFileSync(
+      resolve('scripts/wp30-local-accept.ts'),
+      'utf8',
+    )
+    expect(acceptance).toContain("record('wp30:lab:down'")
+    expect(acceptance).toContain('assert(cleaned')
+    expect(acceptance).toContain('rawEvidence: embeddedRawEvidence')
+    expect(acceptance).toContain('signatureVerified')
+    expect(acceptance).not.toContain('tenantMixing: 0')
+    expect(acceptance).not.toContain('dataLoss: 0')
   })
 
   it('keeps generated credentials outside the repository contract', () => {
