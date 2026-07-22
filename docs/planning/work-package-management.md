@@ -83,7 +83,7 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP27 — SLO ve DR                             | Tamamlandı | Gerçek PITR/restore, dependency game-day, SLO alertleri ve telemetry güvenliği bağımsız kabul edildi        |
 | WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                 |
 | WP29 — Supply-chain ve canary                | Tamamlandı | İmzalı build, provider canary, güvenli upgrade ve compliance evidence bağımsız kabul edildi                 |
-| WP30 — Production kabul ve rollout           | Aktif      | Pentest, load/soak/chaos ve kontrollü production rollout ile Faz 5 kapatılacak                              |
+| WP30 — Production kabul ve rollout           | Tamamlandı | WP30-L local production-like engineering kabulü geçti; WP30-E production go-live öncesi zorunlu             |
 
 ## WP1 nihai denetim sonucu
 
@@ -1273,3 +1273,27 @@ Karar: **Tamamlandı**
 
 WP29 tamamlandı. Tek aktif iş paketi WP30'dur; WP30 bağımsız kabul edilmeden Faz 5
 kapatılmaz.
+
+## WP30-L nihai denetim sonucu
+
+Karar: **Tamamlandı — local production-like engineering kabulü**
+
+- Temiz detached `5195b8e` implementation worktree'sinde lab sıfırdan kuruldu;
+  `pnpm wp30:local:accept` 10/10 yerel gate ile geçti.
+- Gerçek ürün servisleri ve PostgreSQL/Redis/RabbitMQ/MinIO üzerinde ZAP/Nuclei,
+  cross-tenant sınır, K6, chaos/recovery, durable rollout/halt/rollback ve iki viewport
+  browser golden akışları çalıştırıldı.
+- Bağımsız yeniden koşunun report SHA-256 değeri
+  `276203dedc91d32e538f0c6e6ff7266c6d22fa02778eb021ea6bacf56dcd20ac` oldu; 22/22
+  gömülü ham kanıtın hash'i ve bundle Ed25519 imzası doğrulandı.
+- Acceptance cleanup sonrasında WP30 etiketli container, volume ve network sayıları
+  sıfırdı. `pnpm verify`; format, typecheck, 45 dosyada 389 test, production build ve
+  SSR HTTP smoke ile geçti.
+- Sonuç `accepted-local-production-like`, `engineeringComplete:true`,
+  `externalProductionReady:false`, `evidenceClass:local-operator` ve
+  `targetScope:loopback-only` olarak tutuldu.
+
+WP30-L ve Faz 5 engineering kapsamı tamamlandı; aktif iş paketi yoktur. Bağımsız
+pentest/retest, gerçek production soak/chaos ve gerçek cohort rollout kanıtlarını
+gerektiren WP30-E, production go-live öncesinde ayrı zorunlu kapıdır. Sonraki planlı
+paket WP31'dir; açıkça aktive edilmeden başlatılmaz.

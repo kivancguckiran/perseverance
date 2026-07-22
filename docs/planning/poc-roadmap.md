@@ -62,7 +62,9 @@ scheduler/fencing ve kapasite izolasyonu gerçek kabul kapılarıyla tamamlanmı
 gerçek PITR/restore, region failover, SLO alert ve güvenli telemetry kapılarıyla
 tamamlanmıştır. WP28 gerçek enterprise identity ve tenant data lifecycle kapılarıyla
 tamamlanmış; WP29 supply-chain, provider canary, güvenli rollout ve compliance
-kapılarıyla tamamlanmış; WP30 Faz 5'in tek aktif iş paketi olarak açılmıştır.
+kapılarıyla tamamlanmış; WP30-L gerçek servisli local production-like acceptance ile
+Faz 5 engineering kapsamını kapatmıştır. Production go-live için WP30-E external
+validation hâlâ zorunludur.
 
 ## Uygulama sırası
 
