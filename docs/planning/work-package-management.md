@@ -5,7 +5,9 @@
 - Yönetim kaynakları: `docs/planning/poc-implementation-plan.md` ve
   `docs/planning/phase-1-alpha-plan.md` ve
   `docs/planning/phase-2-provider-platform-plan.md` ve
-  `docs/planning/phase-3-security-and-cursor-plan.md`
+  `docs/planning/phase-3-security-and-cursor-plan.md` ve
+  `docs/planning/phase-4-corpus-mobile-and-phase-5-production-plan.md` ve
+  `docs/planning/phase-6-open-source-and-managed-cloud-plan.md`
 
 ## Bu task'ın rolü
 
@@ -84,6 +86,11 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                 |
 | WP29 — Supply-chain ve canary                | Tamamlandı | İmzalı build, provider canary, güvenli upgrade ve compliance evidence bağımsız kabul edildi                 |
 | WP30 — Production kabul ve rollout           | Tamamlandı | WP30-L local production-like engineering kabulü geçti; WP30-E production go-live öncesi zorunlu             |
+| WP31 — Open-source release hazırlığı         | Planlandı  | Lisans, secret/history, dependency ve public-release güvenlik sınırları tamamlanacak                        |
+| WP32 — Self-hosted dağıtım                   | Planlandı  | Tek komutlu kurulum, upgrade, backup/restore ve subscription login doğrulanacak                             |
+| WP33 — Managed tenant runtime                | Planlandı  | Community/Cloud profilleri ve tenant-isolated managed runtime kurulacak                                     |
+| WP34 — Provider account bağlantıları         | Planlandı  | Subscription OAuth, API/platform auth ve credential lifecycle güvenli hale getirilecek                      |
+| WP35 — Managed Cloud public beta             | Planlandı  | Onboarding, billing, operasyon ve kontrollü public beta ile Faz 6 kapatılacak                               |
 
 ## WP1 nihai denetim sonucu
 
