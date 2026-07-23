@@ -264,7 +264,13 @@ select {
   gap: 3px;
   padding-left: 19px;
 }
-.history-conversations > button {
+.history-conversation {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.history-conversation > button:first-child {
   display: grid;
   min-width: 0;
   padding: 8px 9px;
@@ -276,19 +282,77 @@ select {
   background: transparent;
   text-align: left;
 }
-.history-conversations > button:hover,
-.history-conversations > button.is-active {
+.history-conversation > button:first-child:hover,
+.history-conversation > button:first-child.is-active {
   color: #d8e8e1;
   background: #14231e;
 }
-.history-conversations > button span {
+.history-conversation > button:first-child span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.history-conversations > button small {
+.history-conversation > button:first-child small {
   color: #60756c;
   font-size: 0.62rem;
+}
+.history-conversation-action {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: #60756c;
+  background: transparent;
+  opacity: 0;
+}
+.history-conversation:hover .history-conversation-action,
+.history-conversation:focus-within .history-conversation-action {
+  opacity: 1;
+}
+.history-conversation-action:hover {
+  color: #d8e8e1;
+  background: #1a2c25;
+}
+.archived-conversations {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #1d2c27;
+}
+.archived-conversations > summary {
+  padding: 6px 7px;
+  color: #657970;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.archived-conversation {
+  display: grid;
+  padding: 4px 7px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+.archived-conversation button {
+  padding: 5px 7px;
+  border: 1px solid #263a33;
+  border-radius: 7px;
+  color: #8fa39a;
+  background: transparent;
+  font-size: 0.65rem;
+}
+.archived-conversation button:first-child {
+  display: flex;
+  min-width: 0;
+  border: 0;
+  flex-direction: column;
+  text-align: left;
+}
+.archived-conversation button:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.archived-conversation button:first-child small {
+  color: #5f746b;
 }
 .history-conversations p {
   margin: 5px 9px 10px;

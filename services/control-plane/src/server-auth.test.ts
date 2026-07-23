@@ -399,7 +399,7 @@ describe('public route authorization coverage', () => {
       (entry) => `${entry.method} ${entry.route}`,
     )
     expect(new Set(keys).size).toBe(keys.length)
-    expect(keys).toHaveLength(70)
+    expect(keys).toHaveLength(71)
     expect(
       PUBLIC_ROUTE_AUTHORIZATION_CATALOG.every(
         (entry) => entry.action && entry.resourceType,

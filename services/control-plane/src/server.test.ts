@@ -376,6 +376,42 @@ describe('WP24 commercial admission and billing API', () => {
     }
   })
 
+  it('returns a retryable dependency error when commercial admission is unavailable', async () => {
+    const store = new SqliteEventStore(':memory:')
+    store.createSession(scope)
+    const app = await buildControlPlane({
+      eventStore: store,
+      commercialPolicy: {
+        snapshot: async () => {
+          throw Object.assign(new Error('database is in recovery'), {
+            code: '57P03',
+          })
+        },
+        measurements: async () => ({
+          values: {},
+          watermark: 'unavailable',
+          measuredAt: '2026-07-18T10:00:00.000Z',
+        }),
+        productionBillingVerified: false,
+      },
+    })
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/turns`,
+        headers: { ...headers, 'idempotency-key': 'dependency-unavailable' },
+        payload: { prompt: 'test' },
+      })
+      expect(response.statusCode).toBe(503)
+      expect(response.json()).toEqual({
+        code: 'COMMERCIAL_DEPENDENCY_UNAVAILABLE',
+        message: 'Commercial policy dependency is unavailable',
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
   it('authenticates a bounded raw webhook without persisting provider payload material', async () => {
     const provider = new DeterministicBillingEmulator({
       secret: Buffer.alloc(32, 24),
@@ -461,11 +497,20 @@ describe('WP10 session navigation and Git API', () => {
     const store = new SqliteEventStore(databasePath)
     store.createSession(scope)
     store.createSession({ ...scope, sessionId: 'ses_second' })
+    store.createSession({ ...scope, sessionId: 'ses_blank' })
     store.createSession({
       ...scope,
       tenantId: 'ten_other',
       sessionId: 'ses_hidden',
     })
+    for (const sessionId of [scope.sessionId, 'ses_second'])
+      store.recordDurableUserMessage({
+        ...scope,
+        sessionId,
+        messageId: `msg_${sessionId}`,
+        idempotencyKey: `turn_${sessionId}`,
+        content: `Message for ${sessionId}`,
+      })
     const app = await buildControlPlane({
       eventStore: store,
       workspaceCwd: repository,
@@ -488,6 +533,11 @@ describe('WP10 session navigation and Git API', () => {
       })
       expect(second.json().sessions).toHaveLength(1)
       expect(second.json().sessions[0].tenantId).toBe(scope.tenantId)
+      expect([...first.json().sessions, ...second.json().sessions]).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sessionId: 'ses_blank' }),
+        ]),
+      )
 
       const createdFolder = await app.inject({
         method: 'POST',
@@ -517,6 +567,48 @@ describe('WP10 session navigation and Git API', () => {
         folderId: createdFolder.json().folderId,
         title: 'Architecture chat',
       })
+      const archivedConversation = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/archive`,
+        headers,
+        payload: { archived: true },
+      })
+      expect(archivedConversation.statusCode).toBe(200)
+      expect(archivedConversation.json().archivedAt).toBeTruthy()
+      const archivedTurn = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/turns`,
+        headers: { ...headers, 'idempotency-key': 'archived-turn' },
+        payload: { prompt: 'must be rejected' },
+      })
+      expect(archivedTurn.statusCode).toBe(409)
+      expect(archivedTurn.json()).toMatchObject({ code: 'SESSION_ARCHIVED' })
+      const activeConversations = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions?limit=10',
+        headers,
+      })
+      expect(
+        activeConversations
+          .json()
+          .sessions.map((item: { sessionId: string }) => item.sessionId),
+      ).not.toContain(scope.sessionId)
+      const archivedConversations = await app.inject({
+        method: 'GET',
+        url: '/v1/sessions?limit=10&archived=true',
+        headers,
+      })
+      expect(archivedConversations.json().sessions).toEqual([
+        expect.objectContaining({ sessionId: scope.sessionId }),
+      ])
+      const restoredConversation = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${scope.sessionId}/archive`,
+        headers,
+        payload: { archived: false },
+      })
+      expect(restoredConversation.statusCode).toBe(200)
+      expect(restoredConversation.json().archivedAt).toBeNull()
       const archived = await app.inject({
         method: 'PATCH',
         url: `/v1/conversation-folders/${createdFolder.json().folderId}`,
@@ -1856,6 +1948,8 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
         },
       } as TResult
     }
+    if (method === 'thread/archive' || method === 'thread/unarchive')
+      return {} as TResult
     if (method === 'turn/steer') {
       return {
         turnId: (params as { expectedTurnId: string }).expectedTurnId,
@@ -3331,14 +3425,40 @@ describe('WP4 session, turn and live event flow', () => {
       runtimeClientFactory: () => recoveredClient,
     })
     try {
-      const resumed = await recovered.inject({
-        method: 'POST',
-        url: '/v1/sessions/ses_durable_restart/resume',
-        headers: { ...scoped, 'idempotency-key': 'durable-reconcile' },
-        payload: {},
+      expect(
+        recoveredStore.getSession({
+          tenantId: scoped['x-tenant-id'],
+          workspaceId: scoped['x-workspace-id'],
+          sessionId: 'ses_durable_restart',
+        }).runtimeGeneration,
+      ).toBe(recoveredClient.processGeneration)
+      expect(
+        (
+          await recovered.inject({
+            method: 'GET',
+            url: '/readyz',
+            headers: scoped,
+          })
+        ).statusCode,
+      ).toBe(200)
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (
+          recoveredStore.getActiveDurableRun({
+            tenantId: scoped['x-tenant-id'],
+            workspaceId: scoped['x-workspace-id'],
+            sessionId: 'ses_durable_restart',
+          }) === null
+        )
+          break
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      const reconciled = await recovered.inject({
+        method: 'GET',
+        url: '/v1/sessions/ses_durable_restart',
+        headers: scoped,
       })
-      expect(resumed.statusCode).toBe(200)
-      expect(resumed.json()).toMatchObject({
+      expect(reconciled.statusCode).toBe(200)
+      expect(reconciled.json()).toMatchObject({
         activeRun: null,
         latestRun: {
           runId: 'run_durable_restart',

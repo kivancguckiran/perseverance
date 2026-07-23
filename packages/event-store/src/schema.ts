@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-export const CURRENT_SCHEMA_VERSION = 13
+export const CURRENT_SCHEMA_VERSION = 14
 
 export const CREATE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -94,6 +94,7 @@ export const CREATE_SCHEMA_SQL = `
     recovery_error_code TEXT,
     last_resumed_at TEXT,
     runtime_generation INTEGER,
+    archived_at TEXT,
     last_sequence INTEGER NOT NULL DEFAULT 0 CHECK(last_sequence >= 0),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -460,6 +461,8 @@ export function bootstrapSchema(database: DatabaseSync, now: string): void {
       database.exec(
         `ALTER TABLE sessions ADD COLUMN capability_snapshot_json TEXT`,
       )
+    if (!hasColumn(database, 'sessions', 'archived_at'))
+      database.exec(`ALTER TABLE sessions ADD COLUMN archived_at TEXT`)
     if (
       tableExists(database, 'usage_ledger') &&
       !hasColumn(database, 'usage_ledger', 'purpose')
