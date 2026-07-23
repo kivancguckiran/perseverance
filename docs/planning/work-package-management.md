@@ -86,7 +86,7 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                 |
 | WP29 — Supply-chain ve canary                | Tamamlandı | İmzalı build, provider canary, güvenli upgrade ve compliance evidence bağımsız kabul edildi                 |
 | WP30 — Production kabul ve rollout           | Tamamlandı | WP30-L local production-like engineering kabulü geçti; WP30-E production go-live öncesi zorunlu             |
-| WP31 — Open-source release hazırlığı         | Planlandı  | Lisans, secret/history, dependency ve public-release güvenlik sınırları tamamlanacak                        |
+| WP31 — Open-source release hazırlığı         | Aktif      | Lisans, secret/history, dependency ve public-release güvenlik sınırları tamamlanacak                        |
 | WP32 — Self-hosted dağıtım                   | Planlandı  | Tek komutlu kurulum, upgrade, backup/restore ve subscription login doğrulanacak                             |
 | WP33 — Managed tenant runtime                | Planlandı  | Community/Cloud profilleri ve tenant-isolated managed runtime kurulacak                                     |
 | WP34 — Provider account bağlantıları         | Planlandı  | Subscription OAuth, API/platform auth ve credential lifecycle güvenli hale getirilecek                      |
@@ -1304,3 +1304,16 @@ WP30-L ve Faz 5 engineering kapsamı tamamlandı; aktif iş paketi yoktur. Bağ�
 pentest/retest, gerçek production soak/chaos ve gerçek cohort rollout kanıtlarını
 gerektiren WP30-E, production go-live öncesinde ayrı zorunlu kapıdır. Sonraki planlı
 paket WP31'dir; açıkça aktive edilmeden başlatılmaz.
+
+## Faz 6 plan aktivasyonu
+
+Faz 6 open-source ve managed cloud planı
+`docs/planning/phase-6-open-source-and-managed-cloud-plan.md` içinde WP31–WP35 olarak
+tanımlıdır. Faz 5 mühendislik kapsamı WP30-L ile kapandığı için WP31 açıkça aktive
+edilmiştir; WP32–WP35 bağımlılık sırasıyla beklemektedir ve WP31 bağımsız kabul
+edilmeden WP32 başlatılmaz. WP30-E, production go-live öncesinde ayrı zorunlu kapı
+olarak açık kalır; Faz 6 paketlerinin kabulünü değiştirmez ve onlarla karıştırılmaz.
+
+Aktif iş paketi WP31'dir. Uygulama task'ına verilecek WP31 prompt'u hazırlanmış ve
+yöneticiye teslim edilmiştir; teslimat `chore: prepare the repository for open source
+release` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
