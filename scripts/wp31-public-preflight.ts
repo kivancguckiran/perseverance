@@ -1,0 +1,215 @@
+import { spawnSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import {
+  buildDependencySbom,
+  buildLicenseReport,
+  checkGitignoreCoverage,
+  checkHygieneFiles,
+  collectDependencyInventory,
+  parseGitleaksToml,
+  runLicenseGate,
+  scanFullHistory,
+  scanWorkingTree,
+  sha256,
+  stableJson,
+  type LicensePolicyFile,
+} from './wp31-release-lib'
+
+// WP31 public-release preflight'ı (ADR-0031). Tek deterministik gate altında:
+//   1. zorunlu hijyen dosyaları
+//   2. gitignore secret dizin kapsamı
+//   3. working tree + tam Git history secret taraması (redakte evidence)
+//   4. dependency lisans gate'i + deterministik SBOM/lisans raporu drift kontrolü
+//   5. temiz checkout'ta `pnpm install --frozen-lockfile && pnpm verify`
+// Evidence çıktısı zaman damgası içermez; iki ardışık koşu bayt-aynı sonuç üretir.
+// İmzalı artifact ve provenance wp29:signatures hattındadır
+// (docs/operations/public-release-checklist.md).
+
+const root = resolve(import.meta.dirname, '..')
+const evidenceDir = join(root, '.wp31', 'evidence')
+mkdirSync(evidenceDir, { recursive: true })
+
+const updateMode = process.argv.includes('--update-artifacts')
+const skipCleanCheckout = process.env.WP31_SKIP_CLEAN_CHECKOUT === '1'
+
+const failures: string[] = []
+const step = (name: string, run: () => string) => {
+  try {
+    const summary = run()
+    console.log(`✔ ${name}: ${summary}`)
+  } catch (error) {
+    failures.push(`${name}: ${(error as Error).message}`)
+    console.error(`✘ ${name}: ${(error as Error).message}`)
+  }
+}
+
+const policyText = readFileSync(
+  join(root, 'infra/release/wp31-gitleaks.toml'),
+  'utf8',
+)
+const secretPolicy = parseGitleaksToml(policyText)
+const licensePolicy: LicensePolicyFile = JSON.parse(
+  readFileSync(join(root, 'infra/release/wp29-license-policy.v1.json'), 'utf8'),
+)
+
+const evidence: Record<string, unknown> = {
+  gate: 'release:public-preflight',
+  adr: 'ADR-0031',
+  secretPolicySha256: sha256(policyText),
+}
+
+// 1. Hijyen dosyaları
+step('hygiene-files', () => {
+  const problems = checkHygieneFiles(root)
+  if (problems.length) throw new Error(problems.join('; '))
+  evidence.hygiene = { accepted: true }
+  return 'zorunlu public dosyaların tümü mevcut'
+})
+
+// 2. Gitignore secret kapsamı
+step('gitignore-coverage', () => {
+  const uncovered = checkGitignoreCoverage(root)
+  if (uncovered.length)
+    throw new Error(`gitignore kapsamı dışında: ${uncovered.join(', ')}`)
+  evidence.gitignoreCoverage = { accepted: true }
+  return 'lokal secret dizinleri gitignore kapsamında'
+})
+
+// 3. Secret taraması: working tree + tam history
+step('secret-scan', () => {
+  const workingTree = scanWorkingTree(root, secretPolicy)
+  const history = scanFullHistory(root, secretPolicy)
+  const report = {
+    config: 'infra/release/wp31-gitleaks.toml',
+    workingTree: {
+      filesScanned: workingTree.filesScanned,
+      findings: workingTree.findings,
+    },
+    history: {
+      commitCount: history.commitCount,
+      blobsScanned: history.blobsScanned,
+      findings: history.findings,
+    },
+  }
+  writeFileSync(join(evidenceDir, 'wp31-secret-scan.json'), stableJson(report))
+  const total = workingTree.findings.length + history.findings.length
+  evidence.secretScan = {
+    accepted: total === 0,
+    workingTreeFilesScanned: workingTree.filesScanned,
+    historyCommits: history.commitCount,
+    historyBlobsScanned: history.blobsScanned,
+    findings: total,
+  }
+  if (total)
+    throw new Error(
+      `${total} doğrulanmamış bulgu (redakte rapor: .wp31/evidence/wp31-secret-scan.json)`,
+    )
+  return `working tree ${workingTree.filesScanned} dosya + history ${history.commitCount} commit / ${history.blobsScanned} blob, 0 bulgu`
+})
+
+// 4. Lisans gate'i + deterministik SBOM/lisans raporu
+step('license-gate-and-sbom', () => {
+  const components = collectDependencyInventory(root)
+  const gate = runLicenseGate(components, licensePolicy)
+  if (!gate.accepted)
+    throw new Error(
+      gate.violations
+        .map(
+          (violation) =>
+            `${violation.component} (${violation.license}): ${violation.reason}`,
+        )
+        .join('; '),
+    )
+  const projectMeta = JSON.parse(
+    readFileSync(join(root, 'package.json'), 'utf8'),
+  )
+  const sbom = stableJson(
+    buildDependencySbom(components, {
+      name: projectMeta.name,
+      version: projectMeta.version,
+      license: licensePolicy.projectLicense ?? 'UNKNOWN',
+    }),
+  )
+  const report = stableJson(buildLicenseReport(components, licensePolicy))
+  const sbomPath = join(root, 'infra/release/wp31-sbom.cdx.json')
+  const reportPath = join(root, 'infra/release/wp31-license-report.json')
+  writeFileSync(join(evidenceDir, 'wp31-sbom.cdx.json'), sbom)
+  writeFileSync(join(evidenceDir, 'wp31-license-report.json'), report)
+  if (updateMode) {
+    writeFileSync(sbomPath, sbom)
+    writeFileSync(reportPath, report)
+  }
+  const drift: string[] = []
+  if (!existsSync(sbomPath) || readFileSync(sbomPath, 'utf8') !== sbom)
+    drift.push('infra/release/wp31-sbom.cdx.json')
+  if (!existsSync(reportPath) || readFileSync(reportPath, 'utf8') !== report)
+    drift.push('infra/release/wp31-license-report.json')
+  if (drift.length)
+    throw new Error(
+      `commit edilmiş çıktı güncel değil: ${drift.join(', ')} — 'pnpm release:public-preflight --update-artifacts' ile yenileyin`,
+    )
+  evidence.licenseAndSbom = {
+    accepted: true,
+    componentCount: components.length,
+    licensesObserved: gate.licensesObserved,
+    sbomSha256: sha256(sbom),
+    licenseReportSha256: sha256(report),
+  }
+  return `${components.length} bileşen, sbom sha256 ${sha256(sbom).slice(0, 12)}…`
+})
+
+// 5. Temiz checkout build/test
+step('clean-checkout', () => {
+  if (skipCleanCheckout) {
+    evidence.cleanCheckout = { accepted: false, skipped: true }
+    return 'WP31_SKIP_CLEAN_CHECKOUT=1 ile atlandı (yalnız iterasyon için; kabul koşusunda kapatılamaz)'
+  }
+  const work = mkdtempSync(join(tmpdir(), 'wp31-clean-'))
+  try {
+    const commands: [string, string[]][] = [
+      ['git', ['clone', '--quiet', root, join(work, 'checkout')]],
+      ['pnpm', ['install', '--frozen-lockfile']],
+      ['pnpm', ['verify']],
+    ]
+    for (const [command, args] of commands) {
+      const cwd = command === 'git' ? work : join(work, 'checkout')
+      const result = spawnSync(command, args, {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+        env: { ...process.env, WP31_SKIP_CLEAN_CHECKOUT: '1' },
+      })
+      if (result.status !== 0)
+        throw new Error(
+          `${command} ${args.join(' ')} failed (${result.status}): ${result.stderr?.slice(-2000) ?? ''}`,
+        )
+    }
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: join(work, 'checkout'),
+      encoding: 'utf8',
+    }).stdout.trim()
+    evidence.cleanCheckout = { accepted: true, sourceCommit: head }
+    return `temiz klonda (HEAD ${head.slice(0, 12)}) frozen-lockfile install + verify geçti`
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
+})
+
+evidence.accepted = failures.length === 0
+const evidenceText = stableJson(evidence)
+writeFileSync(join(evidenceDir, 'wp31-public-preflight.json'), evidenceText)
+console.log(
+  `${failures.length === 0 ? 'ACCEPTED' : 'FAILED'} — evidence sha256 ${sha256(evidenceText).slice(0, 16)}… (.wp31/evidence/wp31-public-preflight.json)`,
+)
+if (failures.length) {
+  process.exitCode = 1
+}

@@ -1,0 +1,52 @@
+# WP31 public-release secret policy.
+# Genişletilmiş üst küme: infra/release/wp29-gitleaks.toml kural setini içerir
+# (gitleaks default kurallar + WP29 provider-credential marker) ve public-release
+# allowlist'ini ekler. Docker'lı resmî gitleaks koşusu bu dosyayla çalışır;
+# scripts/wp31-public-preflight.ts aynı dosyayı offline deterministik tarayıcı
+# için okur (desteklenen alt küme: [[rules]] regex/keywords, [[allowlists]]
+# description/paths/regexes).
+
+title = "WP31 public-release gitleaks policy"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "wp29-provider-credential"
+description = "WP29 provider credential marker"
+regex = '''WP29_PROVIDER_CREDENTIAL_[A-Za-z0-9_-]{16,}'''
+keywords = ["WP29_PROVIDER_CREDENTIAL_"]
+
+# --- Public-release allowlist ---
+# Her kayıt gerekçesiyle listelenir. Kayıtlar yalnız doğrulanmış
+# false-positive sınıflarını kapsar; gerçek credential hiçbir allowlist
+# kaydına sığmaz.
+
+[[allowlists]]
+description = "Test fixture dosyaları: *.test.ts, golden-session girdileri ve adapter fixture'ları redaction/normalizasyon davranışını kanıtlamak için kendini fixture olarak etiketleyen sahte secret'lar içerir (ör. sk-fixture-not-a-real-key). Bu dosyalar üretim credential'ı taşıyamaz; wp29 secret kuralları ve kod incelemesi bunu ayrıca zorlar."
+paths = [
+  '''.*\.test\.tsx?$''',
+  '''^tests/golden-sessions/.*''',
+  '''.*/test/fixtures/.*''',
+]
+
+[[allowlists]]
+description = "Kendini etiketleyen sentinel fixture değerleri: bu sabitler 'saklanmaması gereken değer' semantiğini test etmek için kullanılır ve adları gereği gerçek secret değildir."
+regexes = [
+  '''(?i)(must-not-persist|do-not-store|never-store-me|not-a-secret|must-not-survive-normalization|admin-secret-fixture|opaque-e2e-workload-token)''',
+  '''sk-(fixture|secret)-[A-Za-z0-9-]+''',
+  '''(?i)['"](secret-value|local-secret)['"]''',
+]
+
+[[allowlists]]
+description = "Lokal lab bootstrap sabitleri: wp20–wp30 smoke/lab script'leri yalnız developer loopback'inde çalışan geçici stack'ler için wpNN-öneki taşıyan placeholder parola/token sabitleri kullanır (ör. wp26-broker-secret, wp28-admin-fixture). Bu değerler hiçbir gerçek ortamda geçerli değildir."
+regexes = [
+  '''wp[0-9]{2}[-_][A-Za-z0-9_-]*(secret|password|token|fixture|marker|root|admin)[A-Za-z0-9_-]*''',
+]
+
+[[allowlists]]
+description = "Shell/psql değişken referansları: literal secret değil, çalışma anında lokal lab tarafından üretilen değerlere işaret eden $var ve :'var' kullanımı (infra/wp30-local bootstrap dosyaları)."
+regexes = [
+  '''\$\{?[a-z_]*password\}?''',
+  ''':'wp30_runtime_password'''',
+]
