@@ -1,0 +1,311 @@
+# WP32 — Persistent Codex Workspace self-hosted dağıtımı (ADR-0032).
+# Tek dışa açık servis proxy'dir (80/443, TLS zorunlu); diğer her şey iç ağda kalır.
+# Tüm imajlar images.env üzerinden sürüm+digest pinlidir. Yaşam döngüsü keşfi ve
+# temizlik doğrulaması yalnız `persistent.self-hosted=true` etiketiyle yapılır.
+name: persistent-self-hosted
+
+x-self-hosted-labels: &self-hosted-labels
+  persistent.self-hosted: 'true'
+
+x-product: &product
+  image: ${SELF_HOSTED_PRODUCT_IMAGE}
+  restart: unless-stopped
+  labels: *self-hosted-labels
+  networks:
+    - self-hosted
+
+services:
+  proxy:
+    image: ${SELF_HOSTED_CADDY_IMAGE}
+    restart: unless-stopped
+    labels: *self-hosted-labels
+    networks:
+      - self-hosted
+    ports:
+      - '${SELF_HOSTED_HTTP_BIND:-0.0.0.0}:80:80'
+      - '${SELF_HOSTED_HTTPS_BIND:-0.0.0.0}:443:443'
+    volumes:
+      - ${SELF_HOSTED_CONFIG_DIR}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${SELF_HOSTED_CONFIG_DIR}/tls:/etc/self-hosted-tls:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:80/caddy-healthz']
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  postgres:
+    image: ${SELF_HOSTED_POSTGRES_IMAGE}
+    restart: unless-stopped
+    labels: *self-hosted-labels
+    networks:
+      - self-hosted
+    environment:
+      POSTGRES_DB: persistent_codex
+      POSTGRES_USER: self_hosted_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U self_hosted_admin -d persistent_codex']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+
+  object-storage:
+    image: ${SELF_HOSTED_MINIO_IMAGE}
+    restart: unless-stopped
+    labels: *self-hosted-labels
+    networks:
+      - self-hosted
+    environment:
+      MINIO_ROOT_USER: ${SELF_HOSTED_MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${SELF_HOSTED_MINIO_ROOT_PASSWORD}
+    command: server /data --console-address :9001
+    volumes:
+      - object-data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://127.0.0.1:9000/minio/health/ready']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+
+  broker:
+    image: ${SELF_HOSTED_RABBITMQ_IMAGE}
+    restart: unless-stopped
+    labels: *self-hosted-labels
+    networks:
+      - self-hosted
+    environment:
+      RABBITMQ_DEFAULT_USER: self-hosted
+      RABBITMQ_DEFAULT_PASS: ${SELF_HOSTED_BROKER_PASSWORD}
+    volumes:
+      - broker-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
+      interval: 3s
+      timeout: 5s
+      retries: 90
+
+  identity:
+    image: ${SELF_HOSTED_NODE_IMAGE}
+    restart: unless-stopped
+    labels: *self-hosted-labels
+    networks:
+      - self-hosted
+    user: '10001:10001'
+    environment:
+      OIDC_ISSUER: http://identity:3303
+      IDENTITY_PUBLIC_JWK: /run/self-hosted/oidc-public.jwk
+      IDENTITY_PRIVATE_KEY: /run/self-hosted/oidc-private.pem
+      IDENTITY_AUDIENCE: ${SELF_HOSTED_OIDC_AUDIENCE}
+    command: ['node', '/opt/self-hosted/identity-service.mjs', 'serve']
+    volumes:
+      - ${SELF_HOSTED_DIST_DIR}/identity/identity-service.mjs:/opt/self-hosted/identity-service.mjs:ro
+      - ${SELF_HOSTED_SECRETS_DIR}/oidc-public.jwk:/run/self-hosted/oidc-public.jwk:ro
+      - ${SELF_HOSTED_SECRETS_DIR}/oidc-private.pem:/run/self-hosted/oidc-private.pem:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3303/readyz']
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  migrate:
+    image: ${SELF_HOSTED_POSTGRES_IMAGE}
+    labels: *self-hosted-labels
+    networks:
+      - self-hosted
+    profiles:
+      - ops
+    restart: 'no'
+    entrypoint: ['/bin/sh', '/opt/self-hosted/apply-migrations.sh']
+    environment:
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: persistent_codex
+      PGUSER: self_hosted_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      RUNTIME_PASSWORD_FILE: /run/secrets/postgres_runtime_password
+    secrets:
+      - postgres_password
+      - postgres_runtime_password
+    volumes:
+      - ${SELF_HOSTED_DIST_DIR}/postgres/apply-migrations.sh:/opt/self-hosted/apply-migrations.sh:ro
+      - ${SELF_HOSTED_DIST_DIR}/postgres/init-runtime-role.sql:/opt/self-hosted/init-runtime-role.sql:ro
+      - ${SELF_HOSTED_MIGRATIONS_DIR}:/opt/self-hosted/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bootstrap:
+    <<: *product
+    restart: 'no'
+    profiles:
+      - ops
+    command: ['node', '/app/self-hosted-bootstrap.mjs']
+    environment:
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: persistent_codex
+      PGUSER: self_hosted_admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_BUCKET: ${SELF_HOSTED_OBJECT_BUCKET:-self-hosted}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${SELF_HOSTED_MINIO_ROOT_USER}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${SELF_HOSTED_MINIO_ROOT_PASSWORD}
+      BOOTSTRAP_ISSUER: http://identity:3303
+      BOOTSTRAP_ADMIN_SUBJECT: ${SELF_HOSTED_ADMIN_SUBJECT:-self-hosted-admin}
+      BOOTSTRAP_ORGANIZATION_ID: ${SELF_HOSTED_ORGANIZATION_ID}
+      BOOTSTRAP_WORKSPACE_ID: ${SELF_HOSTED_WORKSPACE_ID}
+      BOOTSTRAP_ORGANIZATION_NAME: ${SELF_HOSTED_ORGANIZATION_NAME:-Self-hosted organization}
+      BOOTSTRAP_REGION_ID: ${SELF_HOSTED_REGION_ID:-self-hosted-1}
+      BOOTSTRAP_NODE_ID: ${SELF_HOSTED_NODE_ID:-self-hosted-node-1}
+      BOOTSTRAP_NODE_CPU_MILLIS: ${SELF_HOSTED_NODE_CPU_MILLIS:-4000}
+      BOOTSTRAP_NODE_MEMORY_BYTES: ${SELF_HOSTED_NODE_MEMORY_BYTES:-4294967296}
+    secrets:
+      - postgres_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+
+  ops-shell:
+    image: ${SELF_HOSTED_NODE_IMAGE}
+    labels: *self-hosted-labels
+    networks:
+      - self-hosted
+    profiles:
+      - ops
+    restart: 'no'
+    entrypoint: ['/bin/sh', '-c']
+    command: ['echo ops-shell']
+    volumes:
+      - object-data:/mnt/object-data
+      - codex-home:/mnt/codex-home
+      - workspace-data:/mnt/workspace-data
+      - ${SELF_HOSTED_BACKUP_DIR}:/backup
+
+  workspace-agent:
+    <<: *product
+    command: ['node', '/app/workspace-agent.mjs']
+    environment:
+      TOPOLOGY_DATABASE_URL: postgresql://self_hosted_runtime:${SELF_HOSTED_POSTGRES_RUNTIME_PASSWORD}@postgres:5432/persistent_codex
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_BUCKET: ${SELF_HOSTED_OBJECT_BUCKET:-self-hosted}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${SELF_HOSTED_MINIO_ROOT_USER}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${SELF_HOSTED_MINIO_ROOT_PASSWORD}
+      SCHEDULER_OWNER_ID: ${SELF_HOSTED_NODE_ID:-self-hosted-node-1}
+      SCHEDULER_HEALTH_PORT: '3302'
+      SCHEDULER_HEALTH_HOST: 0.0.0.0
+      SCHEDULER_LEASE_MS: '5000'
+      SCHEDULER_POLL_MS: '250'
+      SCHEDULER_RUNTIME_TIMEOUT_MS: '180000'
+      PERSISTENT_REGION_ID: ${SELF_HOSTED_REGION_ID:-self-hosted-1}
+      WORKSPACE_CWD: /workspace
+      CODEX_HOME: /codex-home
+      WP26_CODEX_BIN: /app/codex/bin/codex.js
+    volumes:
+      - workspace-data:/workspace
+      - codex-home:/codex-home
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3302/']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+
+  control-plane:
+    <<: *product
+    command: ['node', '/app/control-plane.mjs']
+    environment:
+      HOST: 0.0.0.0
+      PORT: '3300'
+      TOPOLOGY_DATABASE_URL: postgresql://self_hosted_runtime:${SELF_HOSTED_POSTGRES_RUNTIME_PASSWORD}@postgres:5432/persistent_codex
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_BUCKET: ${SELF_HOSTED_OBJECT_BUCKET:-self-hosted}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${SELF_HOSTED_MINIO_ROOT_USER}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${SELF_HOSTED_MINIO_ROOT_PASSWORD}
+      EVENT_BROKER_MANAGEMENT_URL: http://broker:15672
+      EVENT_BROKER_USERNAME: self-hosted
+      EVENT_BROKER_PASSWORD: ${SELF_HOSTED_BROKER_PASSWORD}
+      EVENT_BROKER_QUEUE: self-hosted-events
+      RUNTIME_CONTROL_READINESS_URL: http://workspace-agent:3302
+      KMS_READINESS_URL: http://identity:3303/readyz
+      PERSISTENT_INSTANCE_ID: ${SELF_HOSTED_INSTANCE_ID:-self-hosted-control-plane}
+      PERSISTENT_REGION_ID: ${SELF_HOSTED_REGION_ID:-self-hosted-1}
+      TELEMETRY_SCOPE_SALT: ${SELF_HOSTED_TELEMETRY_SCOPE_SALT}
+      OIDC_ISSUER: ${SELF_HOSTED_OIDC_ISSUER:-http://identity:3303}
+      OIDC_AUDIENCE: ${SELF_HOSTED_OIDC_AUDIENCE}
+      WEB_ALLOWED_ORIGIN: ${SELF_HOSTED_PUBLIC_ORIGIN}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      broker:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+      identity:
+        condition: service_healthy
+      workspace-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3300/readyz']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+
+  web:
+    <<: *product
+    command: ['node', '/app/self-hosted-web-server.mjs']
+    environment:
+      HOST: 0.0.0.0
+      PORT: '3301'
+      PUBLIC_ORIGIN: ${SELF_HOSTED_PUBLIC_ORIGIN}
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3301/readyz']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+
+networks:
+  self-hosted:
+    name: persistent-self-hosted
+    labels: *self-hosted-labels
+
+volumes:
+  postgres-data:
+    labels: *self-hosted-labels
+  object-data:
+    labels: *self-hosted-labels
+  broker-data:
+    labels: *self-hosted-labels
+  workspace-data:
+    labels: *self-hosted-labels
+  codex-home:
+    labels: *self-hosted-labels
+  caddy-data:
+    labels: *self-hosted-labels
+  caddy-config:
+    labels: *self-hosted-labels
+
+secrets:
+  postgres_password:
+    file: ${SELF_HOSTED_SECRETS_DIR}/postgres-password
+  postgres_runtime_password:
+    file: ${SELF_HOSTED_SECRETS_DIR}/postgres-runtime-password

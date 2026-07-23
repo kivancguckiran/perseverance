@@ -2,7 +2,7 @@
 
 - Durum: Yürürlükte
 - Tarih: 2026-07-23
-- Kapsam: WP31 (ADR-0031)
+- Kapsam: WP31 (ADR-0031) + WP32 self-hosted release adımları (ADR-0032)
 
 Repository'nin public mirror'a açılması ve her public release yayımı bu
 checklist'i izler. Repository'nin fiilen public yapılması yönetici kararıdır;
@@ -40,6 +40,32 @@ Public release artifact'i yayımlanmadan önce:
    (cosign). İmza doğrulaması ve tamper kanıtı bu gate'in içindedir.
 4. Checksum, signature ve provenance dosyalarını release notlarıyla birlikte
    yayımlayın.
+
+## 2a. Self-hosted release adımları (WP32, ADR-0032)
+
+Self-hosted dağıtım artifact'i yayımlanacaksa, §2'deki imza hattının üzerine:
+
+1. `pnpm wp32:test` — dağıtım invariantlarının statik kabulü (pin, compose,
+   script hijyeni, credential taraması).
+2. Çok mimarili release bundle üretimi (linux/amd64 + linux/arm64):
+
+   ```bash
+   COSIGN_KEY_FILE=<anahtar> COSIGN_PUB_FILE=<pub> \
+     bash infra/self-hosted/release/build-release.sh --output dist/self-hosted-release
+   ```
+
+   Çıktı: `product-oci.tar`, `self-hosted-dist.tar`, `release-manifest.json`,
+   `SHA256SUMS`, cosign imzaları, `provenance.intoto.json`, `trust-policy.json`.
+
+3. Doğrulama provası: temiz bir makinede
+   `bash infra/self-hosted/self-hosted.sh verify-release <bundle>` fail-closed
+   geçmeli; imzasız/bozuk bundle reddedilmelidir.
+4. Kurulum kabulü: her iki mimaride `pnpm wp32:preflight`,
+   `pnpm wp32:install-smoke`, `pnpm wp32:lifecycle`, `pnpm wp32:credential-scan`
+   ve self-hosted kurulum üzerinde `pnpm wp32:golden` (PWA golden senaryosu).
+   `not-run` kalan gate release notlarında açıkça listelenir ve fail-closed
+   sayılır.
+5. Runbook seti güncel olmalı: `docs/operations/self-hosted-*.md`.
 
 ## 3. Publish öncesi yönetici kararları (ilk açılış)
 

@@ -1,0 +1,40 @@
+# WP32 — self-hosted reverse proxy şablonu. self-hosted.sh install tarafından
+# @@PLACEHOLDER@@ alanları doldurularak ${SELF_HOSTED_CONFIG_DIR}/Caddyfile olarak
+# render edilir. TLS zorunludur; HTTP yalnız ACME challenge, health ve HTTPS
+# yönlendirmesi sunar.
+{
+	admin off
+	@@ACME_EMAIL_BLOCK@@
+}
+
+http://@@DOMAIN@@:80 {
+	handle /caddy-healthz {
+		respond "ok" 200
+	}
+	handle {
+		redir https://@@DOMAIN@@{uri} 308
+	}
+}
+
+https://@@DOMAIN@@:443 {
+	@@TLS_DIRECTIVE@@
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+
+	@control-plane {
+		path /v1/* /healthz /readyz
+	}
+	handle @control-plane {
+		reverse_proxy control-plane:3300
+	}
+
+	handle {
+		reverse_proxy web:3301
+	}
+}

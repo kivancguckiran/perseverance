@@ -50,3 +50,10 @@ regexes = [
   '''\$\{?[a-z_]*password\}?''',
   ''':'wp30_runtime_password'''',
 ]
+
+[[allowlists]]
+description = "WP32 self-hosted runtime rol parolası indirection'ı: init-runtime-role.sql psql değişkeni (:'self_hosted_runtime_password') ve apply-migrations.sh env referansı (${RUNTIME_PASSWORD}) literal secret taşımaz; gerçek değer kurulumda üretilir ve yalnız 0600 izinli secret dosyasında yaşar (ADR-0032)."
+regexes = [
+  '''self_hosted_runtime_password''',
+  '''\$\{RUNTIME_PASSWORD\}''',
+]
