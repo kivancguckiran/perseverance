@@ -135,6 +135,7 @@ import {
   readinessResponseSchema,
   sessionListResponseSchema,
   updateConversationRequestSchema,
+  updateSessionArchiveRequestSchema,
   gitSnapshotSchema,
   gitSnapshotListResponseSchema,
   metricsResponseSchema,
@@ -640,6 +641,12 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       resourceType: 'session',
     },
     {
+      method: 'POST',
+      route: '/v1/sessions/:sessionId/archive',
+      action: 'session.update',
+      resourceType: 'session',
+    },
+    {
       method: 'GET',
       route: '/v1/sessions',
       action: 'session.read',
@@ -1135,6 +1142,13 @@ function usageLimitErrorResponse(decision: AdmissionDecision) {
   })
 }
 
+class CommercialDependencyUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super('Commercial policy dependency is unavailable', { cause })
+    this.name = 'CommercialDependencyUnavailableError'
+  }
+}
+
 export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   const app = Fastify({ logger: options.logger ?? false })
   const now = options.now ?? (() => new Date())
@@ -1155,74 +1169,78 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     requestedBytes?: number
   }) => {
     if (!options.commercialPolicy) return null
-    const scoped = {
-      tenantId: input.tenantId,
-      organizationId: input.tenantId,
-      workspaceId: input.workspaceId,
+    try {
+      const scoped = {
+        tenantId: input.tenantId,
+        organizationId: input.tenantId,
+        workspaceId: input.workspaceId,
+      }
+      const decision = options.commercialPolicy.admit
+        ? await options.commercialPolicy.admit({
+            ...scoped,
+            operation: input.operation,
+            requestKey: input.requestKey,
+            ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+            ...(input.requestedBytes !== undefined
+              ? { requestedBytes: input.requestedBytes }
+              : {}),
+            evaluatedAt: now(),
+          })
+        : await (async () => {
+            const [snapshot, measurement] = await Promise.all([
+              options.commercialPolicy!.snapshot(scoped),
+              options.commercialPolicy!.measurements({
+                ...scoped,
+                operation: input.operation,
+                ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                ...(input.requestedBytes !== undefined
+                  ? { requestedBytes: input.requestedBytes }
+                  : {}),
+              }),
+            ])
+            const value = evaluateAdmission(
+              {
+                ...scoped,
+                schemaVersion: 1,
+                operation: input.operation,
+                measurements: measurement.values,
+                measurementWatermark: measurement.watermark,
+                evaluatedAt: measurement.measuredAt,
+              },
+              snapshot,
+            )
+            await options.commercialPolicy!.recordDecision?.(value)
+            return value
+          })()
+      latestCommercialDecisions.set(
+        JSON.stringify([input.tenantId, input.workspaceId]),
+        decision,
+      )
+      store.appendAudit({
+        tenantId: input.tenantId,
+        workspaceId: input.workspaceId,
+        sessionId: input.sessionId ?? null,
+        actor: 'system',
+        actorPrincipalId: null,
+        action: 'quota.decided',
+        outcome: decision.outcome === 'deny' ? 'failure' : 'success',
+        idempotencyKey: `quota:${decision.decisionId}`,
+        correlationId: null,
+        requestId: null,
+        traceId: null,
+        metadata: {
+          operation: decision.operation,
+          status: decision.outcome,
+          reasonCode: decision.reason,
+          policyVersion: decision.policyVersion,
+          measurementWatermark: decision.measurementWatermark,
+          inFlightPolicy: decision.inFlightPolicy,
+        },
+      })
+      return decision
+    } catch (error) {
+      throw new CommercialDependencyUnavailableError(error)
     }
-    const decision = options.commercialPolicy.admit
-      ? await options.commercialPolicy.admit({
-          ...scoped,
-          operation: input.operation,
-          requestKey: input.requestKey,
-          ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-          ...(input.requestedBytes !== undefined
-            ? { requestedBytes: input.requestedBytes }
-            : {}),
-          evaluatedAt: now(),
-        })
-      : await (async () => {
-          const [snapshot, measurement] = await Promise.all([
-            options.commercialPolicy!.snapshot(scoped),
-            options.commercialPolicy!.measurements({
-              ...scoped,
-              operation: input.operation,
-              ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-              ...(input.requestedBytes !== undefined
-                ? { requestedBytes: input.requestedBytes }
-                : {}),
-            }),
-          ])
-          const value = evaluateAdmission(
-            {
-              ...scoped,
-              schemaVersion: 1,
-              operation: input.operation,
-              measurements: measurement.values,
-              measurementWatermark: measurement.watermark,
-              evaluatedAt: measurement.measuredAt,
-            },
-            snapshot,
-          )
-          await options.commercialPolicy!.recordDecision?.(value)
-          return value
-        })()
-    latestCommercialDecisions.set(
-      JSON.stringify([input.tenantId, input.workspaceId]),
-      decision,
-    )
-    store.appendAudit({
-      tenantId: input.tenantId,
-      workspaceId: input.workspaceId,
-      sessionId: input.sessionId ?? null,
-      actor: 'system',
-      actorPrincipalId: null,
-      action: 'quota.decided',
-      outcome: decision.outcome === 'deny' ? 'failure' : 'success',
-      idempotencyKey: `quota:${decision.decisionId}`,
-      correlationId: null,
-      requestId: null,
-      traceId: null,
-      metadata: {
-        operation: decision.operation,
-        status: decision.outcome,
-        reasonCode: decision.reason,
-        policyVersion: decision.policyVersion,
-        measurementWatermark: decision.measurementWatermark,
-        inFlightPolicy: decision.inFlightPolicy,
-      },
-    })
-    return decision
   }
   const explicitInMemory =
     options.allowInMemorySupportAccess === true ||
@@ -1787,6 +1805,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     authContexts.set(request, { principal, memberships: resolvedMemberships })
   })
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof CommercialDependencyUnavailableError)
+      return reply.code(503).send({
+        code: 'COMMERCIAL_DEPENDENCY_UNAVAILABLE',
+        message: 'Commercial policy dependency is unavailable',
+      })
     if (error instanceof AuthenticationError) {
       const authenticationFailure =
         error.code === 'AUTH_REQUIRED' ||
@@ -4522,59 +4545,100 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
     },
   )
 
-  app.get<{ Querystring: { cursor?: string; limit?: string } }>(
-    '/v1/sessions',
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/archive',
     async (request, reply) => {
-      const scope = workspaceScope(request.headers)
+      const scope = requestScope(request.headers, request.params.sessionId)
       if (!scope)
         return reply.code(400).send({
           code: 'MISSING_SCOPE',
           message: 'x-tenant-id and x-workspace-id headers are required',
         })
-      const limit =
-        request.query.limit === undefined ? 20 : parseLimit(request.query.limit)
-      const cursor = decodeSessionCursor(request.query.cursor)
-      if (!limit || limit > 100)
-        return reply.code(400).send({
-          code: 'INVALID_LIMIT',
-          message: 'limit must be between 1 and 100',
-        })
-      if (cursor === null)
-        return reply
-          .code(400)
-          .send({ code: 'INVALID_CURSOR', message: 'cursor is invalid' })
-      const page = store.listRecentSessions(scope, limit, cursor)
-      const identity = sharedFolderIdentity(request)
-      const visibility = await Promise.all(
-        page.sessions.map(async (session) => {
-          if (!session.folderId)
-            return identity
-              ? (await sharedFolders.listFolders(identity)).length === 0
-              : false
-          if (!session.folderId.startsWith('fld_')) return true
-          if (!identity) return false
-          try {
-            await sharedFolders.getFolder(identity, session.folderId, 'read')
-            return true
-          } catch {
-            return false
-          }
-        }),
+      const body = updateSessionArchiveRequestSchema.safeParse(
+        request.body ?? {},
       )
-      const visible = page.sessions.filter((_, index) => visibility[index])
-      const last = visible.at(-1)
-      return sessionListResponseSchema.parse({
-        sessions: visible,
-        nextCursor:
-          page.hasMore && last
-            ? encodeSessionCursor({
-                updatedAt: last.updatedAt,
-                sessionId: last.sessionId,
-              })
-            : null,
-      })
+      if (!body.success)
+        return reply.code(400).send({
+          code: 'VALIDATION_ERROR',
+          message: 'Session archive request is invalid',
+        })
+      try {
+        await enforceSessionFolder(request, scope, 'mutate')
+        return sessionResponseSchema.parse(
+          await orchestrator.setSessionArchived(scope, body.data.archived),
+        )
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
     },
   )
+
+  app.get<{
+    Querystring: { cursor?: string; limit?: string; archived?: string }
+  }>('/v1/sessions', async (request, reply) => {
+    const scope = workspaceScope(request.headers)
+    if (!scope)
+      return reply.code(400).send({
+        code: 'MISSING_SCOPE',
+        message: 'x-tenant-id and x-workspace-id headers are required',
+      })
+    const limit =
+      request.query.limit === undefined ? 20 : parseLimit(request.query.limit)
+    const cursor = decodeSessionCursor(request.query.cursor)
+    const archived = request.query.archived === 'true'
+    if (
+      request.query.archived !== undefined &&
+      request.query.archived !== 'true' &&
+      request.query.archived !== 'false'
+    )
+      return reply.code(400).send({
+        code: 'INVALID_ARCHIVED_FILTER',
+        message: 'archived must be true or false',
+      })
+    if (!limit || limit > 100)
+      return reply.code(400).send({
+        code: 'INVALID_LIMIT',
+        message: 'limit must be between 1 and 100',
+      })
+    if (cursor === null)
+      return reply
+        .code(400)
+        .send({ code: 'INVALID_CURSOR', message: 'cursor is invalid' })
+    const page = store.listRecentSessions(scope, limit, cursor, archived)
+    const identity = sharedFolderIdentity(request)
+    const visibility = await Promise.all(
+      page.sessions.map(async (session) => {
+        if (!session.folderId)
+          return identity
+            ? (await sharedFolders.listFolders(identity)).length === 0
+            : false
+        if (!session.folderId.startsWith('fld_')) return true
+        if (!identity) return false
+        try {
+          await sharedFolders.getFolder(identity, session.folderId, 'read')
+          return true
+        } catch {
+          return false
+        }
+      }),
+    )
+    const visible = page.sessions.filter((_, index) => visibility[index])
+    const last = visible.at(-1)
+    return sessionListResponseSchema.parse({
+      sessions: visible,
+      nextCursor:
+        page.hasMore && last
+          ? encodeSessionCursor({
+              updatedAt: last.updatedAt,
+              sessionId: last.sessionId,
+            })
+          : null,
+    })
+  })
 
   app.get<{ Params: { sessionId: string } }>(
     '/v1/sessions/:sessionId',
@@ -5088,6 +5152,11 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         | undefined
       try {
         const session = await enforceSessionFolder(request, scope, 'turn')
+        if (session.archivedAt)
+          return reply.code(409).send({
+            code: 'SESSION_ARCHIVED',
+            message: 'Archived sessions cannot start new turns',
+          })
         if (session.folderId?.startsWith('fld_')) {
           const identity = sharedFolderIdentity(request)!
           const reserved = await sharedFolders.reserveTask({

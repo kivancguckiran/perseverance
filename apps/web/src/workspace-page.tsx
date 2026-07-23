@@ -290,7 +290,7 @@ type OfflineHistorySession = Pick<
   | 'provider'
   | 'resolvedModel'
   | 'reasoningEffort'
-> & { folderId: null; updatedAt: string }
+> & { folderId: null; archivedAt: null; updatedAt: string }
 
 export function parseOfflineHistory(
   raw: string | null,
@@ -322,6 +322,7 @@ export function parseOfflineHistory(
               reasoningEffort:
                 item.reasoningEffort as OfflineHistorySession['reasoningEffort'],
               folderId: null,
+              archivedAt: null,
               updatedAt: item.updatedAt,
             },
           ]
@@ -395,6 +396,8 @@ export function userFacingApiError(
     return 'Kullanım kredisi tükendi. Bu workspace’te yeni bir işlem başlatmak için yeterli prepaid kredi bulunmuyor.'
   if (body?.code === 'USAGE_LIMIT_REACHED')
     return 'Workspace kullanım limiti doldu. Plan ve kota ayarlarını kontrol edin.'
+  if (body?.code === 'COMMERCIAL_DEPENDENCY_UNAVAILABLE')
+    return 'Kullanım doğrulama servisine şu anda ulaşılamıyor. Lütfen kısa bir süre sonra yeniden deneyin.'
   return body?.message ?? `İstek başarısız (${status})`
 }
 
@@ -428,9 +431,10 @@ export function sessionScopedCursor(
   return currentSessionId === nextSessionId ? cursor : 0
 }
 
-async function readRecentSessions(cursor: string | null) {
+async function readRecentSessions(cursor: string | null, archived = false) {
   const query = new URLSearchParams({ limit: '12' })
   if (cursor) query.set('cursor', cursor)
+  if (archived) query.set('archived', 'true')
   const response = await fetch(`${apiBaseUrl}/v1/sessions?${query}`, {
     headers: scopeHeaders,
   })
@@ -1368,6 +1372,27 @@ export function shouldSubmitComposer(input: {
   return input.key === 'Enter' && !input.shiftKey && !input.isComposing
 }
 
+export function turnSubmitBlocked(input: {
+  session: Pick<SessionResponse, 'status' | 'provider'> | undefined
+  prompt: string
+  attachmentCount: number
+  turnPending: boolean
+  turnActive: boolean
+  online: boolean
+  authReady: boolean
+  selectedProvider: 'codex' | 'claude' | 'gemini' | 'cursor'
+}): boolean {
+  const provider = input.session?.provider ?? input.selectedProvider
+  return (
+    (input.session !== undefined && input.session.status !== 'active') ||
+    (!input.prompt.trim() && input.attachmentCount === 0) ||
+    input.turnPending ||
+    input.turnActive ||
+    !input.online ||
+    (!input.authReady && provider === 'codex')
+  )
+}
+
 export function isNearScrollEnd(
   metrics: { scrollHeight: number; scrollTop: number; clientHeight: number },
   threshold = 120,
@@ -1979,21 +2004,25 @@ function ApprovalCard({
 
 type HistorySession = Pick<
   SessionSummary,
-  'sessionId' | 'folderId' | 'title' | 'status'
+  'sessionId' | 'folderId' | 'title' | 'status' | 'archivedAt'
 >
 
-function ConversationHistory({
+export function ConversationHistory({
   folders,
   sessions,
+  archivedSessions,
   activeSessionId,
   folderName,
   folderPending,
   readOnly,
   folderActionPending,
+  conversationActionPending,
   onFolderNameChange,
   onCreateFolder,
   onNewConversation,
   onSelectConversation,
+  onArchiveConversation,
+  onRestoreConversation,
   onSelectFolder,
   onArchiveFolder,
   onRestoreFolder,
@@ -2003,15 +2032,19 @@ function ConversationHistory({
 }: {
   folders: ConversationFolder[]
   sessions: HistorySession[]
+  archivedSessions: HistorySession[]
   activeSessionId?: string
   folderName: string
   folderPending: boolean
   readOnly: boolean
   folderActionPending?: string
+  conversationActionPending?: string
   onFolderNameChange(value: string): void
   onCreateFolder(): void
   onNewConversation(folderId: string | null): void
   onSelectConversation(sessionId: string): void
+  onArchiveConversation(session: HistorySession): void
+  onRestoreConversation(session: HistorySession): void
   onSelectFolder(folderId: string | null): void
   onArchiveFolder(folder: ConversationFolder): void
   onRestoreFolder(folder: ConversationFolder): void
@@ -2139,17 +2172,30 @@ function ConversationHistory({
               </summary>
               <div className="history-conversations">
                 {groupedSessions.map((item) => (
-                  <button
-                    type="button"
-                    key={item.sessionId}
-                    className={
-                      item.sessionId === activeSessionId ? 'is-active' : ''
-                    }
-                    onClick={() => onSelectConversation(item.sessionId)}
-                  >
-                    <span>{item.title}</span>
-                    <small>{item.status}</small>
-                  </button>
+                  <div className="history-conversation" key={item.sessionId}>
+                    <button
+                      type="button"
+                      className={
+                        item.sessionId === activeSessionId ? 'is-active' : ''
+                      }
+                      onClick={() => onSelectConversation(item.sessionId)}
+                    >
+                      <span>{item.title}</span>
+                      <small>{item.status}</small>
+                    </button>
+                    <button
+                      type="button"
+                      className="history-conversation-action"
+                      disabled={
+                        readOnly || conversationActionPending === item.sessionId
+                      }
+                      aria-label={`${item.title} sohbetini arşivle`}
+                      title="Sohbeti arşivle"
+                      onClick={() => onArchiveConversation(item)}
+                    >
+                      ↓
+                    </button>
+                  </div>
                 ))}
                 {groupedSessions.length === 0 ? (
                   <p>Henüz konuşma yok.</p>
@@ -2193,6 +2239,31 @@ function ConversationHistory({
                 </div>
               )
             })}
+          </details>
+        ) : null}
+        {archivedSessions.length ? (
+          <details className="archived-conversations">
+            <summary>Arşivlenen sohbetler · {archivedSessions.length}</summary>
+            {archivedSessions.map((item) => (
+              <div className="archived-conversation" key={item.sessionId}>
+                <button
+                  type="button"
+                  onClick={() => onSelectConversation(item.sessionId)}
+                >
+                  <span>{item.title}</span>
+                  <small>{item.status}</small>
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    readOnly || conversationActionPending === item.sessionId
+                  }
+                  onClick={() => onRestoreConversation(item)}
+                >
+                  Geri al
+                </button>
+              </div>
+            ))}
           </details>
         ) : null}
       </div>
@@ -2334,6 +2405,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     enabled: online && identity.isSuccess,
   })
+  const archivedSessions = useQuery({
+    queryKey: ['archived-sessions', cacheNamespace],
+    queryFn: () => readRecentSessions(null, true),
+    enabled: online && identity.isSuccess,
+  })
   const [offlineHistory, setOfflineHistory] = useState<OfflineHistorySession[]>(
     [],
   )
@@ -2432,6 +2508,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     )
   }, [])
   const [folderActionPending, setFolderActionPending] = useState<string>()
+  const [conversationActionPending, setConversationActionPending] =
+    useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [supportAccessOpen, setSupportAccessOpen] = useState(false)
@@ -2457,6 +2535,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     : online
       ? []
       : offlineHistory
+  const archivedHistorySessions: HistorySession[] =
+    archivedSessions.data?.sessions ?? []
 
   useEffect(() => {
     setOfflineHistory(
@@ -2512,6 +2592,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         resolvedModel: item.resolvedModel,
         reasoningEffort: item.reasoningEffort,
         folderId: null,
+        archivedAt: null,
         updatedAt: item.updatedAt,
       }))
     setOfflineHistory(minimized)
@@ -2700,6 +2781,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           void readSessionDetail(session.sessionId).then((loaded) => {
             if (active && loaded) setSession(loaded)
           })
+        if (
+          parsed.data.type === 'event' &&
+          parsed.data.event.type === 'turn.completed'
+        )
+          void recentSessions.refetch()
         if (parsed.data.type === 'event' || parsed.data.type === 'replay') {
           socket?.send(
             JSON.stringify({
@@ -2947,37 +3033,43 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     online,
   })
 
-  async function createSession(folderId = selectedFolderId) {
-    setSessionPending(true)
+  function beginConversationDraft(folderId = selectedFolderId) {
+    setSelectedFolderId(folderId)
+    closeHistoryOverlay()
+    void recentSessions.refetch()
+    if (!sessionId) return
+    lastSequence.current = 0
+    setEvents(new Map())
+    setSession(undefined)
+    setApprovals(new Map())
+    setPrompt('')
+    setAttachments([])
+    setReadOnly(false)
     setError(undefined)
-    try {
-      const response = await fetch(`${apiBaseUrl}/v1/sessions`, {
-        method: 'POST',
-        headers: scopeHeaders,
-        body: JSON.stringify({
-          folderId,
-          provider: selectedProvider,
-          model: selectedModelId
-            ? { modelId: selectedModelId, reasoningEffort: selectedEffort }
-            : { alias: 'sol', reasoningEffort: selectedEffort },
-        }),
-      })
-      if (!response.ok) throw await apiError(response)
-      const created = sessionResponseSchema.parse(await response.json())
-      lastSequence.current = 0
-      setEvents(new Map())
-      setSession(created)
-      setReadOnly(false)
-      await navigate({
-        to: '/sessions/$sessionId',
-        params: { sessionId: created.sessionId },
-      })
-      void recentSessions.refetch()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSessionPending(false)
-    }
+    void navigate({ to: '/' })
+  }
+
+  async function provisionSession(folderId = selectedFolderId) {
+    const body = JSON.stringify({
+      folderId,
+      provider: selectedProvider,
+      model: selectedModelId
+        ? { modelId: selectedModelId, reasoningEffort: selectedEffort }
+        : { alias: 'sol', reasoningEffort: selectedEffort },
+    })
+    const response = await fetch(`${apiBaseUrl}/v1/sessions`, {
+      method: 'POST',
+      headers: scopeHeaders,
+      body,
+      keepalive: true,
+    })
+    if (!response.ok) throw await apiError(response)
+    const created = sessionResponseSchema.parse(await response.json())
+    lastSequence.current = 0
+    setEvents(new Map())
+    setSession(created)
+    setReadOnly(false)
+    return created
   }
 
   async function createFolder() {
@@ -3173,6 +3265,33 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
   }
 
+  async function setConversationArchived(
+    conversation: HistorySession,
+    archived: boolean,
+  ) {
+    setConversationActionPending(conversation.sessionId)
+    setError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/sessions/${encodeURIComponent(conversation.sessionId)}/archive`,
+        {
+          method: 'POST',
+          headers: scopeHeaders,
+          body: JSON.stringify({ archived }),
+        },
+      )
+      if (!response.ok) throw await apiError(response)
+      sessionResponseSchema.parse(await response.json())
+      if (archived && conversation.sessionId === sessionId)
+        beginConversationDraft()
+      await Promise.all([recentSessions.refetch(), archivedSessions.refetch()])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setConversationActionPending(undefined)
+    }
+  }
+
   async function deleteFolder(folder: ConversationFolder) {
     if (
       !window.confirm(
@@ -3301,13 +3420,16 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     event.preventDefault()
     const trimmed = prompt.trim()
     if (
-      !session ||
-      session.status !== 'active' ||
-      (!trimmed && attachments.length === 0) ||
-      turnPending ||
-      turnActive ||
-      !online ||
-      (!authReady && session.provider === 'codex')
+      turnSubmitBlocked({
+        session,
+        prompt,
+        attachmentCount: attachments.length,
+        turnPending,
+        turnActive,
+        online,
+        authReady,
+        selectedProvider,
+      })
     )
       return
     followChatRef.current = true
@@ -3320,21 +3442,28 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     setTurnPending(true)
     setError(undefined)
     try {
+      const activeSession = session ?? (await provisionSession())
+      const body = JSON.stringify({
+        prompt: trimmed,
+        attachmentIds: attachments.map((attachment) => attachment.attachmentId),
+      })
       const response = await fetch(
-        `${apiBaseUrl}/v1/sessions/${session.sessionId}/turns`,
+        `${apiBaseUrl}/v1/sessions/${activeSession.sessionId}/turns`,
         {
           method: 'POST',
           headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
-          body: JSON.stringify({
-            prompt: trimmed,
-            attachmentIds: attachments.map(
-              (attachment) => attachment.attachmentId,
-            ),
-          }),
+          body,
+          keepalive: new TextEncoder().encode(body).byteLength <= 60_000,
         },
       )
       if (!response.ok) throw await apiError(response)
       turnAcceptedResponseSchema.parse(await response.json())
+      void recentSessions.refetch()
+      if (!sessionId)
+        await navigate({
+          to: '/sessions/$sessionId',
+          params: { sessionId: activeSession.sessionId },
+        })
       setPrompt('')
       setAttachments([])
     } catch (cause) {
@@ -3540,21 +3669,29 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           <ConversationHistory
             folders={conversationFolders.data?.folders ?? []}
             sessions={historySessions}
+            archivedSessions={archivedHistorySessions}
             {...(sessionId ? { activeSessionId: sessionId } : {})}
             folderName={folderName}
             folderPending={folderPending}
             readOnly={!online}
             {...(folderActionPending ? { folderActionPending } : {})}
+            {...(conversationActionPending
+              ? { conversationActionPending }
+              : {})}
             onFolderNameChange={setFolderName}
             onCreateFolder={() => void createFolder()}
             onSelectFolder={setSelectedFolderId}
+            onArchiveConversation={(conversation) =>
+              void setConversationArchived(conversation, true)
+            }
+            onRestoreConversation={(conversation) =>
+              void setConversationArchived(conversation, false)
+            }
             onArchiveFolder={(folder) => void setFolderArchived(folder, true)}
             onRestoreFolder={(folder) => void setFolderArchived(folder, false)}
             onDeleteFolder={(folder) => void deleteFolder(folder)}
             onNewConversation={(folderId) => {
-              setSelectedFolderId(folderId)
-              closeHistoryOverlay()
-              void createSession(folderId)
+              beginConversationDraft(folderId)
             }}
             onSelectConversation={(selectedSessionId) => {
               closeHistoryOverlay()
@@ -4493,7 +4630,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   <button
                     type="button"
                     disabled={sessionPending || readOnly}
-                    onClick={() => void createSession()}
+                    onClick={() => beginConversationDraft()}
                   >
                     Yeni sohbet başlat
                   </button>
@@ -4586,26 +4723,26 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 placeholder="Kısa bir cevap ver…"
                 rows={2}
                 disabled={
-                  !session ||
-                  session.status !== 'active' ||
+                  (session !== undefined && session.status !== 'active') ||
                   !online ||
                   turnPending ||
                   readOnly ||
-                  (!authReady && session.provider === 'codex')
+                  (!authReady &&
+                    (session?.provider ?? selectedProvider) === 'codex')
                 }
               />
               <button
                 type="submit"
                 disabled={
-                  !session ||
-                  session.status !== 'active' ||
+                  (session !== undefined && session.status !== 'active') ||
                   !online ||
                   (!prompt.trim() && attachments.length === 0) ||
                   turnPending ||
                   attachmentPending ||
                   turnActive ||
                   readOnly ||
-                  (!authReady && session?.provider === 'codex')
+                  (!authReady &&
+                    (session?.provider ?? selectedProvider) === 'codex')
                 }
               >
                 {turnPending ? 'Gönderiliyor…' : 'Gönder'}

@@ -668,6 +668,7 @@ export const sessionResponseSchema = scopeSchema.extend({
   capabilitySnapshot: capabilityMatrixSchema.nullable(),
   codexThreadId: identifierSchema.nullable(),
   status: sessionStatusSchema,
+  archivedAt: z.iso.datetime().nullable(),
   recoveryErrorCode: recoveryErrorCodeSchema.nullable(),
   lastResumedAt: z.iso.datetime().nullable(),
   runtimeGeneration: z.number().int().nonnegative().nullable(),
@@ -694,6 +695,7 @@ export const sessionSummarySchema = sessionResponseSchema
     reasoningEffort: true,
     codexThreadId: true,
     status: true,
+    archivedAt: true,
   })
   .extend({
     lastSequence: sequenceSchema,
@@ -760,6 +762,10 @@ export const updateConversationRequestSchema = z
       message: 'folderId or title is required',
     },
   )
+
+export const updateSessionArchiveRequestSchema = z
+  .object({ archived: z.boolean() })
+  .strict()
 
 export const SHARED_FOLDER_CONTRACT_VERSION = 1 as const
 const sharedFolderScopeSchema = z.object({

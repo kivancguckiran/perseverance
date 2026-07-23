@@ -859,7 +859,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 13,
+        user_version: 14,
       })
       database.close()
     } finally {
@@ -870,15 +870,59 @@ describe('SqliteEventStore replay and durability', () => {
 })
 
 describe('WP10 sessions and Git snapshot persistence', () => {
+  it('keeps legacy conversations with user-message events while hiding empty sessions', () => {
+    withStore((store) => {
+      const legacySessionId = 'ses_legacy'
+      store.createSession({ ...scope, sessionId: legacySessionId })
+      const legacy = ingestInput('legacy-user-message', 'evt_legacy_user')
+      legacy.sessionId = legacySessionId
+      legacy.event = {
+        ...legacy.event,
+        sessionId: legacySessionId,
+        sourceMethod: 'item/completed',
+        type: 'codex.unknown',
+        payload: {
+          envelopeKind: 'notification',
+          method: 'item/completed',
+          params: {
+            item: {
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'Legacy message' }],
+            },
+          },
+        },
+      }
+      store.ingest(legacy)
+
+      expect(
+        store
+          .listRecentSessions(
+            { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
+            10,
+          )
+          .sessions.map((session) => session.sessionId),
+      ).toEqual([legacySessionId])
+    })
+  })
+
   it('paginates recent sessions with tenant/workspace isolation', () => {
     withStore((store) => {
       store.createSession({ ...scope, sessionId: 'ses_2' })
       store.createSession({ ...scope, sessionId: 'ses_3' })
+      store.createSession({ ...scope, sessionId: 'ses_blank' })
       store.createSession({
         ...scope,
         tenantId: 'ten_other',
         sessionId: 'hidden',
       })
+      for (const sessionId of [scope.sessionId, 'ses_2', 'ses_3'])
+        store.recordDurableUserMessage({
+          ...scope,
+          sessionId,
+          messageId: `msg_${sessionId}`,
+          idempotencyKey: `turn_${sessionId}`,
+          content: `Message for ${sessionId}`,
+        })
       const first = store.listRecentSessions(
         { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
         2,
@@ -897,6 +941,30 @@ describe('WP10 sessions and Git snapshot persistence', () => {
           (item) => item.tenantId === scope.tenantId,
         ),
       ).toBe(true)
+      expect(
+        [...first.sessions, ...second.sessions].map((item) => item.sessionId),
+      ).not.toContain('ses_blank')
+      const archived = store.setSessionArchived(
+        { ...scope, sessionId: 'ses_2' },
+        true,
+      )
+      expect(archived.archivedAt).not.toBeNull()
+      expect(
+        store
+          .listRecentSessions(
+            { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
+            10,
+          )
+          .sessions.map((item) => item.sessionId),
+      ).not.toContain('ses_2')
+      expect(
+        store.listRecentSessions(
+          { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
+          10,
+          undefined,
+          true,
+        ).sessions,
+      ).toEqual([expect.objectContaining({ sessionId: 'ses_2' })])
     })
   })
 
@@ -1103,7 +1171,7 @@ describe('WP11 durable audit', () => {
       expect(reopened.listAudit(scope).records).toHaveLength(1)
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
-        user_version: 13,
+        user_version: 14,
       })
       database.close()
     } finally {
@@ -1542,7 +1610,7 @@ describe('WP14 durable detached run lifecycle', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 13,
+        user_version: 14,
       })
       database.close()
     } finally {

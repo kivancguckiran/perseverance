@@ -73,6 +73,10 @@ type TurnStartParams = codexV2.TurnStartParams
 type TurnStartResponse = codexV2.TurnStartResponse
 type ThreadReadResponse = codexV2.ThreadReadResponse
 type ThreadResumeResponse = codexV2.ThreadResumeResponse
+type ThreadArchiveParams = codexV2.ThreadArchiveParams
+type ThreadArchiveResponse = codexV2.ThreadArchiveResponse
+type ThreadUnarchiveParams = codexV2.ThreadUnarchiveParams
+type ThreadUnarchiveResponse = codexV2.ThreadUnarchiveResponse
 type TurnSteerParams = codexV2.TurnSteerParams
 type TurnSteerResponse = codexV2.TurnSteerResponse
 type TurnInterruptParams = codexV2.TurnInterruptParams
@@ -413,11 +417,15 @@ export class SessionOrchestrator {
             currentProcessGeneration: runtime.client.processGeneration,
           })
           for (const session of this.#store.listWorkspaceSessions(runtime)) {
+            const hasDetachedActiveRun =
+              this.#store.getActiveDurableRun(session) !== null
             if (
               session.codexThreadId &&
               session.status === 'active' &&
-              session.runtimeGeneration !== null &&
-              session.runtimeGeneration !== runtime.client.processGeneration
+              (hasDetachedActiveRun ||
+                (session.runtimeGeneration !== null &&
+                  session.runtimeGeneration !==
+                    runtime.client.processGeneration))
             ) {
               void this.resumeSession(
                 session,
@@ -856,6 +864,37 @@ export class SessionOrchestrator {
             ? ['retry_resume', 'view_read_only']
             : [],
     })
+  }
+
+  async setSessionArchived(
+    scope: StoreScope,
+    archived: boolean,
+  ): Promise<SessionResponse> {
+    const session = this.#store.getSession(scope)
+    if ((session.archivedAt !== null) === archived)
+      return this.getSession(scope)
+    if (session.provider === 'codex' && session.codexThreadId) {
+      const cwd =
+        typeof this.#workspaceCwd === 'function'
+          ? this.#workspaceCwd(scope)
+          : this.#workspaceCwd
+      const runtime = await this.#registry.getOrInitialize({
+        ...scope,
+        cwd,
+        codexHome: this.#codexHome(scope),
+      })
+      if (archived)
+        await runtime.client.request<ThreadArchiveResponse>('thread/archive', {
+          threadId: session.codexThreadId,
+        } satisfies ThreadArchiveParams)
+      else
+        await runtime.client.request<ThreadUnarchiveResponse>(
+          'thread/unarchive',
+          { threadId: session.codexThreadId } satisfies ThreadUnarchiveParams,
+        )
+    }
+    this.#store.setSessionArchived(scope, archived)
+    return this.getSession(scope)
   }
 
   async captureGitSnapshot(

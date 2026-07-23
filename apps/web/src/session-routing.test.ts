@@ -30,6 +30,7 @@ const sessionResponse = {
   },
   codexThreadId: null,
   status: 'starting',
+  archivedAt: null,
   recoveryErrorCode: null,
   lastResumedAt: null,
   runtimeGeneration: null,

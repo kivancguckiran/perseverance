@@ -11,6 +11,7 @@ import {
   sourceMediaType,
   chatFollowStateAfterScroll,
   coalesceTimelineEvents,
+  ConversationHistory,
   conversationFolderPickerState,
   conversationFeed,
   conversationMessages,
@@ -28,6 +29,7 @@ import {
   serverOwnedRunLabel,
   supportGrantStatusLabel,
   shouldSubmitComposer,
+  turnSubmitBlocked,
   userFacingApiError,
 } from './workspace-page'
 import MessageMarkdown from './message-markdown'
@@ -244,6 +246,7 @@ describe('bounded browser timeline state', () => {
         resolvedModel: 'model',
         reasoningEffort: 'medium',
         folderId: null,
+        archivedAt: null,
         updatedAt: '2026-07-15T00:00:00.000Z',
       },
     ])
@@ -938,5 +941,151 @@ describe('durable background run status', () => {
       'Server üzerinde çalışıyor',
     )
     expect(serverOwnedRunLabel('interrupting', 'canlı')).toBe('Durduruluyor…')
+  })
+})
+
+describe('draft conversation and lazy session provisioning', () => {
+  const base = {
+    session: undefined,
+    prompt: 'merhaba',
+    attachmentCount: 0,
+    turnPending: false,
+    turnActive: false,
+    online: true,
+    authReady: true,
+    selectedProvider: 'codex' as const,
+  }
+
+  it('allows submitting a turn before any session exists', () => {
+    expect(turnSubmitBlocked(base)).toBe(false)
+  })
+
+  it('still requires a prompt or attachment for a draft conversation', () => {
+    expect(turnSubmitBlocked({ ...base, prompt: '   ' })).toBe(true)
+    expect(turnSubmitBlocked({ ...base, prompt: '', attachmentCount: 1 })).toBe(
+      false,
+    )
+  })
+
+  it('blocks non-active sessions but not the missing-session draft state', () => {
+    expect(
+      turnSubmitBlocked({
+        ...base,
+        session: { status: 'recovery_required', provider: 'codex' },
+      }),
+    ).toBe(true)
+    expect(
+      turnSubmitBlocked({
+        ...base,
+        session: { status: 'active', provider: 'codex' },
+      }),
+    ).toBe(false)
+  })
+
+  it('applies codex auth readiness to the provider the draft will provision', () => {
+    expect(turnSubmitBlocked({ ...base, authReady: false })).toBe(true)
+    expect(
+      turnSubmitBlocked({
+        ...base,
+        authReady: false,
+        selectedProvider: 'claude',
+      }),
+    ).toBe(false)
+    expect(
+      turnSubmitBlocked({
+        ...base,
+        authReady: false,
+        selectedProvider: 'claude',
+        session: { status: 'active', provider: 'codex' },
+      }),
+    ).toBe(true)
+  })
+
+  it('blocks while a turn is pending, active, or the client is offline', () => {
+    expect(turnSubmitBlocked({ ...base, turnPending: true })).toBe(true)
+    expect(turnSubmitBlocked({ ...base, turnActive: true })).toBe(true)
+    expect(turnSubmitBlocked({ ...base, online: false })).toBe(true)
+  })
+})
+
+describe('conversation archiving history surface', () => {
+  const historySession = (overrides: {
+    sessionId: string
+    title: string
+    archivedAt: string | null
+  }) => ({
+    folderId: null,
+    status: 'active' as const,
+    ...overrides,
+  })
+
+  const historyProps = (overrides: {
+    sessions: ReturnType<typeof historySession>[]
+    archivedSessions: ReturnType<typeof historySession>[]
+  }) => ({
+    folders: [],
+    folderName: '',
+    folderPending: false,
+    readOnly: false,
+    onFolderNameChange: () => {},
+    onCreateFolder: () => {},
+    onNewConversation: () => {},
+    onSelectConversation: () => {},
+    onArchiveConversation: () => {},
+    onRestoreConversation: () => {},
+    onSelectFolder: () => {},
+    onArchiveFolder: () => {},
+    onRestoreFolder: () => {},
+    onDeleteFolder: () => {},
+    ...overrides,
+  })
+
+  it('renders an archive action for every active conversation', () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        ConversationHistory,
+        historyProps({
+          sessions: [
+            historySession({
+              sessionId: 'ses-1',
+              title: 'Aktif sohbet',
+              archivedAt: null,
+            }),
+          ],
+          archivedSessions: [],
+        }),
+      ),
+    )
+    expect(markup).toContain('Aktif sohbet')
+    expect(markup).toContain('Sohbeti arşivle')
+    expect(markup).toContain('Aktif sohbet sohbetini arşivle')
+    expect(markup).not.toContain('Arşivlenen sohbetler')
+  })
+
+  it('groups archived conversations behind a restore surface', () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        ConversationHistory,
+        historyProps({
+          sessions: [],
+          archivedSessions: [
+            historySession({
+              sessionId: 'ses-2',
+              title: 'Eski sohbet',
+              archivedAt: '2026-07-23T00:00:00.000Z',
+            }),
+            historySession({
+              sessionId: 'ses-3',
+              title: 'Daha eski sohbet',
+              archivedAt: '2026-07-22T00:00:00.000Z',
+            }),
+          ],
+        }),
+      ),
+    )
+    expect(markup).toContain('Arşivlenen sohbetler · 2')
+    expect(markup).toContain('Eski sohbet')
+    expect(markup).toContain('Daha eski sohbet')
+    expect(markup).toContain('Geri al')
   })
 })

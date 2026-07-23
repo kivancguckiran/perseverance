@@ -164,6 +164,7 @@ export interface SessionRecord extends StoreScope {
   capabilitySnapshot: CapabilityMatrix | null
   codexThreadId: string | null
   status: string
+  archivedAt: string | null
   recoveryErrorCode: string | null
   lastResumedAt: string | null
   runtimeGeneration: number | null
@@ -476,6 +477,7 @@ interface SessionRow {
   capability_snapshot_json: string | null
   codex_thread_id: string | null
   status: string
+  archived_at: string | null
   recovery_error_code: string | null
   last_resumed_at: string | null
   runtime_generation: number | null
@@ -651,6 +653,7 @@ function sessionFromRow(row: SessionRow): SessionRecord {
           ),
     codexThreadId: row.codex_thread_id,
     status: row.status,
+    archivedAt: row.archived_at,
     recoveryErrorCode: row.recovery_error_code,
     lastResumedAt: row.last_resumed_at,
     runtimeGeneration: row.runtime_generation,
@@ -1553,6 +1556,25 @@ export class SqliteEventStore {
         changes.title !== undefined ? 1 : 0,
         this.#timestamp(),
         this.#timestamp(),
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      )
+    if (Number(result.changes) !== 1) throw new StoreNotFoundError()
+    return this.getSession(scope)
+  }
+
+  setSessionArchived(scope: StoreScope, archived: boolean): SessionRecord {
+    assertScope(scope)
+    const timestamp = this.#timestamp()
+    const result = this.#database
+      .prepare(
+        `UPDATE sessions SET archived_at = ?, updated_at = ?
+         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+      )
+      .run(
+        archived ? timestamp : null,
+        timestamp,
         scope.tenantId,
         scope.workspaceId,
         scope.sessionId,
@@ -2914,6 +2936,7 @@ export class SqliteEventStore {
     scope: { tenantId: string; workspaceId: string },
     limit: number,
     cursor?: { updatedAt: string; sessionId: string },
+    archived = false,
   ): { sessions: SessionRecord[]; hasMore: boolean } {
     assertIdentifier(scope.tenantId, 'tenantId')
     assertIdentifier(scope.workspaceId, 'workspaceId')
@@ -2923,6 +2946,29 @@ export class SqliteEventStore {
       .prepare(
         `SELECT * FROM sessions
          WHERE tenant_id = ? AND workspace_id = ?
+           AND archived_at IS ${archived ? 'NOT ' : ''}NULL
+           AND (
+             EXISTS (
+               SELECT 1 FROM conversation_user_messages messages
+               WHERE messages.tenant_id = sessions.tenant_id
+                 AND messages.workspace_id = sessions.workspace_id
+                 AND messages.session_id = sessions.session_id
+             )
+             OR EXISTS (
+               SELECT 1 FROM turns
+               WHERE turns.tenant_id = sessions.tenant_id
+                 AND turns.workspace_id = sessions.workspace_id
+                 AND turns.session_id = sessions.session_id
+             )
+             OR EXISTS (
+               SELECT 1 FROM events
+               WHERE events.tenant_id = sessions.tenant_id
+                 AND events.workspace_id = sessions.workspace_id
+                 AND events.session_id = sessions.session_id
+                 AND events.source_method = 'item/completed'
+                 AND json_extract(events.payload_json, '$.payload.params.item.type') = 'userMessage'
+             )
+           )
            AND (? IS NULL OR updated_at < ? OR (updated_at = ? AND session_id < ?))
          ORDER BY updated_at DESC, session_id DESC LIMIT ?`,
       )
