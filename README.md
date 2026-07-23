@@ -1,6 +1,12 @@
 # Persistent Codex Workspace
 
-Codex için çok kiracılı, kalıcı ve mobil öncelikli bir çalışma alanı platformu.
+[![Lisans: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
+
+Codex, Claude, Gemini ve Cursor agent'ları için çok kiracılı, kalıcı ve mobil
+öncelikli bir çalışma alanı platformu. Bağımsız bir community projesidir;
+hiçbir model sağlayıcısıyla bağlantılı değildir ve onlar tarafından
+desteklenmez (bkz. [NOTICE](NOTICE) ve
+[marka politikası](docs/policies/brand-and-endorsement-policy.md)).
 
 Bu repository'nin mimari doğruluk kaynağı [tasarım spesifikasyonudur](docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md). Ürünün çekirdeği terminal çıktısını ekran kazıyarak taklit etmez; her izole workspace içinde gerçek `codex app-server` çalıştırır ve sürüme bağlı olayları kararlı platform olaylarına normalize eder.
 
@@ -43,13 +49,15 @@ docs/                 mimari, karar kayıtları ve planlama
 
 Bu dizinler ihtiyaç doğdukça, Faz 0'ın dikey dilimini destekleyecek biçimde açılacaktır; başlangıçta dağıtık servis sayısı artırılmayacaktır.
 
-## Yerel geliştirme
+## Kurulum ve yerel geliştirme
 
-Gereksinimler: Node.js 24, pnpm 9.15.3 ve Codex CLI 0.144.2.
+Gereksinimler: Node.js 24, pnpm 9.15.3 (corepack) ve Codex CLI 0.144.2.
+Temiz checkout'tan build/test adımlarının tamamı
+[CONTRIBUTING.md](CONTRIBUTING.md) içindedir:
 
 ```bash
-pnpm install
-pnpm generate:codex-protocol
+corepack enable
+pnpm install --frozen-lockfile
 pnpm verify
 pnpm alpha:dev
 ```
@@ -125,3 +133,21 @@ Resume başarısızlığı thread’i değiştirmez; `THREAD_NOT_RESUMABLE` ve r
 ```bash
 pnpm --filter @persistent-codex/workspace-agent smoke:real-recovery
 ```
+
+## Lisans, güvenlik ve destek
+
+Bu repository **GNU AGPL-3.0-only** lisanslıdır; karar ve gerekçeler
+[ADR-0031](docs/architecture/adr-0031-open-source-license.md) içindedir.
+Telif beyanı [NOTICE](NOTICE) dosyasındadır. Provider CLI/SDK'ları
+repository'ye dahil değildir; sınırlar
+[provider dağıtım belgesinde](docs/security/provider-binary-and-sdk-distribution-boundaries.md)
+tanımlanır.
+
+- Güvenlik açığı bildirimi: [SECURITY.md](SECURITY.md) (public issue açmayın).
+- Destek kapsamı: [SUPPORT.md](SUPPORT.md) — community sürümü best-effort
+  desteklidir, SLA yoktur; ücretli Managed Cloud ayrı bir hizmettir.
+- Katkı süreci ve DCO: [CONTRIBUTING.md](CONTRIBUTING.md),
+  davranış kuralları: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+- Public release süreci: [public release checklist](docs/operations/public-release-checklist.md)
+  ve `pnpm release:public-preflight` gate'i (secret taraması, lisans gate'i,
+  SBOM, temiz checkout doğrulaması).
