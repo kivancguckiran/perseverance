@@ -2,7 +2,7 @@
 
 - Plan durumu: Planlandı
 - Plan tarihi: 20 Temmuz 2026
-- Aktif iş paketi: Yok; Faz 5 kapsamında WP27 aktiftir
+- Aktif iş paketi: Yok; Faz 5 mühendislik kapsamı WP30-L ile kapanmıştır
 - Ön koşul: WP0–WP30 ve Faz 5 tamamlanmış olmalıdır
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
