@@ -15,3 +15,6 @@ tmp/
 .codex-home/
 .runtime/
 artifacts/
+
+# Local review scratch
+_to_delete/

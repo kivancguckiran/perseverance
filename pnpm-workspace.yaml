@@ -3,3 +3,6 @@ packages:
   - services/*
   - agents/*
   - packages/*
+allowBuilds:
+  '@authenio/xsd-schema-validator': true
+  esbuild: true
