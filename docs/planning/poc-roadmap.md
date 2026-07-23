@@ -64,7 +64,10 @@ tamamlanmıştır. WP28 gerçek enterprise identity ve tenant data lifecycle kap
 tamamlanmış; WP29 supply-chain, provider canary, güvenli rollout ve compliance
 kapılarıyla tamamlanmış; WP30-L gerçek servisli local production-like acceptance ile
 Faz 5 engineering kapsamını kapatmıştır. Production go-live için WP30-E external
-validation hâlâ zorunludur.
+validation hâlâ zorunludur. Faz 5 tamamlandıktan sonra uygulanacak
+Open Source ve Managed Cloud kapsamı WP31–WP35 olarak
+`docs/planning/phase-6-open-source-and-managed-cloud-plan.md` içinde planlanmıştır;
+bu paketlerin hiçbiri henüz aktif değildir.
 
 ## Uygulama sırası
 
