@@ -1,0 +1,19 @@
+{
+  "name": "@persistent-codex/deployment-profiles",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@persistent-codex/codex-event-adapter": "workspace:*",
+    "@persistent-codex/domain-events": "workspace:*"
+  }
+}
