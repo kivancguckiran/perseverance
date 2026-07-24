@@ -196,6 +196,19 @@ importers:
         specifier: ^8.16.0
         version: 8.20.0
 
+  packages/deployment-profiles:
+    dependencies:
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@persistent-codex/codex-event-adapter':
+        specifier: workspace:*
+        version: link:../codex-event-adapter
+      '@persistent-codex/domain-events':
+        specifier: workspace:*
+        version: link:../domain-events
+
   packages/domain-events:
     dependencies:
       zod:
@@ -329,6 +342,22 @@ importers:
         specifier: ^8.20.0
         version: 8.20.0
 
+  packages/tenant-runtime:
+    dependencies:
+      '@persistent-codex/production-topology':
+        specifier: workspace:*
+        version: link:../production-topology
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
+
   packages/workspace-security: {}
 
   services/control-plane:
@@ -360,6 +389,9 @@ importers:
       '@persistent-codex/corpus-ingestion':
         specifier: workspace:*
         version: link:../../packages/corpus-ingestion
+      '@persistent-codex/deployment-profiles':
+        specifier: workspace:*
+        version: link:../../packages/deployment-profiles
       '@persistent-codex/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events
@@ -393,6 +425,9 @@ importers:
       '@persistent-codex/support-access':
         specifier: workspace:*
         version: link:../../packages/support-access
+      '@persistent-codex/tenant-runtime':
+        specifier: workspace:*
+        version: link:../../packages/tenant-runtime
       '@persistent-codex/workspace-agent':
         specifier: workspace:*
         version: link:../../agents/workspace-agent
@@ -405,6 +440,9 @@ importers:
       pg:
         specifier: ^8.22.0
         version: 8.22.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
     devDependencies:
       '@types/pg':
         specifier: ^8.16.0

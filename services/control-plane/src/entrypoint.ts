@@ -1,6 +1,10 @@
-const localAlpha = process.env.PERSISTENT_CODEX_LOCAL_ALPHA === '1'
+import { resolveBootProfile } from './profile-composition'
 
-if (localAlpha) {
+// WP33: deployment profili boot'ta çözülür; bilinmeyen profil ve cloud
+// profilindeki development fallback'leri fail-closed reddedilir (ADR-0033).
+const { profile } = resolveBootProfile(process.env)
+
+if (profile === 'local') {
   await import('./main')
 } else {
   const { buildProductionControlPlaneFromEnv } =

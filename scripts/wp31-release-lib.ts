@@ -399,6 +399,7 @@ export const SECRET_PATH_PROBES = [
   '.wp31/evidence/report.json',
   '.wp32/evidence/report.json',
   '.wp32/home/secrets/backup-key',
+  '.wp33/evidence/report.json',
   '.codex-home/auth.json',
   '.runtime/alpha/state.json',
   'artifacts/output.bin',
