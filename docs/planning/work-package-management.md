@@ -86,9 +86,9 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                 |
 | WP29 — Supply-chain ve canary                | Tamamlandı | İmzalı build, provider canary, güvenli upgrade ve compliance evidence bağımsız kabul edildi                 |
 | WP30 — Production kabul ve rollout           | Tamamlandı | WP30-L local production-like engineering kabulü geçti; WP30-E production go-live öncesi zorunlu             |
-| WP31 — Open-source release hazırlığı         | Aktif      | Lisans, secret/history, dependency ve public-release güvenlik sınırları tamamlanacak                        |
-| WP32 — Self-hosted dağıtım                   | Planlandı  | Tek komutlu kurulum, upgrade, backup/restore ve subscription login doğrulanacak                             |
-| WP33 — Managed tenant runtime                | Planlandı  | Community/Cloud profilleri ve tenant-isolated managed runtime kurulacak                                     |
+| WP31 — Open-source release hazırlığı         | Tamamlandı | AGPL-3.0-only lisans, secret/history taraması ve deterministik public-release gate bağımsız kabul edildi    |
+| WP32 — Self-hosted dağıtım                   | Tamamlandı | Tek komutlu kurulum, lifecycle, şifreli yedek ve credential sınırı teslim edilip kabul edildi               |
+| WP33 — Managed tenant runtime                | Aktif      | Community/Cloud profilleri ve tenant-isolated managed runtime kurulacak                                     |
 | WP34 — Provider account bağlantıları         | Planlandı  | Subscription OAuth, API/platform auth ve credential lifecycle güvenli hale getirilecek                      |
 | WP35 — Managed Cloud public beta             | Planlandı  | Onboarding, billing, operasyon ve kontrollü public beta ile Faz 6 kapatılacak                               |
 
@@ -1317,3 +1317,54 @@ olarak açık kalır; Faz 6 paketlerinin kabulünü değiştirmez ve onlarla kar
 Aktif iş paketi WP31'dir. Uygulama task'ına verilecek WP31 prompt'u hazırlanmış ve
 yöneticiye teslim edilmiştir; teslimat `chore: prepare the repository for open source
 release` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
+
+## WP31 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Teslimat commit'i `9089e2f2b8334c9c0fa78b75284b0e20030aa43c`
+  (`chore: prepare the repository for open source release`).
+- Lisans kararı AGPL-3.0-only + DCO (ADR-0031); hijyen dosyaları ve politika
+  belgeleri yerinde.
+- `pnpm release:public-preflight` üç tam koşuda ACCEPTED; evidence bayt-aynı
+  (`36256cf62ebfda4c…`). Working tree + 95 commit / 2183 blob history taramasında
+  0 doğrulanmamış bulgu; 4 gerekçeli allowlist sınıfı.
+- Temiz klonda frozen-lockfile install + `pnpm verify` geçti.
+- Kabul, yönetici teyidiyle kapandı (23 Temmuz 2026).
+
+## WP32 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Teslimat commit'i `15969a4257c6621b8945e10bc89b0d91a940d421`
+  (`feat: add production-ready self-hosted distribution`).
+- ADR-0032, `infra/self-hosted/` version+digest-pinli compose profili, tek komut
+  non-interactive install + fail-closed preflight, tracking tablolu migration,
+  admin bootstrap, şifreli backup/restore, upgrade/rollback, uninstall-with-export,
+  multi-arch release + imza/provenance doğrulama entegrasyonu ve beş operasyon
+  runbook'u teslim edildi.
+- `pnpm verify` (47 dosya / 439 test) ve teslimat commit'i üzerinde
+  `pnpm release:public-preflight` iki ardışık koşuda ACCEPTED; evidence bayt-aynı
+  (`9f82e7cffe2defc3…`).
+- `pnpm wp32:test` (25 statik kabul testi) ve statik credential taraması (0 bulgu)
+  geçti. Docker registry ve agent-browser gerektiren `wp32:preflight`,
+  `wp32:install-smoke`, `wp32:lifecycle`, `wp32:credential-scan` (runtime katmanı)
+  ve `wp32:golden` gate'leri teslim ortamında `not-run` raporladı; fail-closed
+  sözleşme korunarak kabul yönetici teyidiyle kapandı (23 Temmuz 2026). Bu
+  gate'ler ilk gerçek VPS kurulumunda (x86_64 + ARM64) koşulacaktır.
+
+## WP33 aktivasyonu
+
+WP31 ve WP32 bağımsız kabul edildi. Faz 6 sırasına uygun olarak WP33
+(Community/Cloud edition sınırı ve tenant-isolated managed runtime) tek aktif iş
+paketi olarak aktive edilmiştir. WP34–WP35 bağımlılık sırasıyla beklemektedir;
+WP33 bağımsız kabul edilmeden WP34 başlatılmaz. WP30-E, production go-live
+öncesinde ayrı zorunlu kapı olarak açık kalır.
+
+Aktif iş paketi WP33'tür. Uygulama task'ına verilecek WP33 prompt'u hazırlanmış ve
+yöneticiye teslim edilmiştir; teslimat `feat: add tenant-isolated managed cloud
+runtime` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
