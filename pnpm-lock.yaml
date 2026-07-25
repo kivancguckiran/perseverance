@@ -273,6 +273,31 @@ importers:
         specifier: ^8.16.0
         version: 8.20.0
 
+  packages/provider-auth:
+    dependencies:
+      '@persistent-codex/deployment-profiles':
+        specifier: workspace:*
+        version: link:../deployment-profiles
+      '@persistent-codex/provider-platform':
+        specifier: workspace:*
+        version: link:../provider-platform
+      '@persistent-codex/tenant-runtime':
+        specifier: workspace:*
+        version: link:../tenant-runtime
+      '@persistent-codex/workspace-security':
+        specifier: workspace:*
+        version: link:../workspace-security
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
+
   packages/provider-cli-adapters:
     dependencies:
       '@persistent-codex/domain-events':
@@ -410,6 +435,9 @@ importers:
       '@persistent-codex/production-topology':
         specifier: workspace:*
         version: link:../../packages/production-topology
+      '@persistent-codex/provider-auth':
+        specifier: workspace:*
+        version: link:../../packages/provider-auth
       '@persistent-codex/provider-cli-adapters':
         specifier: workspace:*
         version: link:../../packages/provider-cli-adapters

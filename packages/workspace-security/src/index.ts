@@ -706,6 +706,7 @@ export interface EncryptionContextV1 extends WorkspaceSecurityScope {
     | 'backup'
     | 'corpus_snapshot'
     | 'push_subscription'
+    | 'provider_credential'
   recordId: string
   additionalAuthenticatedData?: Readonly<Record<string, string>>
 }

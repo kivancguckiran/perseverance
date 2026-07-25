@@ -8,6 +8,7 @@ node_modules/
 .wp31/
 .wp32/
 .wp33/
+.wp34/
 .next/
 dist/
 coverage/

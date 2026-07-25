@@ -24,6 +24,7 @@
     "@persistent-codex/event-store": "workspace:*",
     "@persistent-codex/enterprise-lifecycle": "workspace:*",
     "@persistent-codex/provider-platform": "workspace:*",
+    "@persistent-codex/provider-auth": "workspace:*",
     "@persistent-codex/production-topology": "workspace:*",
     "@persistent-codex/production-readiness": "workspace:*",
     "@persistent-codex/production-observability": "workspace:*",
