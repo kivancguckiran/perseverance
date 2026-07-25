@@ -88,8 +88,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP30 — Production kabul ve rollout           | Tamamlandı | WP30-L local production-like engineering kabulü geçti; WP30-E production go-live öncesi zorunlu             |
 | WP31 — Open-source release hazırlığı         | Tamamlandı | AGPL-3.0-only lisans, secret/history taraması ve deterministik public-release gate bağımsız kabul edildi    |
 | WP32 — Self-hosted dağıtım                   | Tamamlandı | Tek komutlu kurulum, lifecycle, şifreli yedek ve credential sınırı teslim edilip kabul edildi               |
-| WP33 — Managed tenant runtime                | Aktif      | Community/Cloud profilleri ve tenant-isolated managed runtime kurulacak                                     |
-| WP34 — Provider account bağlantıları         | Planlandı  | Subscription OAuth, API/platform auth ve credential lifecycle güvenli hale getirilecek                      |
+| WP33 — Managed tenant runtime                | Tamamlandı | Profil contract'ı, tenant-isolated provisioning/izolasyon ve fail-closed cloud boot bağımsız kabul edildi   |
+| WP34 — Provider account bağlantıları         | Aktif      | Subscription OAuth, API/platform auth ve credential lifecycle güvenli hale getirilecek                      |
 | WP35 — Managed Cloud public beta             | Planlandı  | Onboarding, billing, operasyon ve kontrollü public beta ile Faz 6 kapatılacak                               |
 
 ## WP1 nihai denetim sonucu
@@ -1368,3 +1368,51 @@ WP33 bağımsız kabul edilmeden WP34 başlatılmaz. WP30-E, production go-live
 Aktif iş paketi WP33'tür. Uygulama task'ına verilecek WP33 prompt'u hazırlanmış ve
 yöneticiye teslim edilmiştir; teslimat `feat: add tenant-isolated managed cloud
 runtime` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
+
+## WP33 nihai kabul sonucu
+
+Karar: **Tamamlandı**
+
+Doğrulananlar:
+
+- Teslimat commit'i `67a7a50f53f70326c88a5828f58290bac27a295e`
+  (`feat: add tenant-isolated managed cloud runtime`).
+- ADR-0033, `packages/deployment-profiles` (fail-closed profil çözümleme,
+  deny-by-default entitlement, üç profilde bayt-eşdeğer golden akış contract
+  testi), `packages/tenant-runtime` (checkpointed provisioning/reconcile,
+  tenant-scoped internal auth, orphan bounded cleanup), migration
+  `0035_wp33_managed_tenant_runtime.sql` (FORCE RLS + provisioner sistem rolü),
+  `buildTenantRuntimeApi`, `pnpm wp33:*` gate'leri ve managed runtime runbook'u
+  teslim edildi.
+- `pnpm verify` (53 dosya / 500 test) geçti; teslimat commit'i üzerinde
+  `pnpm release:public-preflight` iki ardışık tam koşuda (temiz klon +
+  frozen-lockfile install + verify dahil) ACCEPTED; evidence bayt-aynı
+  (`967b24492472415f…`).
+- `pnpm wp33:accept` gerçek PostgreSQL ile `{total:4, passed:4, notRun:0}`:
+  iki gerçek tenant'lı adversarial izolasyon (RLS/event/artifact/secret/
+  network/internal-auth sınırları + `TENANT_BUDGET_ERODED` rezervasyon reddi +
+  Tenant B ilk seçim pozisyonu 1 ≤ bütçe 8), provisioning yaşam döngüsü
+  (fault-injection sonrası reconcile yakınsaması, CAS, bounded orphan cleanup)
+  ve chaos (runtime recreation generation 1→2 sonrası conversation/output
+  sayımları birebir, replay boşluksuz, stale-generation yazma reddi).
+- Teslim ortamı sınırları açıkça raporlandı ve `not-run` fail-closed sözleşme
+  korundu: Docker'lı pinli `postgres:17.5` container yolu koşmadı (gate'ler
+  `WP33_DATABASE_URL` ile gerçek PostgreSQL 16.13 üzerinde koştu; `not-run`
+  yolunun exit 1 verdiği ayrıca doğrulandı); gerçek Kata/Kubernetes + AWS KMS
+  production izolasyon smoke'u bu ortamda üretilmedi ve Faz 6 kuralı gereği
+  production isolation kanıtı sayılmaz; koşumlar Node 22.22 üzerindeydi
+  (engines >=24). Bu kontroller ilk gerçek managed-cloud ortam kurulumunda
+  koşulacaktır.
+- Kabul, yönetici teyidiyle kapandı (25 Temmuz 2026).
+
+## WP34 aktivasyonu
+
+WP33 bağımsız kabul edildi. Faz 6 sırasına uygun olarak WP34 (Provider account
+bağlantıları ve subscription OAuth) tek aktif iş paketi olarak aktive
+edilmiştir. WP35 bağımlılık sırasıyla beklemektedir; WP34 bağımsız kabul
+edilmeden WP35 başlatılmaz. WP30-E, production go-live öncesinde ayrı zorunlu
+kapı olarak açık kalır.
+
+Aktif iş paketi WP34'tür. Uygulama task'ına verilecek WP34 prompt'u hazırlanmış
+ve yöneticiye teslim edilmiştir; teslimat `feat: add secure provider account
+connections` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
