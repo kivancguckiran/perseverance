@@ -89,8 +89,8 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP31 — Open-source release hazırlığı         | Tamamlandı | AGPL-3.0-only lisans, secret/history taraması ve deterministik public-release gate bağımsız kabul edildi    |
 | WP32 — Self-hosted dağıtım                   | Tamamlandı | Tek komutlu kurulum, lifecycle, şifreli yedek ve credential sınırı teslim edilip kabul edildi               |
 | WP33 — Managed tenant runtime                | Tamamlandı | Profil contract'ı, tenant-isolated provisioning/izolasyon ve fail-closed cloud boot bağımsız kabul edildi   |
-| WP34 — Provider account bağlantıları         | Aktif      | Subscription OAuth, API/platform auth ve credential lifecycle güvenli hale getirilecek                      |
-| WP35 — Managed Cloud public beta             | Planlandı  | Onboarding, billing, operasyon ve kontrollü public beta ile Faz 6 kapatılacak                               |
+| WP34 — Provider account bağlantıları         | Tamamlandı | Capability matrisi, durable OAuth/vault, kill switch ve credential lifecycle bağımsız kabul edildi          |
+| WP35 — Managed Cloud public beta             | Aktif      | Onboarding, billing, operasyon ve kontrollü public beta ile Faz 6 kapatılacak                               |
 
 ## WP1 nihai denetim sonucu
 
@@ -1416,3 +1416,61 @@ kapı olarak açık kalır.
 Aktif iş paketi WP34'tür. Uygulama task'ına verilecek WP34 prompt'u hazırlanmış
 ve yöneticiye teslim edilmiştir; teslimat `feat: add secure provider account
 connections` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
+
+## WP34 nihai kabul sonucu
+
+Karar: **Tamamlandı** (bir düzeltme turu sonrası)
+
+İlk teslimat **Eksik** değerlendirildi: capability kararı ve kill switch hiçbir
+üretim yolundan çağrılmıyordu (`ProviderCredentialVault.connect` matrise
+sormuyordu), control-plane seam'i yoktu, `wp34:vault` yalnız docker ile
+koşabildiği için durable katman `not-run` kalıyordu, kill-switch tatbikatı
+bellek içiydi ve `.wp34` probe'u eklenmemişti. Düzeltme turu bu maddelerin
+tümünü kapattı.
+
+Doğrulananlar:
+
+- Teslimat commit'i `d13e8c692e7c7a2611bbe386e2043315933bad52`
+  (`feat: add secure provider account connections`).
+- ADR-0034, `packages/provider-auth` (versioned capability matrisi, durable
+  OAuth koordinatörü, tenant-scoped credential vault, kill switch authority),
+  migration `0036_wp34_provider_auth_profiles.sql` (FORCE RLS, plaintext
+  credential kolonu yok, crypto-erasure değişmezi, pending-state partial unique
+  index), `services/control-plane/src/provider-auth-api.ts`, provider terms
+  watch listesi, credential lifecycle runbook'u ve `pnpm wp34:*` gate'leri
+  teslim edildi.
+- `pnpm verify` (56 dosya / 523 test) geçti; teslimat commit'i üzerinde
+  `pnpm release:public-preflight` iki ardışık tam koşuda (temiz klon +
+  frozen-lockfile install + verify dahil) ACCEPTED, evidence bayt-aynı
+  (`ba0c3e221e05501a…`).
+- `pnpm wp34:accept` gerçek PostgreSQL üzerinde `{total:5, passed:5, notRun:0}`:
+  capability enforcement (cloud profilinde evidence'sız connect **ve** lease
+  `CODEX_MANAGED_SUBSCRIPTION_EVIDENCE_REQUIRED` ile actionable reddedildi),
+  durable OAuth (state digest, PKCE S256, tek kullanımlık callback, device
+  code), vault yaşam döngüsü (connect → lease → refresh → rotate → revoke →
+  crypto-erasure; concurrent refresh tekilleşti, cross-tenant substitution ve
+  stale/revoked lease reddedildi, plaintext kolon 0), durable kill-switch
+  tatbikatı (allow → terms-change → safe-halt → disconnect →
+  customer-api-key migrasyonu → alternatif modda lease) ve leak-scan
+  (0 bulgu, gerekçeli allowlist).
+- Fail-closed sözleşme doğrulandı: veritabanı/docker yokken `wp34:vault`
+  `status:'not-run'` + exit 1 veriyor ve `wp34:accept` `accepted:false` oluyor.
+- Gemini consumer subscription OAuth contract'ta koşulsuz `unsupported`;
+  flag ve evidence verilse de açılamadığı testle kanıtlandı.
+- Açıkça `not-run` kalanlar: `wp34:provider-smoke` (izinli gerçek provider
+  credential'ı yok) ve pinli `postgres:17.5` docker yolu (gate'ler operatör
+  veritabanı PostgreSQL 16.13 üzerinde koştu). Koşumlar Node 22.22
+  üzerindeydi (engines >=24). Bu kontroller ilk gerçek managed-cloud ortamında
+  koşulacaktır.
+- Kabul, yönetici teyidiyle kapandı (25 Temmuz 2026).
+
+## WP35 aktivasyonu
+
+WP34 bağımsız kabul edildi. Faz 6 sırasına uygun olarak WP35 (Managed SaaS
+onboarding, billing, operasyon ve kontrollü public beta) tek aktif iş paketi
+olarak aktive edilmiştir. WP35 bağımsız kabul edilmeden Faz 6 kapanmaz.
+WP30-E, production go-live öncesinde ayrı zorunlu kapı olarak açık kalır.
+
+Aktif iş paketi WP35'tir. Uygulama task'ına verilecek WP35 prompt'u hazırlanmış
+ve yöneticiye teslim edilmiştir; teslimat `feat: launch the managed cloud public
+beta` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
