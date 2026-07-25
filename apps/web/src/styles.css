@@ -118,6 +118,200 @@ select {
   padding: 0;
   overflow: hidden;
 }
+
+.managed-cloud-shell {
+  min-height: 100vh;
+  padding: clamp(1rem, 4vw, 4rem);
+  color: #17211b;
+  background:
+    radial-gradient(
+      circle at 90% 0%,
+      rgb(189 229 204 / 70%),
+      transparent 34rem
+    ),
+    linear-gradient(145deg, #f7f8f2, #edf4ee);
+}
+
+.managed-cloud-hero,
+.managed-cloud-card {
+  width: min(100%, 72rem);
+  margin-inline: auto;
+}
+
+.managed-cloud-hero {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.managed-cloud-hero h1,
+.managed-cloud-card h1 {
+  max-width: 18ch;
+  margin: 0.25rem 0;
+  font-size: clamp(2rem, 6vw, 4.5rem);
+  line-height: 0.98;
+}
+
+.managed-cloud-card h2 {
+  margin-top: 0;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #35634a;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.managed-cloud-status {
+  padding: 0.55rem 0.8rem;
+  border: 1px solid #7ca38a;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 72%);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.managed-cloud-card {
+  padding: clamp(1.25rem, 3vw, 2rem);
+  border: 1px solid rgb(65 94 75 / 18%);
+  border-radius: 1.25rem;
+  background: rgb(255 255 255 / 82%);
+  box-shadow: 0 1.5rem 4rem rgb(39 70 51 / 10%);
+  backdrop-filter: blur(18px);
+}
+
+.signin-card {
+  margin-top: 12vh;
+}
+
+.signin-card button,
+.onboarding-form button {
+  padding: 0.8rem 1rem;
+  border: 0;
+  border-radius: 0.75rem;
+  color: white;
+  background: #255b3d;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.onboarding-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.onboarding-form h2,
+.onboarding-form label:last-of-type,
+.onboarding-form button {
+  grid-column: 1 / -1;
+}
+
+.onboarding-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.onboarding-form input,
+.onboarding-form select,
+.onboarding-form textarea {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid #b8c9bd;
+  border-radius: 0.65rem;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+
+.onboarding-form textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.managed-cloud-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  width: min(100%, 72rem);
+  margin-inline: auto;
+}
+
+.managed-cloud-grid .managed-cloud-card {
+  width: auto;
+  margin: 0;
+}
+
+.task-output {
+  grid-column: 1 / -1;
+}
+
+.task-output pre {
+  min-height: 8rem;
+  overflow: auto;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  color: #dff6e7;
+  background: #13241a;
+  white-space: pre-wrap;
+}
+
+.managed-usage {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.managed-usage div {
+  padding: 0.75rem;
+  border-radius: 0.7rem;
+  background: #edf4ee;
+}
+
+.managed-usage dt {
+  color: #547260;
+  font-size: 0.75rem;
+}
+
+.managed-usage dd {
+  margin: 0.25rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.managed-cloud-error {
+  width: min(100%, 72rem);
+  margin: 1rem auto;
+  padding: 0.8rem;
+  border-radius: 0.7rem;
+  color: #8a2525;
+  background: #ffe7e2;
+}
+
+@media (max-width: 640px) {
+  .managed-cloud-hero {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .onboarding-form,
+  .managed-cloud-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .onboarding-form > *,
+  .task-output {
+    grid-column: 1;
+  }
+}
 .workspace-shell > .topbar {
   display: none;
 }

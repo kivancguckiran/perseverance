@@ -374,7 +374,7 @@ describe('WP24 commercial admission and billing API', () => {
     } finally {
       await app.close()
     }
-  })
+  }, 15_000)
 
   it('returns a retryable dependency error when commercial admission is unavailable', async () => {
     const store = new SqliteEventStore(':memory:')

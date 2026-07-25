@@ -244,6 +244,40 @@ importers:
         specifier: workspace:*
         version: link:../codex-event-adapter
 
+  packages/managed-cloud:
+    dependencies:
+      '@persistent-codex/billing-platform':
+        specifier: workspace:*
+        version: link:../billing-platform
+      '@persistent-codex/deployment-profiles':
+        specifier: workspace:*
+        version: link:../deployment-profiles
+      '@persistent-codex/production-readiness':
+        specifier: workspace:*
+        version: link:../production-readiness
+      '@persistent-codex/production-topology':
+        specifier: workspace:*
+        version: link:../production-topology
+      '@persistent-codex/provider-auth':
+        specifier: workspace:*
+        version: link:../provider-auth
+      '@persistent-codex/provider-platform':
+        specifier: workspace:*
+        version: link:../provider-platform
+      '@persistent-codex/tenant-runtime':
+        specifier: workspace:*
+        version: link:../tenant-runtime
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@types/pg':
+        specifier: ^8.16.0
+        version: 8.20.0
+
   packages/production-observability:
     dependencies:
       zod:
@@ -426,6 +460,9 @@ importers:
       '@persistent-codex/event-store':
         specifier: workspace:*
         version: link:../../packages/event-store
+      '@persistent-codex/managed-cloud':
+        specifier: workspace:*
+        version: link:../../packages/managed-cloud
       '@persistent-codex/production-observability':
         specifier: workspace:*
         version: link:../../packages/production-observability
