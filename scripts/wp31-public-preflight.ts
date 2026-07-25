@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,6 +10,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { dirname } from 'node:path'
 import {
   buildDependencySbom,
   buildLicenseReport,
@@ -175,15 +177,53 @@ step('clean-checkout', () => {
   }
   const work = mkdtempSync(join(tmpdir(), 'wp31-clean-'))
   try {
+    const checkout = join(work, 'checkout')
+    const clone = spawnSync('git', ['clone', '--quiet', root, checkout], {
+      cwd: work,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    })
+    if (clone.status !== 0)
+      throw new Error(
+        `git clone failed (${clone.status}): ${(clone.stderr || clone.stdout).slice(-4000)}`,
+      )
+    const diff = spawnSync('git', ['diff', '--binary', 'HEAD'], {
+      cwd: root,
+      encoding: 'buffer',
+      maxBuffer: 128 * 1024 * 1024,
+    })
+    if (diff.status !== 0) throw new Error('git diff --binary HEAD failed')
+    if (diff.stdout.length) {
+      const applied = spawnSync('git', ['apply', '--whitespace=nowarn', '-'], {
+        cwd: checkout,
+        input: diff.stdout,
+        encoding: 'utf8',
+        maxBuffer: 128 * 1024 * 1024,
+      })
+      if (applied.status !== 0)
+        throw new Error(
+          `git apply worktree failed (${applied.status}): ${(applied.stderr || applied.stdout).slice(-4000)}`,
+        )
+    }
+    const untracked = spawnSync(
+      'git',
+      ['ls-files', '--others', '--exclude-standard', '-z'],
+      { cwd: root, encoding: 'buffer' },
+    )
+    if (untracked.status !== 0) throw new Error('git ls-files failed')
+    for (const path of untracked.stdout.toString('utf8').split('\0')) {
+      if (!path) continue
+      const target = join(checkout, path)
+      mkdirSync(dirname(target), { recursive: true })
+      copyFileSync(join(root, path), target)
+    }
     const commands: [string, string[]][] = [
-      ['git', ['clone', '--quiet', root, join(work, 'checkout')]],
       ['pnpm', ['install', '--frozen-lockfile']],
       ['pnpm', ['verify']],
     ]
     for (const [command, args] of commands) {
-      const cwd = command === 'git' ? work : join(work, 'checkout')
       const result = spawnSync(command, args, {
-        cwd,
+        cwd: checkout,
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
         env: { ...process.env, WP31_SKIP_CLEAN_CHECKOUT: '1' },
@@ -192,13 +232,38 @@ step('clean-checkout', () => {
         throw new Error(
           `${command} ${args.join(' ')} failed (${result.status}): ${result.stderr?.slice(-2000) ?? ''}`,
         )
+      if (args[0] === 'install') {
+        const localInventory = collectDependencyInventory(root).map(
+          ({ name, version, license }) => `${name}@${version}:${license}`,
+        )
+        const cleanInventory = collectDependencyInventory(checkout).map(
+          ({ name, version, license }) => `${name}@${version}:${license}`,
+        )
+        if (stableJson(localInventory) !== stableJson(cleanInventory)) {
+          const local = new Set(localInventory)
+          const clean = new Set(cleanInventory)
+          throw new Error(
+            `dependency inventory nondeterministic; clean-only=${cleanInventory
+              .filter((entry) => !local.has(entry))
+              .slice(0, 20)
+              .join(',')}; local-only=${localInventory
+              .filter((entry) => !clean.has(entry))
+              .slice(0, 20)
+              .join(',')}`,
+          )
+        }
+      }
     }
     const head = spawnSync('git', ['rev-parse', 'HEAD'], {
       cwd: join(work, 'checkout'),
       encoding: 'utf8',
     }).stdout.trim()
-    evidence.cleanCheckout = { accepted: true, sourceCommit: head }
-    return `temiz klonda (HEAD ${head.slice(0, 12)}) frozen-lockfile install + verify geçti`
+    evidence.cleanCheckout = {
+      accepted: true,
+      sourceCommit: head,
+      includesWorkingTree: true,
+    }
+    return `temiz worktree snapshot'ında (HEAD ${head.slice(0, 12)}) frozen-lockfile install + verify geçti`
   } finally {
     rmSync(work, { recursive: true, force: true })
   }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import websocket from '@fastify/websocket'
 import Fastify from 'fastify'
+import { ZodError } from 'zod'
 import {
   AuthenticationError,
   OidcAuthenticationAdapter,
@@ -31,6 +32,22 @@ import {
   type ObjectStore,
 } from '@persistent-codex/production-topology/durable-dependencies'
 import { ProductionRolloutAuthority } from './production-rollout-authority'
+import {
+  registerManagedCloudRoutes,
+  type ManagedCloudAuthenticatedPrincipal,
+} from './managed-cloud-api'
+import { ManagedCloudError } from '@persistent-codex/managed-cloud'
+import { createManagedCloudProductionComposition } from './managed-cloud-production'
+import {
+  HttpAwsKmsClient,
+  HttpTenantRuntimeResources,
+} from './managed-cloud-infrastructure'
+import { AwsKmsProvider } from '@persistent-codex/workspace-security'
+import {
+  StaticProviderAuthCapabilitySource,
+  type ProviderAuthEvidence,
+  type ProviderAuthFeatureFlags,
+} from '@persistent-codex/provider-auth'
 
 export interface ProductionControlPlaneOptions {
   instanceId: string
@@ -48,6 +65,7 @@ export interface ProductionControlPlaneOptions {
   telemetryScopeSalt?: string
   authentication?: AuthenticationAdapter
   allowedWebOrigin?: string
+  managedCloud?: ReturnType<typeof createManagedCloudProductionComposition>
 }
 
 function header(value: string | string[] | undefined) {
@@ -164,6 +182,10 @@ export async function buildProductionControlPlane(
           ? { authorization: header(request.headers.authorization)! }
           : {}),
       })
+      if (request.url.startsWith('/v1/managed-cloud')) {
+        requestPrincipals.set(request, principal)
+        return
+      }
       const requestScope = scope(request.headers)
       if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
       const membership = await options.repository.pool.query(
@@ -182,6 +204,26 @@ export async function buildProductionControlPlane(
         return reply.code(401).send({ code: error.code })
       throw error
     }
+  })
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ZodError)
+      return reply.code(400).send({ code: 'INVALID_REQUEST' })
+    if (error instanceof ManagedCloudError) {
+      const status =
+        error.code === 'AUTH_REQUIRED'
+          ? 401
+          : error.code.includes('DENIED') ||
+              error.code.includes('HALT') ||
+              error.code.includes('LIMIT')
+            ? 403
+            : error.code.includes('NOT_FOUND')
+              ? 404
+              : error.code.includes('CONFLICT')
+                ? 409
+                : 400
+      return reply.code(status).send({ code: error.code })
+    }
+    throw error
   })
   app.addHook('onResponse', async (request, reply) => {
     const observed = requestTelemetry.get(request)
@@ -270,6 +312,15 @@ export async function buildProductionControlPlane(
     instanceId: options.instanceId,
     codexVersion: '0.144.2',
   }))
+  if (options.managedCloud)
+    registerManagedCloudRoutes(app, {
+      ...options.managedCloud,
+      principalFor(request): ManagedCloudAuthenticatedPrincipal {
+        const value = requestPrincipals.get(request)
+        if (!value) throw new ManagedCloudError('AUTH_REQUIRED')
+        return { issuer: value.issuer, subject: value.subject }
+      },
+    })
 
   app.get<{ Params: { workspaceId: string } }>(
     '/v1/workspaces/:workspaceId',
@@ -899,6 +950,47 @@ export async function buildProductionControlPlaneFromEnv(
       issuer: required('OIDC_ISSUER'),
       audience: required('OIDC_AUDIENCE'),
     }),
+    ...(env.PERSISTENT_DEPLOYMENT_PROFILE === 'cloud'
+      ? {
+          managedCloud: createManagedCloudProductionComposition({
+            pool: repository.pool,
+            productionRepository: repository,
+            billing,
+            objectStore,
+            broker,
+            regionId: required('PERSISTENT_REGION_ID'),
+            runtimeResources: new HttpTenantRuntimeResources(
+              required('RUNTIME_CONTROL_API_URL'),
+              required('RUNTIME_CONTROL_SERVICE_TOKEN'),
+            ),
+            kms: new AwsKmsProvider(
+              new HttpAwsKmsClient(
+                required('KMS_API_URL'),
+                required('KMS_SERVICE_TOKEN'),
+              ),
+              required('KMS_KEY_ID'),
+              required('KMS_KEY_VERSION'),
+            ),
+            providerCapability: new StaticProviderAuthCapabilitySource({
+              deploymentProfile: 'cloud',
+              evidenceVersion: Number(
+                required('PROVIDER_AUTH_EVIDENCE_VERSION'),
+              ),
+              featureFlags: JSON.parse(
+                required('PROVIDER_AUTH_FEATURE_FLAGS_JSON'),
+              ) as ProviderAuthFeatureFlags,
+              evidenceProvider(provider, authMode) {
+                const evidence = JSON.parse(
+                  required('PROVIDER_AUTH_EVIDENCE_JSON'),
+                ) as Record<string, ProviderAuthEvidence>
+                return evidence[`${provider}:${authMode}`]
+              },
+            }),
+            rolloutId: required('WP35_ROLLOUT_ID'),
+            maxActiveTenants: Number(required('WP35_MAX_ACTIVE_TENANTS')),
+          }),
+        }
+      : {}),
     ...(env.WEB_ALLOWED_ORIGIN
       ? { allowedWebOrigin: env.WEB_ALLOWED_ORIGIN }
       : {}),

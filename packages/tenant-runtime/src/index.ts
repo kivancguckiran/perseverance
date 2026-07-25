@@ -201,7 +201,7 @@ export interface TenantRuntimeRepository {
     runtime: TenantRuntime,
     expectedVersion: number | null,
   ): Promise<void>
-  listRuntimes(): Promise<TenantRuntime[]>
+  listRuntimes(scope?: TenantRuntimeScope): Promise<TenantRuntime[]>
   getJob(
     scope: TenantRuntimeScope,
     jobId: string,
@@ -318,7 +318,7 @@ export class InMemoryTenantRuntimeRepository implements TenantRuntimeRepository 
     this.#cas(this.#runtimes.get(key)?.version, expectedVersion)
     this.#runtimes.set(key, parsed)
   }
-  async listRuntimes() {
+  async listRuntimes(_scope?: TenantRuntimeScope) {
     return [...this.#runtimes.values()]
   }
   async getJob(scope: TenantRuntimeScope, jobId: string) {
@@ -673,7 +673,7 @@ export class TenantProvisioningService {
         { ...tenant, desiredState, version: tenant.version + 1 },
         tenant.version,
       )
-    const runtimes = (await this.#repository.listRuntimes()).filter(
+    const runtimes = (await this.#repository.listRuntimes(scope)).filter(
       (runtime) =>
         runtime.tenantId === scope.tenantId &&
         runtime.organizationId === scope.organizationId &&
@@ -991,7 +991,7 @@ export class TenantProvisioningService {
           : targetState === 'suspended'
             ? 'suspend'
             : 'delete'
-      const runtimes = (await this.#repository.listRuntimes()).filter(
+      const runtimes = (await this.#repository.listRuntimes(scope)).filter(
         (runtime) =>
           runtime.tenantId === scope.tenantId &&
           runtime.organizationId === scope.organizationId &&

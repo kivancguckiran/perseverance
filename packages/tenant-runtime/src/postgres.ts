@@ -241,8 +241,8 @@ export class PostgresTenantRuntimeRepository implements TenantRuntimeRepository 
     })
   }
 
-  async listRuntimes() {
-    return this.#withScope(null, async (client) => {
+  async listRuntimes(scope?: TenantRuntimeScope) {
+    return this.#withScope(scope ?? null, async (client) => {
       const result = await client.query(
         'SELECT * FROM persistent_codex.tenant_runtimes ORDER BY tenant_id, workspace_id',
       )

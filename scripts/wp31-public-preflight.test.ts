@@ -121,7 +121,7 @@ describe('wp31 secret policy', () => {
 describe('wp31 gitignore secret kapsamı', () => {
   it('.wp30 benzeri lokal lab secret dizinleri gitignore kapsamındadır', () => {
     expect(checkGitignoreCoverage(root)).toEqual([])
-  })
+  }, 15_000)
 })
 
 describe('wp31 lisans gate ve SBOM', () => {

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "projectLicense": "AGPL-3.0-only",
-  "componentCount": 342,
+  "componentCount": 341,
   "directCount": 12,
   "licenses": {
     "Apache-2.0": [
       "@openai/codex@0.144.2",
-      "@openai/codex@0.144.2-linux-x64",
-      "@typescript/typescript-linux-x64@7.0.2",
+      "@openai/codex@0.144.2-darwin-arm64",
+      "@typescript/typescript-darwin-arm64@7.0.2",
       "baseline-browser-mapping@2.10.43",
       "detect-libc@2.1.2",
       "expect-type@1.4.0",
@@ -63,7 +63,7 @@
       "@babel/template@7.29.7",
       "@babel/traverse@7.29.7",
       "@babel/types@7.29.7",
-      "@esbuild/linux-x64@0.28.1",
+      "@esbuild/darwin-arm64@0.28.1",
       "@fastify/ajv-compiler@4.0.5",
       "@fastify/cors@11.3.0",
       "@fastify/error@4.2.0",
@@ -83,8 +83,7 @@
       "@oozcitak/util@10.0.0",
       "@oxc-project/types@0.139.0",
       "@pinojs/redact@0.4.0",
-      "@rolldown/binding-linux-x64-gnu@1.1.5",
-      "@rolldown/binding-linux-x64-musl@1.1.5",
+      "@rolldown/binding-darwin-arm64@1.1.5",
       "@rolldown/pluginutils@1.0.1",
       "@standard-schema/spec@1.1.0",
       "@tanstack/history@1.162.0",
@@ -181,6 +180,7 @@
       "fdir@6.5.0",
       "fetchdts@0.1.7",
       "find-my-way@9.6.0",
+      "fsevents@2.3.3",
       "gensync@1.0.0-beta.2",
       "h3@2.0.1-rc.20",
       "hast-util-to-jsx-runtime@2.3.6",
@@ -352,8 +352,7 @@
       "zwitch@2.0.4"
     ],
     "MPL-2.0": [
-      "lightningcss-linux-x64-gnu@1.32.0",
-      "lightningcss-linux-x64-musl@1.32.0",
+      "lightningcss-darwin-arm64@1.32.0",
       "lightningcss@1.32.0"
     ],
     "Python-2.0": [

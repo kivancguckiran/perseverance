@@ -23,6 +23,7 @@
     "@persistent-codex/domain-events": "workspace:*",
     "@persistent-codex/event-store": "workspace:*",
     "@persistent-codex/enterprise-lifecycle": "workspace:*",
+    "@persistent-codex/managed-cloud": "workspace:*",
     "@persistent-codex/provider-platform": "workspace:*",
     "@persistent-codex/provider-auth": "workspace:*",
     "@persistent-codex/production-topology": "workspace:*",
