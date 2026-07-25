@@ -182,6 +182,7 @@ export const RUNTIME_DATA_PLANE_ACTIONS = [
   'artifact.write',
   'run.checkpoint',
   'secret.lease',
+  'provider-credential.lease',
   'replay.read',
 ] as const
 export type RuntimeDataPlaneAction = (typeof RUNTIME_DATA_PLANE_ACTIONS)[number]

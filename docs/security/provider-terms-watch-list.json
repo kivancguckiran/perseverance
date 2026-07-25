@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "provider": "codex",
+      "authMode": "subscription-oauth",
+      "url": "https://developers.openai.com/codex/auth",
+      "observedUpdateDate": "2026-07-20",
+      "effectiveDate": null,
+      "evidenceSha256": "f54733b8404fae2dc971bc78f1e112aef995890bb0c32059748cd41eb99cb467",
+      "evidenceBasis": "sha256(provider|authMode|url|observedUpdateDate|effectiveDate)",
+      "lastCheckedAt": "2026-07-20T00:00:00.000Z",
+      "status": "written-approval-required"
+    },
+    {
+      "provider": "claude",
+      "authMode": "subscription-oauth",
+      "url": "https://code.claude.com/docs/en/legal-and-compliance",
+      "observedUpdateDate": "2026-07-20",
+      "effectiveDate": null,
+      "evidenceSha256": "d597613d62bf59e830163b91f43c0f7173b1ff4304747c6a96ba24b3dc8af09f",
+      "evidenceBasis": "sha256(provider|authMode|url|observedUpdateDate|effectiveDate)",
+      "lastCheckedAt": "2026-07-20T00:00:00.000Z",
+      "status": "previously-approved-required"
+    },
+    {
+      "provider": "gemini",
+      "authMode": "subscription-oauth",
+      "url": "https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals",
+      "observedUpdateDate": "2026-06-23",
+      "effectiveDate": "2026-06-18",
+      "evidenceSha256": "64a89d74c6d6ab12bfe0e1bb27d10465b85d09652f23117821bbc2270d85e67b",
+      "evidenceBasis": "sha256(provider|authMode|url|observedUpdateDate|effectiveDate)",
+      "lastCheckedAt": "2026-07-20T00:00:00.000Z",
+      "status": "unsupported"
+    }
+  ]
+}
