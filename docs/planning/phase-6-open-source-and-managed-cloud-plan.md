@@ -1,8 +1,8 @@
 # Faz 6 — Open Source ve Managed Cloud planı
 
 - Plan durumu: Yürürlükte
-- Plan tarihi: 20 Temmuz 2026 (güncelleme: 25 Temmuz 2026)
-- Aktif iş paketi: WP34; WP31, WP32 ve WP33 bağımsız kabul edildi
+- Plan tarihi: 20 Temmuz 2026 (güncelleme: 25 Temmuz 2026, WP35 aktivasyonu)
+- Aktif iş paketi: WP35; WP31–WP34 bağımsız kabul edildi
 - Ön koşul: WP0–WP30 ve Faz 5 tamamlanmış olmalıdır
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -29,8 +29,8 @@ production adapter'larıyla ayrılır.
 | WP31  | 6   | Tamamlandı | Açık kaynak lisans, repository güvenliği ve public-release hazırlığı |
 | WP32  | 6   | Tamamlandı | Tek komutlu, güncellenebilir ve yedeklenebilir self-hosted dağıtım   |
 | WP33  | 6   | Tamamlandı | Community/Cloud edition sınırı ve tenant-isolated managed runtime    |
-| WP34  | 6   | Aktif      | Provider auth profilleri, subscription OAuth ve credential lifecycle |
-| WP35  | 6   | Planlandı  | Managed SaaS onboarding, billing, operasyon ve kontrollü public beta |
+| WP34  | 6   | Tamamlandı | Provider auth profilleri, subscription OAuth ve credential lifecycle |
+| WP35  | 6   | Aktif      | Managed SaaS onboarding, billing, operasyon ve kontrollü public beta |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP30 ve Faz 5 bağımsız kabul edilmeden
 WP31 aktive edilmez. WP31–WP35 sırayla uygulanır ve her paket bağımsız kabul edilmeden
