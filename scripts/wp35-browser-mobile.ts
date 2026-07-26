@@ -25,6 +25,13 @@ import {
 } from '../packages/provider-auth/src/index'
 import { machineEvidence } from './wp30-evidence'
 import { stableJson } from './wp31-release-lib'
+import {
+  WP35_POSTGRES_READINESS_TIMEOUT_MS,
+  Wp35PostgresReadinessError,
+  startWp35DockerPostgres,
+  type Wp35DockerPostgresLease,
+  type Wp35PostgresAttemptDiagnostic,
+} from './wp35-postgres-readiness'
 
 const root = resolve(import.meta.dirname, '..')
 const gate = 'wp35:browser-mobile'
@@ -32,7 +39,6 @@ const apiPort = 33_000 + (process.pid % 1_000)
 const webPort = 34_000 + (process.pid % 1_000)
 const apiUrl = `http://127.0.0.1:${apiPort}`
 const webUrl = `http://127.0.0.1:${webPort}`
-const containerName = `persistent-wp35-browser-${process.pid}`
 const browserSession = `wp35-mobile-${process.pid}`
 const browserNamespace = `persistent-wp35-${process.pid}`
 const migrations = [
@@ -90,6 +96,9 @@ let billingRepository:
 let api: Awaited<ReturnType<typeof buildProductionControlPlane>> | undefined
 let web: ReturnType<typeof createServer> | undefined
 let currentStep = 'docker-start'
+let dockerLease: Wp35DockerPostgresLease | undefined
+let readinessDiagnostics: Wp35PostgresAttemptDiagnostic[] = []
+let resultRecord: Record<string, unknown> | undefined
 
 const emit = (record: Record<string, unknown>) => {
   mkdirSync(evidenceDir, { recursive: true })
@@ -101,61 +110,17 @@ const emit = (record: Record<string, unknown>) => {
 }
 
 try {
-  const password = `wp35${process.pid}browser`
-  const started = spawnSync(
-    'docker',
-    [
-      'run',
-      '-d',
-      '--name',
-      containerName,
-      '--label',
-      'persistent.wp35=true',
-      '-e',
-      'POSTGRES_PASSWORD',
-      '-e',
-      'POSTGRES_DB=wp35',
-      '-p',
-      '127.0.0.1::5432',
-      '--tmpfs',
-      '/var/lib/postgresql/data:rw,size=512m',
-      process.env.WP35_POSTGRES_TEST_IMAGE ?? 'postgres:17.5-alpine',
-    ],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, POSTGRES_PASSWORD: password },
-    },
-  )
-  assert.equal(started.status, 0, 'browser postgres start failed')
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const ready = spawnSync(
-      'docker',
-      ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', 'wp35'],
-      { encoding: 'utf8' },
-    )
-    if (ready.stdout.includes('accepting connections')) break
-    assert.notEqual(attempt, 119, 'browser postgres readiness timeout')
-    await new Promise((resolveWait) => setTimeout(resolveWait, 250))
-  }
-  const port = spawnSync('docker', ['port', containerName, '5432/tcp'], {
-    encoding: 'utf8',
+  dockerLease = await startWp35DockerPostgres({
+    namePrefix: 'persistent-wp35-browser',
+    image: process.env.WP35_POSTGRES_TEST_IMAGE ?? 'postgres:17.5-alpine',
   })
-    .stdout.trim()
-    .split(':')
-    .at(-1)
-  assert.ok(port)
-  const adminUrl = `postgresql://postgres:${password}@127.0.0.1:${port}/wp35`
-  adminPool = new pg.Pool({ connectionString: adminUrl })
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    try {
-      await adminPool.query('SELECT 1')
-      break
-    } catch {
-      assert.notEqual(attempt, 19, 'browser SQL readiness timeout')
-      await new Promise((resolveWait) => setTimeout(resolveWait, 250))
-    }
-  }
+  readinessDiagnostics = dockerLease.diagnostics
+  const adminUrl = dockerLease.databaseUrl
+  adminPool = new pg.Pool({
+    connectionString: adminUrl,
+    connectionTimeoutMillis: 5_000,
+  })
+  await adminPool.query('SELECT 1')
   currentStep = 'migrations'
   for (const migration of migrations)
     await adminPool.query(
@@ -468,7 +433,7 @@ try {
     overflow: false,
     overlay: false,
   })
-  emit({
+  resultRecord = {
     accepted: true,
     status: 'passed',
     target: 'production-ssr-control-plane-postgresql',
@@ -480,15 +445,22 @@ try {
     errorOverlay: false,
     physicalDevice: 'not-run',
     providerNetwork: 'emulated-not-run',
-  })
+  }
 } catch (error) {
   await adminPool?.query('ROLLBACK').catch(() => undefined)
-  emit({
+  readinessDiagnostics =
+    error instanceof Wp35PostgresReadinessError
+      ? error.diagnostics
+      : (dockerLease?.captureDiagnostics() ?? readinessDiagnostics)
+  resultRecord = {
     accepted: false,
     status: 'failed',
     step: currentStep,
-    error: error instanceof Error ? error.message : 'unknown',
-  })
+    error:
+      error instanceof Error
+        ? error.message.replace(/postgres(?:ql)?:\/\/\S+/gi, '[redacted-uri]')
+        : 'unknown',
+  }
   process.exitCode = 1
 } finally {
   await browser('close').catch(() => undefined)
@@ -500,5 +472,18 @@ try {
   await billingRepository?.close().catch(() => undefined)
   await appPool?.end().catch(() => undefined)
   await adminPool?.end().catch(() => undefined)
-  spawnSync('docker', ['rm', '-f', '-v', containerName], { encoding: 'utf8' })
+  dockerLease?.cleanup()
+  emit({
+    ...(resultRecord ?? {
+      accepted: false,
+      status: 'failed',
+      step: currentStep,
+      error: 'missing gate result',
+    }),
+    postgresReadiness: {
+      timeoutMs: WP35_POSTGRES_READINESS_TIMEOUT_MS,
+      maximumInfrastructureAttempts: 2,
+      attempts: readinessDiagnostics,
+    },
+  })
 }

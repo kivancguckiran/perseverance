@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { machineEvidence } from './wp30-evidence'
+import { machineEvidence, redactWp30Evidence } from './wp30-evidence'
 import { stableJson } from './wp31-release-lib'
 import { WP35_TEST_FILES } from './wp35-lib'
 
@@ -11,6 +12,8 @@ const evidenceDir = join(
   resolve(process.env.WP35_OUTPUT_DIR ?? join(root, '.wp35')),
   'evidence',
 )
+const sha256 = (value: string) =>
+  createHash('sha256').update(value).digest('hex')
 
 const finish = (record: Record<string, unknown>) => {
   mkdirSync(evidenceDir, { recursive: true })
@@ -20,6 +23,31 @@ const finish = (record: Record<string, unknown>) => {
   )
   machineEvidence(gate, record)
   if (record.accepted !== true) process.exitCode = 1
+}
+
+const captureSubprocess = (name: string, run: ReturnType<typeof spawnSync>) => {
+  mkdirSync(evidenceDir, { recursive: true })
+  const stdout = redactWp30Evidence(String(run.stdout ?? ''))
+  const stderr = redactWp30Evidence(String(run.stderr ?? ''))
+  const prefix = name.replaceAll(':', '-')
+  const stdoutFile = `${prefix}-nested.stdout.log`
+  const stderrFile = `${prefix}-nested.stderr.log`
+  writeFileSync(join(evidenceDir, stdoutFile), stdout)
+  writeFileSync(join(evidenceDir, stderrFile), stderr)
+  const exitReason = run.error
+    ? `spawn-error:${run.error.message}`
+    : run.signal
+      ? `signal:${run.signal}`
+      : `exit-code:${run.status ?? 'unknown'}`
+  return {
+    exitStatus: run.status,
+    signal: run.signal,
+    exitReason: redactWp30Evidence(exitReason),
+    stdoutEvidence: `.wp35/evidence/${stdoutFile}`,
+    stderrEvidence: `.wp35/evidence/${stderrFile}`,
+    stdoutSha256: sha256(stdout),
+    stderrSha256: sha256(stderr),
+  }
 }
 
 if (
@@ -72,6 +100,7 @@ if (
     encoding: 'utf8',
     maxBuffer: 100 * 1024 * 1024,
   })
+  const subprocess = captureSubprocess(`${gate}-vitest`, run)
   if (run.stderr) process.stderr.write(run.stderr)
   if (run.status !== 0) {
     finish({
@@ -79,14 +108,30 @@ if (
       status: 'failed',
       runner: 'vitest',
       testFiles: files,
+      nestedVitest: subprocess,
     })
   } else {
-    const report = JSON.parse(run.stdout) as {
-      numTotalTestSuites: number
-      numPassedTestSuites: number
-      numPassedTests: number
-      numFailedTests: number
+    let report:
+      | {
+          numTotalTestSuites: number
+          numPassedTestSuites: number
+          numPassedTests: number
+          numFailedTests: number
+        }
+      | undefined
+    try {
+      report = JSON.parse(run.stdout)
+    } catch {
+      finish({
+        accepted: false,
+        status: 'failed',
+        runner: 'vitest',
+        testFiles: files,
+        exitReason: 'vitest-json-report-unparseable',
+        nestedVitest: subprocess,
+      })
     }
+    if (!report) process.exit(1)
     finish({
       accepted: true,
       status: 'passed',
@@ -97,6 +142,7 @@ if (
       tests: report.numPassedTests + report.numFailedTests,
       passedTests: report.numPassedTests,
       failedTests: report.numFailedTests,
+      nestedVitest: subprocess,
       ...(gate === 'wp35:browser-mobile'
         ? {
             viewports: ['390x844'],

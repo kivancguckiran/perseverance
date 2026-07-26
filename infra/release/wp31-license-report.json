@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "projectLicense": "AGPL-3.0-only",
   "componentCount": 341,
-  "directCount": 12,
+  "directCount": 13,
   "licenses": {
     "Apache-2.0": [
       "@openai/codex@0.144.2",

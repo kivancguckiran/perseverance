@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://persistent-codex.invalid/security/wp35-external-beta-attestation.schema.json",
+  "title": "WP35-E independent external beta acceptance attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "acceptanceClass",
+    "independent",
+    "sourceCommit",
+    "artifactSha256",
+    "cohort",
+    "deployment",
+    "provider",
+    "rollout",
+    "mobile",
+    "billing",
+    "drills",
+    "lifecycle",
+    "security",
+    "cleanup",
+    "liveProbes",
+    "evidenceDigests"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "acceptanceClass": { "const": "WP35-E" },
+    "independent": { "const": true },
+    "sourceCommit": {
+      "const": "36f41c2bc2c53913fc672eaf1d2dfc12364a7216"
+    },
+    "artifactSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "cohort": { "type": "string", "minLength": 1 },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "realOidc",
+        "productionPostgres",
+        "objectStorage",
+        "broker",
+        "kms",
+        "isolatedRuntime"
+      ],
+      "properties": {
+        "realOidc": { "const": true },
+        "productionPostgres": { "const": true },
+        "objectStorage": { "const": true },
+        "broker": { "const": true },
+        "kms": { "const": true },
+        "isolatedRuntime": { "const": true }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "realNetwork", "connected"],
+      "properties": {
+        "allowed": { "const": true },
+        "realNetwork": { "const": true },
+        "connected": { "const": true }
+      }
+    },
+    "rollout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stages"],
+      "properties": {
+        "stages": {
+          "const": ["internal", "design_partner", "limited_beta"]
+        }
+      }
+    },
+    "mobile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "physicalDevice",
+        "pwa",
+        "closedClientContinuation",
+        "durableReplay"
+      ],
+      "properties": {
+        "physicalDevice": { "const": true },
+        "pwa": { "const": true },
+        "closedClientContinuation": { "const": true },
+        "durableReplay": { "const": true }
+      }
+    },
+    "billing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostingAndModelSeparated",
+        "reconciliationDifferenceMicros",
+        "failedTaskSettled",
+        "interruptedTaskSettled"
+      ],
+      "properties": {
+        "hostingAndModelSeparated": { "const": true },
+        "reconciliationDifferenceMicros": { "const": 0 },
+        "failedTaskSettled": { "const": true },
+        "interruptedTaskSettled": { "const": true }
+      }
+    },
+    "drills": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capacityHalt", "incident", "rollback"],
+      "properties": {
+        "capacityHalt": { "const": true },
+        "incident": { "const": true },
+        "rollback": { "const": true }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tenantExport",
+        "tenantDelete",
+        "credentialRevoked",
+        "cryptoErasure"
+      ],
+      "properties": {
+        "tenantExport": { "const": true },
+        "tenantDelete": { "const": true },
+        "credentialRevoked": { "const": true },
+        "cryptoErasure": { "const": true }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criticalFindings", "highFindings"],
+      "properties": {
+        "criticalFindings": { "const": 0 },
+        "highFindings": { "const": 0 }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "orphanRuntimes",
+        "unresolvedReservations",
+        "credentialEnvelopes"
+      ],
+      "properties": {
+        "orphanRuntimes": { "const": 0 },
+        "unresolvedReservations": { "const": 0 },
+        "credentialEnvelopes": { "const": 0 }
+      }
+    },
+    "liveProbes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deploymentMetadataPath",
+        "tenantAWorkspacePath",
+        "tenantBWorkspacePath"
+      ],
+      "properties": {
+        "deploymentMetadataPath": { "type": "string", "pattern": "^/" },
+        "tenantAWorkspacePath": { "type": "string", "pattern": "^/" },
+        "tenantBWorkspacePath": { "type": "string", "pattern": "^/" }
+      }
+    },
+    "evidenceDigests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "deployment",
+        "oidcAuthorization",
+        "infrastructure",
+        "provider",
+        "rollout",
+        "mobilePwa",
+        "billing",
+        "failedInterruptedSettlement",
+        "drills",
+        "lifecycle",
+        "securityPrivacy",
+        "cleanup"
+      ],
+      "properties": {
+        "deployment": { "$ref": "#/$defs/sha256" },
+        "oidcAuthorization": { "$ref": "#/$defs/sha256" },
+        "infrastructure": { "$ref": "#/$defs/sha256" },
+        "provider": { "$ref": "#/$defs/sha256" },
+        "rollout": { "$ref": "#/$defs/sha256" },
+        "mobilePwa": { "$ref": "#/$defs/sha256" },
+        "billing": { "$ref": "#/$defs/sha256" },
+        "failedInterruptedSettlement": { "$ref": "#/$defs/sha256" },
+        "drills": { "$ref": "#/$defs/sha256" },
+        "lifecycle": { "$ref": "#/$defs/sha256" },
+        "securityPrivacy": { "$ref": "#/$defs/sha256" },
+        "cleanup": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

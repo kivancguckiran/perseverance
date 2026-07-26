@@ -14,6 +14,8 @@ export const WP35_GATES = [
   'wp35:lifecycle',
   'wp35:cleanup',
   'wp35:accept',
+  'wp35:reliability',
+  'wp35:external-accept',
 ] as const
 
 export const WP35_TEST_FILES = [
@@ -45,8 +47,12 @@ export const WP35_REQUIRED_FILES = [
   'scripts/wp35-lib.test.ts',
   'scripts/wp35-gate.ts',
   'scripts/wp35-postgres.ts',
+  'scripts/wp35-postgres-readiness.ts',
   'scripts/wp35-browser-mobile.ts',
   'scripts/wp35-accept.ts',
+  'scripts/wp35-reliability.ts',
+  'scripts/wp35-external-accept.ts',
+  'docs/security/wp35-external-beta-attestation.schema.json',
 ] as const
 
 export function summarizeWp35Gates(results: readonly Wp35GateResult[]) {

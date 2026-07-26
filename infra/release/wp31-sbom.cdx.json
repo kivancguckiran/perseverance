@@ -1964,7 +1964,7 @@
       "properties": [
         {
           "name": "persistent-codex:direct",
-          "value": "false"
+          "value": "true"
         }
       ]
     },
