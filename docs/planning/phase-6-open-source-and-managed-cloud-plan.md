@@ -1,8 +1,9 @@
 # Faz 6 — Open Source ve Managed Cloud planı
 
-- Plan durumu: Yürürlükte
-- Plan tarihi: 20 Temmuz 2026 (güncelleme: 25 Temmuz 2026, WP35 aktivasyonu)
-- Aktif iş paketi: WP35; WP31–WP34 bağımsız kabul edildi
+- Plan durumu: Revize edildi — WP35 retire, kapanış `docs/planning/project-closure-plan.md`
+  ile yürütülür (27 Temmuz 2026)
+- Plan tarihi: 20 Temmuz 2026 (güncelleme: 27 Temmuz 2026, WP35 retire kararı)
+- Aktif iş paketi: yok (bu planda); WP31–WP34 bağımsız kabul edildi, WP35 retire edildi
 - Ön koşul: WP0–WP30 ve Faz 5 tamamlanmış olmalıdır
 - Kaynak spesifikasyon:
   `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
@@ -30,7 +31,7 @@ production adapter'larıyla ayrılır.
 | WP32  | 6   | Tamamlandı | Tek komutlu, güncellenebilir ve yedeklenebilir self-hosted dağıtım   |
 | WP33  | 6   | Tamamlandı | Community/Cloud edition sınırı ve tenant-isolated managed runtime    |
 | WP34  | 6   | Tamamlandı | Provider auth profilleri, subscription OAuth ve credential lifecycle |
-| WP35  | 6   | Aktif      | Managed SaaS onboarding, billing, operasyon ve kontrollü public beta |
+| WP35  | 6   | Retire     | Managed SaaS onboarding, billing, operasyon ve kontrollü public beta |
 
 Her zaman yalnız bir iş paketi aktif olabilir. WP30 ve Faz 5 bağımsız kabul edilmeden
 WP31 aktive edilmez. WP31–WP35 sırayla uygulanır ve her paket bağımsız kabul edilmeden
@@ -296,3 +297,13 @@ kalıcı agent task'ı çalıştırabildiği, ücret ve operasyon sınırları a
 - Secret içeren gerçek smoke çıktıları redakte edilir ve credential hiçbir kabul
   artifact'ine yazılmaz.
 - WP35 bağımsız kabul edilmeden Faz 6 kapanmaz.
+
+## 7. Revizyon — WP35 retire kararı (27 Temmuz 2026)
+
+Yönetici kararıyla WP35 retire edilmiş ve Faz 6, Managed Cloud public beta
+gerçekleştirilmeden kapatılmıştır. §5'teki Managed Cloud ve public beta exit
+kriterleri ile §6'daki "WP35 kabul edilmeden Faz 6 kapanmaz" kuralı bu revizyonla
+hükümsüzdür. Projenin kapanış kapsamı, iş paketleri (WP36–WP37) ve exit kriteri
+`docs/planning/project-closure-plan.md` içinde tanımlıdır; retire kayıtları ve
+gerekçe için o plana ve `work-package-management.md` "WP35 retire kararı ve
+kapanış planı aktivasyonu" bölümüne bakınız.

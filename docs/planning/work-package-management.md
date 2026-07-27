@@ -7,7 +7,8 @@
   `docs/planning/phase-2-provider-platform-plan.md` ve
   `docs/planning/phase-3-security-and-cursor-plan.md` ve
   `docs/planning/phase-4-corpus-mobile-and-phase-5-production-plan.md` ve
-  `docs/planning/phase-6-open-source-and-managed-cloud-plan.md`
+  `docs/planning/phase-6-open-source-and-managed-cloud-plan.md` ve
+  `docs/planning/project-closure-plan.md`
 
 ## Bu task'ın rolü
 
@@ -90,7 +91,9 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 | WP32 — Self-hosted dağıtım                   | Tamamlandı | Tek komutlu kurulum, lifecycle, şifreli yedek ve credential sınırı teslim edilip kabul edildi               |
 | WP33 — Managed tenant runtime                | Tamamlandı | Profil contract'ı, tenant-isolated provisioning/izolasyon ve fail-closed cloud boot bağımsız kabul edildi   |
 | WP34 — Provider account bağlantıları         | Tamamlandı | Capability matrisi, durable OAuth/vault, kill switch ve credential lifecycle bağımsız kabul edildi          |
-| WP35 — Managed Cloud public beta             | Aktif      | Onboarding, billing, operasyon ve kontrollü public beta ile Faz 6 kapatılacak                               |
+| WP35 — Managed Cloud public beta             | Retire     | Uygulama teslim edildi (`36f41c2`, `15ec71a`) ancak kabul denetimi yapılmadan retire edildi (27 Tem 2026)   |
+| WP36 — Gerçek ortam doğrulama koşusu (VPS)   | Aktif      | wp32 gate'leri + golden gerçek VPS'te, Node >= 24 verify, `/private/tmp` taşınabilirlik düzeltmesi          |
+| WP37 — v1.0 release ve proje kapanışı        | Bekliyor   | Marka kararı, public yayın, v1.0.0 tag/artifact ve proje kapanış kaydı                                      |
 
 ## WP1 nihai denetim sonucu
 
@@ -1474,3 +1477,35 @@ WP30-E, production go-live öncesinde ayrı zorunlu kapı olarak açık kalır.
 Aktif iş paketi WP35'tir. Uygulama task'ına verilecek WP35 prompt'u hazırlanmış
 ve yöneticiye teslim edilmiştir; teslimat `feat: launch the managed cloud public
 beta` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
+
+## WP35 retire kararı ve kapanış planı aktivasyonu
+
+Karar (yönetici, 27 Temmuz 2026): Proje open-source + self-hosted ürün odaklı
+olarak v1.0 ile kapatılacaktır. Bu doğrultuda:
+
+- **WP35 retire edildi.** Uygulama task'ı teslimatını yapmıştır (`36f41c2`
+  `feat: launch the managed cloud public beta` + `15ec71a` hardening commit'i);
+  bu commit'ler history'de kalır ancak bağımsız kabul denetimi yapılmayacak ve
+  WP35 **kabul edilmemiş** sayılır. WP33–WP35 ile üretilen `cloud` profili,
+  tenant runtime, provider-auth ve onboarding/billing kodu repo'da kalır ve
+  `pnpm verify` içindeki testlerle korunmaya devam eder; retire edilen şey SaaS
+  launch ve operasyon taahhüdüdür.
+- **WP30-E, tanımlandığı kapsamıyla retire edildi.** Managed cloud production
+  go-live gerçekleşmeyeceği için bağımsız pentest/retest, production soak/chaos
+  ve cohort rollout kapısı kapanış kapsamı dışındadır. Self-hosted için
+  gerçek-ortam kanıtı WP36'da üretilir. İleride Managed Cloud'a dönülürse WP35
+  ve WP30-E mevcut tanımlarıyla yeniden aktive edilebilir.
+- Önceki kabullerde `not-run` bırakılan gerçek-ortam kontrollerinin kapanış
+  karşılıkları `docs/planning/project-closure-plan.md` §2'de kayıtlıdır
+  (WP33 Kata/KMS retire; WP34 provider smoke self-hosted golden ile karşılanır;
+  ARM64 gerçek-ortam koşusu opsiyonel).
+
+Kapanış planı `docs/planning/project-closure-plan.md` yürürlüğe alınmış ve WP36
+(Gerçek ortam doğrulama koşusu) tek aktif iş paketi olarak aktive edilmiştir.
+WP37 (v1.0 release ve proje kapanışı) bağımlılık sırasıyla beklemektedir; WP36
+bağımsız kabul edilmeden başlatılmaz. WP37 kabul edilmeden proje kapanmaz.
+
+Aktif iş paketi WP36'dır. Uygulama task'ına verilecek WP36 prompt'u kapanış
+planındaki tanımdan üretilecektir; teslimat `fix: validate self-hosted
+distribution on a real linux host` commit'i ve bağımsız kabul denetimiyle
+kapanacaktır.
