@@ -50,7 +50,7 @@ Bileşen kararları:
    ve `/v1|/healthz|/readyz|/assets` gibi uygulama-rezerve kökleriyle çakışan
    tek-segment değerler preflight'ta fail-closed reddedilir. Değer env
    dosyasında kalıcıdır; base değişikliği yeniden build/upgrade gerektirir ve
-   imaj tag'ine base slug'ı eklenir (`persistent-self-hosted-product:<commit>`
+   imaj tag'ine base slug'ı eklenir (`perseverance-self-hosted-product:<commit>`
    kökte değişmez, base'li kurulumda `<commit>-<slug>`).
 2. **Web**: Vite `base = VITE_BASE_PATH + '/'`; router `basepath =
 import.meta.env.BASE_URL`; kök-mutlak `href`/`window.location` kullanımları

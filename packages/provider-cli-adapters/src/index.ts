@@ -11,7 +11,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import {
   parseTimelineEvent,
   type TimelineEvent,
-} from '@persistent-codex/domain-events'
+} from '@perseverance/domain-events'
 import {
   PROVIDER_CONTRACT_VERSION,
   providerModelCatalogSchema,
@@ -31,7 +31,7 @@ import {
   type ProviderId,
   type UsageCounters,
   type UsageReport,
-} from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-platform'
 
 export const CLAUDE_CODE_VERSION = '2.1.109'
 export const GEMINI_CLI_VERSION = '0.50.0'

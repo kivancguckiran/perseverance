@@ -67,7 +67,7 @@ doğruluk kaynağından ayrışır.
   `CORPUS_MCP_UNAVAILABLE`/upstream required-MCP hatasıyla fail-closed olur; sessiz
   retrieval'sız çalışma yoktur.
 - Corpus workload credential kısa ömürlü HMAC-signed scope claim'i ile ayrı proof
-  key'den oluşur. Audience `urn:persistent-codex:workspace-corpus`, actions yalnız
+  key'den oluşur. Audience `urn:perseverance:workspace-corpus`, actions yalnız
   `source.search` ve `citation.read`, tenant/organization/workspace immutable claim'dir.
   Her HTTP çağrısı timestamp + nonce + action proof'u taşır. Server signature,
   audience, expiry, revoke, scope, action, proof-key binding ve nonce replay'i

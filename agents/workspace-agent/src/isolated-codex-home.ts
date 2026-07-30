@@ -29,7 +29,7 @@ export function createIsolatedCodexHome(
     options.sourceHome ?? process.env.CODEX_HOME ?? join(homedir(), '.codex'),
   )
   const temporaryRoot = resolve(options.temporaryRoot ?? tmpdir())
-  const path = mkdtempSync(join(temporaryRoot, 'persistent-codex-smoke-'))
+  const path = mkdtempSync(join(temporaryRoot, 'perseverance-smoke-'))
   const linkedFiles: string[] = []
   try {
     for (const filename of linkedConfigurationFiles) {
@@ -56,7 +56,7 @@ export function createIsolatedCodexHome(
       cleaned = true
       if (
         resolve(path).startsWith(`${temporaryRoot}/`) &&
-        basename(path).startsWith('persistent-codex-smoke-')
+        basename(path).startsWith('perseverance-smoke-')
       ) {
         rmSync(path, { recursive: true, force: true })
       }

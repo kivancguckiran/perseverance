@@ -1,7 +1,7 @@
 import type {
   CorpusCitationLookupResponse,
   CorpusSearchResponse,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import { createHmac, randomUUID } from 'node:crypto'
 
 export const WORKSPACE_CORPUS_MCP_VERSION = 1 as const
@@ -207,7 +207,7 @@ export class WorkspaceCorpusMcpServer {
         result = {
           protocolVersion: '2025-06-18',
           serverInfo: {
-            name: 'persistent-codex-workspace-corpus',
+            name: 'perseverance-corpus',
             version: '1.0.0',
           },
           capabilities: { tools: { listChanged: false } },

@@ -319,7 +319,7 @@ describe('corpus workload credentials', () => {
     ).toThrow(/Authentication failed/)
     const wrongAudience = new CorpusWorkloadCredentialAuthority({
       signingKey: Buffer.alloc(32, 7),
-      audience: 'urn:persistent-codex:wrong-audience',
+      audience: 'urn:perseverance:wrong-audience',
     })
     expect(() =>
       wrongAudience.verify(request({ nonce: 'nonce-audience' })),

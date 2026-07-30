@@ -7,7 +7,7 @@ import type {
   IngestionAudit,
   Source,
   SourceRevision,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import {
   CorpusError,
   DEFAULT_CORPUS_LIMITS,

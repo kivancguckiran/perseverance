@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   parseTimelineEvent,
   type TimelineEvent,
-} from '@persistent-codex/domain-events'
+} from '@perseverance/domain-events'
 import {
   boundedTail,
   attachmentMediaType,
@@ -884,7 +884,7 @@ describe('conversation projection', () => {
             content: [
               {
                 type: 'text',
-                text: 'Bu nedir?\n\n<persistent-codex-attachments>\n- brief.pdf: /private/path/brief.pdf\n</persistent-codex-attachments>',
+                text: 'Bu nedir?\n\n<perseverance-attachments>\n- brief.pdf: /private/path/brief.pdf\n</perseverance-attachments>',
               },
               { type: 'mention', name: 'brief.pdf', path: '/safe/brief.pdf' },
             ],

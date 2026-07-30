@@ -119,7 +119,7 @@ describe('workspace corpus runtime integration', () => {
     rmSync(join(home, 'config.toml'))
     writeFileSync(
       join(home, 'config.toml'),
-      'model = "fixture"\n# persistent-codex managed workspace corpus MCP v1\n[stale]\n',
+      'model = "fixture"\n# perseverance managed workspace corpus MCP v1\n[stale]\n',
     )
     const restarted = new WorkspaceCorpusRuntimeServices({
       identity: {
@@ -140,7 +140,7 @@ describe('workspace corpus runtime integration', () => {
     await restarted.start()
     expect(
       readFileSync(join(home, 'config.toml'), 'utf8').match(
-        /persistent-codex managed workspace corpus MCP v1/g,
+        /perseverance managed workspace corpus MCP v1/g,
       ),
     ).toHaveLength(1)
     await restarted.stop()

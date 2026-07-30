@@ -2,9 +2,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import { replayResponseSchema } from '@persistent-codex/control-plane-contracts'
-import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
-import { SqliteEventStore } from '@persistent-codex/event-store'
+import { replayResponseSchema } from '@perseverance/control-plane-contracts'
+import { CodexEventAdapter } from '@perseverance/codex-event-adapter'
+import { SqliteEventStore } from '@perseverance/event-store'
 import { buildControlPlane } from './server'
 
 const root = mkdtempSync(join(tmpdir(), 'persistent-codex-unknown-replay-'))

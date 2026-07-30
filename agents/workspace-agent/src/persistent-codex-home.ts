@@ -91,7 +91,7 @@ export class PersistentCodexHomeManager {
           filename === 'config.toml' &&
           targetStat.isFile() &&
           readFileSync(target, 'utf8').includes(
-            '# persistent-codex managed workspace corpus MCP v1',
+            '# perseverance managed workspace corpus MCP v1',
           )
         )
           continue

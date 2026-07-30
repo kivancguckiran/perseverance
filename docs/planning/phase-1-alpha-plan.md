@@ -3,7 +3,7 @@
 - Plan durumu: Tamamlandı
 - Plan tarihi: 14 Temmuz 2026
 - Aktif iş paketi: Yok — Faz 1 tamamlandı
-- Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
+- Kaynak spesifikasyon: `docs/architecture/perseverance-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç
 

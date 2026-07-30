@@ -1,7 +1,7 @@
 import {
   metricsResponseSchema,
   type MetricsResponse,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 
 type MetricKind = 'counter' | 'histogram' | 'gauge'
 interface MetricDefinition {

@@ -4,13 +4,13 @@ import { join } from 'node:path'
 import type {
   AuthPrincipal,
   OrganizationMembership,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import type {
   AuthenticationAdapter,
   MembershipDirectory,
-} from '@persistent-codex/authz'
-import { AuthenticationError } from '@persistent-codex/authz'
-import { InMemorySharedFolderRepository } from '@persistent-codex/shared-folders'
+} from '@perseverance/authz'
+import { AuthenticationError } from '@perseverance/authz'
+import { InMemorySharedFolderRepository } from '@perseverance/shared-folders'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildControlPlane } from './server'
 

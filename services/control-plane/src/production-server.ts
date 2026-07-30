@@ -6,48 +6,48 @@ import {
   AuthenticationError,
   OidcAuthenticationAdapter,
   type AuthenticationAdapter,
-} from '@persistent-codex/authz'
-import type { AuthPrincipal } from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/authz'
+import type { AuthPrincipal } from '@perseverance/control-plane-contracts'
 import {
   ProductionTelemetry,
   OtlpHttpExporter,
   opaqueScope,
   parseTraceparent,
   type TraceContext,
-} from '@persistent-codex/production-observability'
+} from '@perseverance/production-observability'
 import {
   createBillingPostgresRepository,
   type BillingPostgresRepository,
-} from '@persistent-codex/billing-platform'
+} from '@perseverance/billing-platform'
 import {
   createProductionPostgresRepository,
   type ProductionPostgresRepository,
   type ProductionScope,
-} from '@persistent-codex/production-topology/production-postgres'
+} from '@perseverance/production-topology/production-postgres'
 import {
   RabbitMqManagementBroker,
   S3CompatibleObjectStore,
   httpDependencyReady,
   type DurableEventBroker,
   type ObjectStore,
-} from '@persistent-codex/production-topology/durable-dependencies'
+} from '@perseverance/production-topology/durable-dependencies'
 import { ProductionRolloutAuthority } from './production-rollout-authority'
 import {
   registerManagedCloudRoutes,
   type ManagedCloudAuthenticatedPrincipal,
 } from './managed-cloud-api'
-import { ManagedCloudError } from '@persistent-codex/managed-cloud'
+import { ManagedCloudError } from '@perseverance/managed-cloud'
 import { createManagedCloudProductionComposition } from './managed-cloud-production'
 import {
   HttpAwsKmsClient,
   HttpTenantRuntimeResources,
 } from './managed-cloud-infrastructure'
-import { AwsKmsProvider } from '@persistent-codex/workspace-security'
+import { AwsKmsProvider } from '@perseverance/workspace-security'
 import {
   StaticProviderAuthCapabilitySource,
   type ProviderAuthEvidence,
   type ProviderAuthFeatureFlags,
-} from '@persistent-codex/provider-auth'
+} from '@perseverance/provider-auth'
 import { type SelfHostedAuthService } from './self-hosted-auth'
 import {
   SELF_HOSTED_AUTH_PUBLIC_PATHS,

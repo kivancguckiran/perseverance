@@ -4,8 +4,8 @@
 - Tarih: 2026-07-23
 - Kapsam: WP31 (ADR-0031) + WP32 self-hosted release adımları (ADR-0032)
 
-Repository'nin public mirror'a açılması ve her public release yayımı bu
-checklist'i izler. Repository'nin fiilen public yapılması yönetici kararıdır;
+Repository'nin public canonical kaynağa açılması ve her public release yayımı
+bu checklist'i izler. Repository'nin fiilen public yapılması yönetici kararıdır;
 bu checklist kararın ön koşullarını mekanikleştirir.
 
 ## 1. Zorunlu gate'ler (her release)
@@ -31,6 +31,9 @@ Sırayla ve temiz working tree üzerinde:
 4. Docker mevcut ortamda authoritative tarayıcı koşusu (resmî gitleaks +
    syft + grype): `pnpm wp29:security-scans`. Bu koşu wp31 offline
    tarayıcısının üstünde ikinci ve bağımsız doğrulamadır.
+
+v1.0.0 sonucu: yukarıdaki gate'lerin tümü release commit'inde geçti;
+public-preflight iki koşuda bayt-aynı evidence üretti.
 
 ## 2. İmzalı artifact ve provenance (wp29 hattı)
 
@@ -71,21 +74,25 @@ Self-hosted dağıtım artifact'i yayımlanacaksa, §2'deki imza hattının üze
 
 ## 3. Publish öncesi yönetici kararları (ilk açılış)
 
-- [ ] Ürün/community adı kararı — "Codex" marka riski
-      (`docs/policies/brand-and-endorsement-policy.md`) çözülmüş olmalı.
-- [ ] Public mirror hedefi (org/repo), branch koruması ve issue şablonları.
-- [ ] `SECURITY.md` iletişim kanalının izlendiğinin doğrulanması.
-- [ ] ADR-0031 lisans kararının son gözden geçirmesi (AGPL-3.0-only).
-- [ ] History taşıma kararı: WP31 taraması gerçek secret bulmadığı için
+- [x] Ürün/community adı kararı — **Perseverance**; önceki "Codex" marka riski
+      `docs/policies/brand-and-endorsement-policy.md` içinde kapatıldı.
+- [x] Public hedef ve mirror stratejisi —
+      `github.com/kivancguckiran/perseverance`, public canonical origin, ayrı
+      mirror yok. Branch koruması publish sonrasında etkinleştirilir; issue ve
+      PR şablonları repository'dedir.
+- [x] `SECURITY.md` iletişim kanalı proje sahibinin kontrolündeki
+      `kivancguckiran@gmail.com` adresidir.
+- [x] ADR-0031 lisans kararı son kez gözden geçirildi: AGPL-3.0-only.
+- [x] History taşıma kararı: WP31 taraması gerçek secret bulmadığı için
       history olduğu gibi taşınır; yeni bir bulgu çıkarsa önce rotate,
       gerekirse rewrite (ADR-0031 stratejisi).
 
 ## 4. Publish sonrası
 
-- [ ] Release tag + imzalı artifact'lerin yayımlandığının doğrulanması.
-- [ ] README rozet/link'lerinin public URL'lerle çalıştığının kontrolü.
-- [ ] İlk community issue/PR akışında `CONTRIBUTING.md` adımlarının bir dış
-      katkıcı gözüyle denenmesi.
+- [x] `v1.0.0` tag + imzalı artifact'ler GitHub release'inde yayımlandı.
+- [x] README rozet/link'leri public canonical URL'de doğrulandı.
+- [x] Issue/PR şablonları ve `CONTRIBUTING.md` adımları temiz public
+      contributor checkout'unda denendi.
 
 ## Evidence ve redaksiyon
 

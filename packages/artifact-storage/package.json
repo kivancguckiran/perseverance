@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/artifact-storage",
-  "version": "0.0.0",
+  "name": "@perseverance/artifact-storage",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {

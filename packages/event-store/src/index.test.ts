@@ -4,8 +4,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { Worker } from 'node:worker_threads'
 import { once } from 'node:events'
-import { ingestRawCodexEnvelope } from '@persistent-codex/codex-event-adapter'
-import type { TimelineEvent } from '@persistent-codex/domain-events'
+import { ingestRawCodexEnvelope } from '@perseverance/codex-event-adapter'
+import type { TimelineEvent } from '@perseverance/domain-events'
 import { describe, expect, it } from 'vitest'
 import {
   SqliteEventStore,

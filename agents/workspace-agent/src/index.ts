@@ -649,8 +649,8 @@ function runtimeKey(
 }
 
 const defaultClientInfo: InitializeClientInfo = {
-  name: 'persistent_codex_workspace',
-  title: 'Persistent Codex Workspace',
+  name: 'perseverance',
+  title: 'Perseverance',
   version: '0.0.0',
 }
 

@@ -47,7 +47,7 @@ hosted rakip riskini ve ileride ticari lisanslama esnekliğini birlikte etkiler.
 
 Repository **GNU Affero General Public License v3.0 only (AGPL-3.0-only)** ile
 lisanslanır. Kanonik SPDX metni `LICENSE` dosyasındadır; telif beyanı `NOTICE`
-içinde **The Persistent Codex Workspace Authors** adına tutulur. "only"
+içinde **The Perseverance Authors** adına tutulur. "only"
 tercihi, gelecekteki bir AGPLv4'ün koşullarını şimdiden kabul etmemek içindir.
 
 Dual-license bugün açılmaz; ancak seçenek bilinçli olarak korunur:

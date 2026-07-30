@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/billing-platform",
-  "version": "0.0.0",
+  "name": "@perseverance/billing-platform",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {

@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/codex-protocol-generated",
-  "version": "0.0.0",
+  "name": "@perseverance/codex-protocol-generated",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {

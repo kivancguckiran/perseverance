@@ -19,7 +19,7 @@ import {
   ChunkedEnvelopeEncryption,
   CryptoError,
   type EncryptionContextV1,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import { CorpusError, type CorpusScope } from './index'
 
 export const CORPUS_SNAPSHOT_STORAGE_VERSION = 1 as const

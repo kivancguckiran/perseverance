@@ -1,4 +1,4 @@
-# Persistent Codex Workspace
+# Perseverance
 
 ## Çok Kiracılı, Kalıcı ve Mobil Öncelikli Codex SaaS — Proje Tasarım Spesifikasyonu
 
@@ -28,7 +28,7 @@ Codex'in resmî dokümantasyonu, `app-server`ı zengin istemciler için önerile
 
 ### 1.1 Önerilen ürün adı ve konumlandırma
 
-Geçici ad: **Persistent Codex Workspace**  
+Geçici ad: **Perseverance**
 Konumlandırma: **“Codex için kalıcı, her yerden erişilen çalışma alanı.”**
 
 Marka metninde “OpenAI Codex'in kendisi” veya “resmî Codex uygulaması” izlenimi verilmemelidir. “Powered by Codex CLI” gibi ifadeler ancak OpenAI marka yönergeleri ve hukuki inceleme sonrasında kullanılmalıdır.

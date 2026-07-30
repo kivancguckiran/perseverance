@@ -1,6 +1,6 @@
 {
-  "name": "persistent-codex-workspace",
-  "version": "0.0.0",
+  "name": "perseverance",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.15.3",
@@ -14,14 +14,14 @@
     "alpha:canary": "node scripts/alpha-canary.mjs",
     "alpha:soak": "tsx scripts/alpha-soak.ts",
     "alpha:lifecycle": "tsx scripts/alpha-lifecycle.ts",
-    "dev": "pnpm --parallel --filter @persistent-codex/control-plane --filter @persistent-codex/web dev",
-    "demo:smoke": "pnpm test -- --run services/control-plane/src/server.test.ts packages/codex-event-adapter/src/index.test.ts && pnpm --filter @persistent-codex/workspace-agent smoke:unknown-replay && pnpm --filter @persistent-codex/workspace-agent smoke:real-recovery",
+    "dev": "pnpm --parallel --filter @perseverance/control-plane --filter @perseverance/web dev",
+    "demo:smoke": "pnpm test -- --run services/control-plane/src/server.test.ts packages/codex-event-adapter/src/index.test.ts && pnpm --filter @perseverance/workspace-agent smoke:unknown-replay && pnpm --filter @perseverance/workspace-agent smoke:real-recovery",
     "provider:smoke:claude": "tsx scripts/provider-smoke.ts claude",
     "provider:smoke:gemini": "tsx scripts/provider-smoke.ts gemini",
     "provider:smoke:cursor": "tsx scripts/provider-smoke.ts cursor",
     "provider:smoke:title": "tsx scripts/provider-title-smoke.ts",
     "phase2:accept": "node scripts/phase2-accept.mjs",
-    "phase2:accept:browser": "VITE_CONTROL_PLANE_URL=http://127.0.0.1:3216 pnpm --filter @persistent-codex/web build && tsx scripts/phase2-browser-accept.ts",
+    "phase2:accept:browser": "VITE_CONTROL_PLANE_URL=http://127.0.0.1:3216 pnpm --filter @perseverance/web build && tsx scripts/phase2-browser-accept.ts",
     "phase2:smoke:live": "pnpm alpha:canary && pnpm provider:smoke:claude && pnpm provider:smoke:gemini && pnpm provider:smoke:title",
     "wp18:postgres": "node scripts/wp18-postgres-rls-smoke.mjs",
     "wp19:test": "pnpm test -- --run packages/workspace-security/src/index.test.ts",
@@ -142,18 +142,18 @@
     "wp35:external-accept": "node --import tsx scripts/wp35-external-accept.ts",
     "production:accept": "node --import tsx scripts/wp30-accept.ts",
     "phase4:accept": "node --import tsx scripts/phase4-accept.ts",
-    "phase3:accept:browser": "VITE_CONTROL_PLANE_URL=http://127.0.0.1:3217 pnpm --filter @persistent-codex/web build && tsx scripts/phase3-browser-security-accept.ts",
+    "phase3:accept:browser": "VITE_CONTROL_PLANE_URL=http://127.0.0.1:3217 pnpm --filter @perseverance/web build && tsx scripts/phase3-browser-security-accept.ts",
     "phase3:accept": "node scripts/phase3-accept.mjs",
-    "demo:golden:read-only": "WP8_GOLDEN_SCENARIO=read-only pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
-    "demo:golden:change": "WP8_GOLDEN_SCENARIO=change pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
-    "demo:golden:approval": "WP8_GOLDEN_SCENARIO=approval pnpm --filter @persistent-codex/workspace-agent smoke:poc-demo",
+    "demo:golden:read-only": "WP8_GOLDEN_SCENARIO=read-only pnpm --filter @perseverance/workspace-agent smoke:poc-demo",
+    "demo:golden:change": "WP8_GOLDEN_SCENARIO=change pnpm --filter @perseverance/workspace-agent smoke:poc-demo",
+    "demo:golden:approval": "WP8_GOLDEN_SCENARIO=approval pnpm --filter @perseverance/workspace-agent smoke:poc-demo",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:codex-protocol": "node scripts/generate-codex-protocol.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck",
-    "verify": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm --filter @persistent-codex/web test:ssr-http"
+    "verify": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm --filter @perseverance/web test:ssr-http"
   },
   "devDependencies": {
     "@authenio/samlify-xsd-schema-validator": "^1.0.5",
@@ -168,5 +168,12 @@
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-uri@3": "3.1.4",
+      "fast-uri@4": "4.1.1",
+      "find-my-way@9": "9.7.0"
+    }
   }
 }

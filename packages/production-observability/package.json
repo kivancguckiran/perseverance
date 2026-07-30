@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/production-observability",
-  "version": "0.0.0",
+  "name": "@perseverance/production-observability",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {

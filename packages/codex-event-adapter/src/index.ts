@@ -1,21 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto'
 import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv'
-import notificationSchema from '@persistent-codex/codex-protocol-generated/schemas/server-notification'
-import requestSchema from '@persistent-codex/codex-protocol-generated/schemas/server-request'
+import notificationSchema from '@perseverance/codex-protocol-generated/schemas/server-notification'
+import requestSchema from '@perseverance/codex-protocol-generated/schemas/server-request'
 import type {
   ServerNotification,
   ServerRequest,
-} from '@persistent-codex/codex-protocol-generated'
-import { codexV2 } from '@persistent-codex/codex-protocol-generated'
+} from '@perseverance/codex-protocol-generated'
+import { codexV2 } from '@perseverance/codex-protocol-generated'
 import {
   parseTimelineEvent,
   type TimelineEvent,
-} from '@persistent-codex/domain-events'
+} from '@perseverance/domain-events'
 import {
   appendBoundedTail,
   DEFAULT_COMMAND_TAIL_BYTES,
   StreamingRedactor,
-} from '@persistent-codex/artifact-storage'
+} from '@perseverance/artifact-storage'
 import {
   PROVIDER_CONTRACT_VERSION,
   providerNormalizedEventSchema,
@@ -27,7 +27,7 @@ import {
   type ProviderModelCatalog,
   type ProviderRuntimeAdapterV1,
   type ReasoningEffort,
-} from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-platform'
 
 const CODEX_CAPABILITIES = {
   streaming: 'supported',

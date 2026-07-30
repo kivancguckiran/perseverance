@@ -1,6 +1,6 @@
 # Katkı Rehberi
 
-Persistent Codex Workspace'e katkı hoş geldiniz. Bu rehber temiz bir
+Perseverance'e katkı hoş geldiniz. Bu rehber temiz bir
 checkout'tan çalışan bir geliştirme ortamına ve kabul edilen bir katkıya giden
 yolu tanımlar.
 
@@ -16,7 +16,7 @@ yolu tanımlar.
 
 ```bash
 git clone <repository-url>
-cd persistent-codex-workspace
+cd perseverance
 corepack enable
 pnpm install --frozen-lockfile
 pnpm verify

@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/domain-events",
-  "version": "0.0.0",
+  "name": "@perseverance/domain-events",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {

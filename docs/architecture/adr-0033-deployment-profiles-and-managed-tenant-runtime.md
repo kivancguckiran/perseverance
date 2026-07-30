@@ -96,7 +96,7 @@ Mevcut durum:
 3. **Kısa ömürlü, tenant-scoped workload credential** _(seçildi)_ — ADR-0022
    corpus workload credential deseni genelleştirilir:
    `RuntimeDataPlaneAuthority`, HMAC-SHA256 imzalı, audience
-   `urn:persistent-codex:runtime-data-plane`, en fazla 5 dakika (varsayılan 60 s)
+   `urn:perseverance:runtime-data-plane`, en fazla 5 dakika (varsayılan 60 s)
    TTL'li, `tenant/organization/workspace/runtime/generation` scoped ve action
    listesi taşıyan credential basar. Doğrulama deny-by-default'tur: kimliksiz,
    imzasız, süresi geçmiş, revoke edilmiş, yanlış audience, yanlış tenant veya

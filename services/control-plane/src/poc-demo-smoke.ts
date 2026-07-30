@@ -14,16 +14,16 @@ import {
   replayResponseSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
-} from '@persistent-codex/control-plane-contracts'
-import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
-import type { TimelineEvent } from '@persistent-codex/domain-events'
-import { SqliteEventStore } from '@persistent-codex/event-store'
+} from '@perseverance/control-plane-contracts'
+import { CodexEventAdapter } from '@perseverance/codex-event-adapter'
+import type { TimelineEvent } from '@perseverance/domain-events'
+import { SqliteEventStore } from '@perseverance/event-store'
 import {
   CodexAppServerClient,
   createIsolatedCodexHome,
   type ProcessHealth,
   type WorkspaceRuntimeClient,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 import { buildControlPlane } from './server'
 
 const timeoutMs = Number(process.env.CODEX_POC_DEMO_TIMEOUT_MS ?? 300_000)

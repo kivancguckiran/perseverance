@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  fast-uri@3: 3.1.4
+  fast-uri@4: 4.1.1
+  find-my-way@9: 9.7.0
+
 importers:
   .:
     devDependencies:
@@ -46,16 +51,16 @@ importers:
 
   agents/workspace-agent:
     dependencies:
-      '@persistent-codex/codex-event-adapter':
+      '@perseverance/codex-event-adapter':
         specifier: workspace:*
         version: link:../../packages/codex-event-adapter
-      '@persistent-codex/codex-protocol-generated':
+      '@perseverance/codex-protocol-generated':
         specifier: workspace:*
         version: link:../../packages/codex-protocol-generated
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../../packages/control-plane-contracts
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events
     devDependencies:
@@ -65,13 +70,13 @@ importers:
 
   apps/web:
     dependencies:
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../../packages/control-plane-contracts
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events
-      '@persistent-codex/enterprise-lifecycle':
+      '@perseverance/enterprise-lifecycle':
         specifier: workspace:*
         version: link:../../packages/enterprise-lifecycle
       '@tanstack/react-query':
@@ -119,7 +124,7 @@ importers:
 
   packages/authz:
     dependencies:
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../control-plane-contracts
 
@@ -144,16 +149,16 @@ importers:
 
   packages/codex-event-adapter:
     dependencies:
-      '@persistent-codex/artifact-storage':
+      '@perseverance/artifact-storage':
         specifier: workspace:*
         version: link:../artifact-storage
-      '@persistent-codex/codex-protocol-generated':
+      '@perseverance/codex-protocol-generated':
         specifier: workspace:*
         version: link:../codex-protocol-generated
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../domain-events
-      '@persistent-codex/provider-platform':
+      '@perseverance/provider-platform':
         specifier: workspace:*
         version: link:../provider-platform
       ajv:
@@ -164,19 +169,19 @@ importers:
 
   packages/control-plane-contracts:
     dependencies:
-      '@persistent-codex/billing-platform':
+      '@perseverance/billing-platform':
         specifier: workspace:*
         version: link:../billing-platform
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../domain-events
-      '@persistent-codex/production-readiness':
+      '@perseverance/production-readiness':
         specifier: workspace:*
         version: link:../production-readiness
-      '@persistent-codex/production-topology':
+      '@perseverance/production-topology':
         specifier: workspace:*
         version: link:../production-topology
-      '@persistent-codex/provider-platform':
+      '@perseverance/provider-platform':
         specifier: workspace:*
         version: link:../provider-platform
       zod:
@@ -185,10 +190,10 @@ importers:
 
   packages/corpus-ingestion:
     dependencies:
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../control-plane-contracts
-      '@persistent-codex/workspace-security':
+      '@perseverance/workspace-security':
         specifier: workspace:*
         version: link:../workspace-security
       pg:
@@ -205,10 +210,10 @@ importers:
         specifier: ^4.3.6
         version: 4.4.3
     devDependencies:
-      '@persistent-codex/codex-event-adapter':
+      '@perseverance/codex-event-adapter':
         specifier: workspace:*
         version: link:../codex-event-adapter
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../domain-events
 
@@ -233,41 +238,41 @@ importers:
 
   packages/event-store:
     dependencies:
-      '@persistent-codex/billing-platform':
+      '@perseverance/billing-platform':
         specifier: workspace:*
         version: link:../billing-platform
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../domain-events
-      '@persistent-codex/provider-platform':
+      '@perseverance/provider-platform':
         specifier: workspace:*
         version: link:../provider-platform
     devDependencies:
-      '@persistent-codex/codex-event-adapter':
+      '@perseverance/codex-event-adapter':
         specifier: workspace:*
         version: link:../codex-event-adapter
 
   packages/managed-cloud:
     dependencies:
-      '@persistent-codex/billing-platform':
+      '@perseverance/billing-platform':
         specifier: workspace:*
         version: link:../billing-platform
-      '@persistent-codex/deployment-profiles':
+      '@perseverance/deployment-profiles':
         specifier: workspace:*
         version: link:../deployment-profiles
-      '@persistent-codex/production-readiness':
+      '@perseverance/production-readiness':
         specifier: workspace:*
         version: link:../production-readiness
-      '@persistent-codex/production-topology':
+      '@perseverance/production-topology':
         specifier: workspace:*
         version: link:../production-topology
-      '@persistent-codex/provider-auth':
+      '@perseverance/provider-auth':
         specifier: workspace:*
         version: link:../provider-auth
-      '@persistent-codex/provider-platform':
+      '@perseverance/provider-platform':
         specifier: workspace:*
         version: link:../provider-platform
-      '@persistent-codex/tenant-runtime':
+      '@perseverance/tenant-runtime':
         specifier: workspace:*
         version: link:../tenant-runtime
       pg:
@@ -312,16 +317,16 @@ importers:
 
   packages/provider-auth:
     dependencies:
-      '@persistent-codex/deployment-profiles':
+      '@perseverance/deployment-profiles':
         specifier: workspace:*
         version: link:../deployment-profiles
-      '@persistent-codex/provider-platform':
+      '@perseverance/provider-platform':
         specifier: workspace:*
         version: link:../provider-platform
-      '@persistent-codex/tenant-runtime':
+      '@perseverance/tenant-runtime':
         specifier: workspace:*
         version: link:../tenant-runtime
-      '@persistent-codex/workspace-security':
+      '@perseverance/workspace-security':
         specifier: workspace:*
         version: link:../workspace-security
       pg:
@@ -337,16 +342,16 @@ importers:
 
   packages/provider-cli-adapters:
     dependencies:
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../domain-events
-      '@persistent-codex/provider-platform':
+      '@perseverance/provider-platform':
         specifier: workspace:*
         version: link:../provider-platform
 
   packages/provider-platform:
     dependencies:
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../domain-events
       zod:
@@ -362,10 +367,10 @@ importers:
 
   packages/push-notifications:
     dependencies:
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../control-plane-contracts
-      '@persistent-codex/workspace-security':
+      '@perseverance/workspace-security':
         specifier: workspace:*
         version: link:../workspace-security
       pg:
@@ -380,7 +385,7 @@ importers:
 
   packages/shared-folders:
     dependencies:
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../control-plane-contracts
       pg:
@@ -393,7 +398,7 @@ importers:
 
   packages/support-access:
     dependencies:
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../control-plane-contracts
       pg:
@@ -406,7 +411,7 @@ importers:
 
   packages/tenant-runtime:
     dependencies:
-      '@persistent-codex/production-topology':
+      '@perseverance/production-topology':
         specifier: workspace:*
         version: link:../production-topology
       pg:
@@ -434,76 +439,76 @@ importers:
       '@fastify/websocket':
         specifier: ^11.3.0
         version: 11.3.0
-      '@persistent-codex/artifact-storage':
+      '@perseverance/artifact-storage':
         specifier: workspace:*
         version: link:../../packages/artifact-storage
-      '@persistent-codex/authz':
+      '@perseverance/authz':
         specifier: workspace:*
         version: link:../../packages/authz
-      '@persistent-codex/billing-platform':
+      '@perseverance/billing-platform':
         specifier: workspace:*
         version: link:../../packages/billing-platform
-      '@persistent-codex/codex-event-adapter':
+      '@perseverance/codex-event-adapter':
         specifier: workspace:*
         version: link:../../packages/codex-event-adapter
-      '@persistent-codex/codex-protocol-generated':
+      '@perseverance/codex-protocol-generated':
         specifier: workspace:*
         version: link:../../packages/codex-protocol-generated
-      '@persistent-codex/control-plane-contracts':
+      '@perseverance/control-plane-contracts':
         specifier: workspace:*
         version: link:../../packages/control-plane-contracts
-      '@persistent-codex/corpus-ingestion':
+      '@perseverance/corpus-ingestion':
         specifier: workspace:*
         version: link:../../packages/corpus-ingestion
-      '@persistent-codex/deployment-profiles':
+      '@perseverance/deployment-profiles':
         specifier: workspace:*
         version: link:../../packages/deployment-profiles
-      '@persistent-codex/domain-events':
+      '@perseverance/domain-events':
         specifier: workspace:*
         version: link:../../packages/domain-events
-      '@persistent-codex/enterprise-lifecycle':
+      '@perseverance/enterprise-lifecycle':
         specifier: workspace:*
         version: link:../../packages/enterprise-lifecycle
-      '@persistent-codex/event-store':
+      '@perseverance/event-store':
         specifier: workspace:*
         version: link:../../packages/event-store
-      '@persistent-codex/managed-cloud':
+      '@perseverance/managed-cloud':
         specifier: workspace:*
         version: link:../../packages/managed-cloud
-      '@persistent-codex/production-observability':
+      '@perseverance/production-observability':
         specifier: workspace:*
         version: link:../../packages/production-observability
-      '@persistent-codex/production-readiness':
+      '@perseverance/production-readiness':
         specifier: workspace:*
         version: link:../../packages/production-readiness
-      '@persistent-codex/production-topology':
+      '@perseverance/production-topology':
         specifier: workspace:*
         version: link:../../packages/production-topology
-      '@persistent-codex/provider-auth':
+      '@perseverance/provider-auth':
         specifier: workspace:*
         version: link:../../packages/provider-auth
-      '@persistent-codex/provider-cli-adapters':
+      '@perseverance/provider-cli-adapters':
         specifier: workspace:*
         version: link:../../packages/provider-cli-adapters
-      '@persistent-codex/provider-platform':
+      '@perseverance/provider-platform':
         specifier: workspace:*
         version: link:../../packages/provider-platform
-      '@persistent-codex/push-notifications':
+      '@perseverance/push-notifications':
         specifier: workspace:*
         version: link:../../packages/push-notifications
-      '@persistent-codex/shared-folders':
+      '@perseverance/shared-folders':
         specifier: workspace:*
         version: link:../../packages/shared-folders
-      '@persistent-codex/support-access':
+      '@perseverance/support-access':
         specifier: workspace:*
         version: link:../../packages/support-access
-      '@persistent-codex/tenant-runtime':
+      '@perseverance/tenant-runtime':
         specifier: workspace:*
         version: link:../../packages/tenant-runtime
-      '@persistent-codex/workspace-agent':
+      '@perseverance/workspace-agent':
         specifier: workspace:*
         version: link:../../agents/workspace-agent
-      '@persistent-codex/workspace-security':
+      '@perseverance/workspace-security':
         specifier: workspace:*
         version: link:../../packages/workspace-security
       fastify:
@@ -2175,16 +2180,16 @@ packages:
         integrity: sha512-g6KuKWmFXc0fID8WWH0jit4g0AGBoJhCkJMb1RmbsSEUNvQ+ZC8D6CUZ+GtF8nMzSPXnhiePyyqqipzNNEnHjg==,
       }
 
-  fast-uri@3.1.3:
+  fast-uri@3.1.4:
     resolution:
       {
-        integrity: sha512-i70LwGWUduXqzicKXWshooq+sWL1K3WUU5rKZNG/0i3a1OSoX3HqhH5WbWwTmqWfor4urUakGPiRQcleRZTwOg==,
+        integrity: sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==,
       }
 
-  fast-uri@4.1.0:
+  fast-uri@4.1.1:
     resolution:
       {
-        integrity: sha512-ZodJ2cRiLVWGi9IgPb3mbgSqM4CD3LexCHkuv0FfBXHJI1ADfucTD06m6clO2Cy5RZYsw/SiCVl/dyrFI/SYWA==,
+        integrity: sha512-YPOs1zD5TG2+EZt+r88LwF6mclA7TPkpwMP7ZN3TO2HiHS8TXvq7QA/17iJsV9dubcLo/f8eEYqMBruyQV21hQ==,
       }
 
   fastify-plugin@6.0.0:
@@ -2223,10 +2228,10 @@ packages:
         integrity: sha512-YoZjBdafyLIop9lSxXVI33oLD5kN31q4Td+CasofLLYeLXRFeOsuOw0Uo+XNRi9PZlbfdlN2GmRtm4tCEQ9/KA==,
       }
 
-  find-my-way@9.6.0:
+  find-my-way@9.7.0:
     resolution:
       {
-        integrity: sha512-Zf4Xve4RymLl7NgaavNebZ01joJ8MfVerOG43wy7SHLO+r+K0C6d/SE0BiR7AV5V1VOCFlOP7ecdo+I4qmiHrQ==,
+        integrity: sha512-f2JHn75x2JlwUwLenZypgczR7YWMb/uO9BvUXtus+JMgkbIkLADd38cI4EiV+OQqrGo1Zlq6V8wnqMJ8e62wUQ==,
       }
     engines: { node: '>=20' }
 
@@ -3903,7 +3908,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 3.1.3
+      fast-uri: 3.1.4
 
   '@fastify/cors@11.3.0':
     dependencies:
@@ -4485,7 +4490,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.3
+      fast-uri: 3.1.4
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -4644,7 +4649,7 @@ snapshots:
       '@fastify/merge-json-schemas': 0.2.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.0
+      fast-uri: 4.1.1
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
 
@@ -4652,9 +4657,9 @@ snapshots:
     dependencies:
       fast-decode-uri-component: 1.0.1
 
-  fast-uri@3.1.3: {}
+  fast-uri@3.1.4: {}
 
-  fast-uri@4.1.0: {}
+  fast-uri@4.1.1: {}
 
   fastify-plugin@6.0.0: {}
 
@@ -4667,7 +4672,7 @@ snapshots:
       abstract-logging: 2.0.1
       avvio: 9.2.0
       fast-json-stringify: 7.0.1
-      find-my-way: 9.6.0
+      find-my-way: 9.7.0
       light-my-request: 6.6.0
       pino: 10.3.1
       process-warning: 5.0.0
@@ -4686,7 +4691,7 @@ snapshots:
 
   fetchdts@0.1.7: {}
 
-  find-my-way@9.6.0:
+  find-my-way@9.7.0:
     dependencies:
       fast-deep-equal: 3.1.3
       fast-querystring: 1.1.2

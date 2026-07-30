@@ -6,7 +6,7 @@ import {
   UserContentKmsProvider,
   type EncryptionContextV1,
   type EnvelopeV1,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 
 export interface UserContentKeyMaterial {
   contentKey: Uint8Array

@@ -7,7 +7,7 @@ import type {
   FolderResourceType,
   FolderRole,
   SharedFolder,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import {
   folderRoleAllows,
   SharedFolderError,

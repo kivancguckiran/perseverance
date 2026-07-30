@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseTimelineEvent,
   type TimelineEvent,
-} from '@persistent-codex/domain-events'
+} from '@perseverance/domain-events'
 import {
   CodexEnvelopeValidationError,
   CodexEventAdapter,

@@ -1,4 +1,4 @@
-# Persistent Codex Workspace
+# Perseverance
 
 [![Lisans: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
@@ -8,17 +8,38 @@ hiçbir model sağlayıcısıyla bağlantılı değildir ve onlar tarafından
 desteklenmez (bkz. [NOTICE](NOTICE) ve
 [marka politikası](docs/policies/brand-and-endorsement-policy.md)).
 
-Bu repository'nin mimari doğruluk kaynağı [tasarım spesifikasyonudur](docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md). Ürünün çekirdeği terminal çıktısını ekran kazıyarak taklit etmez; her izole workspace içinde gerçek `codex app-server` çalıştırır ve sürüme bağlı olayları kararlı platform olaylarına normalize eder.
+Bu repository'nin mimari doğruluk kaynağı [tasarım spesifikasyonudur](docs/architecture/perseverance-tasarim-spesifikasyonu.md). Ürünün çekirdeği terminal çıktısını ekran kazıyarak taklit etmez; her izole workspace içinde gerçek `codex app-server` çalıştırır ve sürüme bağlı olayları kararlı platform olaylarına normalize eder.
 
-## İlk hedef
+## v1.0 destek sınırı
+
+**Desteklenen dağıtım modeli self-hosted kurulumdur.** `cloud` profili ve
+managed-runtime kodu mimari geçmişi ve contract testleriyle birlikte kod
+tabanında kalır; ancak işletilen bir Perseverance bulut hizmeti yoktur ve bu
+profil desteklenmez. Ayrıntılar [SUPPORT.md](SUPPORT.md) ve
+[proje kapanış planında](docs/planning/project-closure-plan.md) kayıtlıdır.
+
+Self-hosted kurulum:
+
+```bash
+git clone https://github.com/kivancguckiran/perseverance.git
+cd perseverance
+bash infra/self-hosted/self-hosted.sh install \
+  --domain workspace.example.com --acme-email admin@example.com
+```
+
+Gereksinimler, TLS seçenekleri, subpath kurulumu ve yaşam döngüsü işlemleri
+[self-hosted kurulum runbook'unda](docs/operations/self-hosted-install-runbook.md)
+belgelenir.
+
+## Mimari temel
 
 Faz 0 protokol kanıtı şu soruyu cevaplar:
 
 > Pinli bir `codex app-server` sürümünden gelen mesaj, plan, reasoning summary, komut, çıktı, diff ve approval olaylarını kayıpsız normalize edip browser yeniden bağlandığında aynı thread'i sürdürebiliyor muyuz?
 
-Faz 0 planı [PoC uygulama planında](docs/planning/poc-implementation-plan.md), aktif Faz 1
+Faz 0 planı [PoC uygulama planında](docs/planning/poc-implementation-plan.md), Faz 1
 iş paketleri [tek kiracılı alfa planında](docs/planning/phase-1-alpha-plan.md), özet sıra ve
-geçmiş durum [PoC yol haritasında](docs/planning/poc-roadmap.md), app-server kararı
+tarihsel durum [PoC yol haritasında](docs/planning/poc-roadmap.md), app-server kararı
 [ADR-0001](docs/architecture/adr-0001-app-server-integration.md), teknoloji yığını ise
 [ADR-0002](docs/architecture/adr-0002-poc-technology-stack.md) içinde tutulur.
 
@@ -86,8 +107,7 @@ pnpm demo:golden:approval
 ```
 
 Temiz kurulum, browser adımları, beklenen semantik timeline kartları, cleanup ve sorun
-giderme için [PoC demo rehberine](docs/demo/poc-demo.md) bakın. Faz 1'in aktif paketi
-WP9'dur: alfa başlatma ve auth bootstrap.
+giderme için [PoC demo rehberine](docs/demo/poc-demo.md) bakın.
 
 - Web: `http://localhost:3000`
 - Control plane: `http://127.0.0.1:3100`
@@ -97,15 +117,15 @@ WP9'dur: alfa başlatma ve auth bootstrap.
 Gerçek session → `thread/start` → `turn/start` → final agent message akışı, dosya değiştirmeyen kısa bir prompt ile opt-in çalıştırılabilir:
 
 ```bash
-pnpm --filter @persistent-codex/workspace-agent smoke:real-flow
+pnpm --filter @perseverance/workspace-agent smoke:real-flow
 ```
 
-Gerçek smoke komutları geçici `persistent-codex-smoke-*` `CODEX_HOME` dizini kullanır. Yalnız mevcut `auth.json` ve `config.toml` dosyalarına symlink açılır; normal Codex task/session/state verileri bağlanmaz. Child process kapatıldıktan sonra geçici dizin silinir. Bu smoke komutları `pnpm verify` içinde otomatik çalışmaz ve yalnız açıkça çağrıldığında çalışır.
+Gerçek smoke komutları geçici `perseverance-smoke-*` `CODEX_HOME` dizini kullanır. Yalnız mevcut `auth.json` ve `config.toml` dosyalarına symlink açılır; normal Codex task/session/state verileri bağlanmaz. Child process kapatıldıktan sonra geçici dizin silinir. Bu smoke komutları `pnpm verify` içinde otomatik çalışmaz ve yalnız açıkça çağrıldığında çalışır.
 
 Durable approval smoke'u control-plane REST session/turn/GET pending/decision akışını, ölçülen upstream response sayısını ve geçici SQLite cleanup'ını birlikte doğrular:
 
 ```bash
-pnpm --filter @persistent-codex/workspace-agent smoke:real-approval
+pnpm --filter @perseverance/workspace-agent smoke:real-approval
 ```
 
 ## WP4 API yüzeyi
@@ -131,7 +151,7 @@ Resume başarısızlığı thread’i değiştirmez; `THREAD_NOT_RESUMABLE` ve r
 İki control-plane instance’ı, aynı SQLite ve persistent home ile gerçek `thread/read`/`thread/resume` akışını opt-in doğrulamak için:
 
 ```bash
-pnpm --filter @persistent-codex/workspace-agent smoke:real-recovery
+pnpm --filter @perseverance/workspace-agent smoke:real-recovery
 ```
 
 ## Mahremiyet tehdit modeli ve bilinen sınırlar (WP37)
@@ -163,8 +183,8 @@ repository'ye dahil değildir; sınırlar
 tanımlanır.
 
 - Güvenlik açığı bildirimi: [SECURITY.md](SECURITY.md) (public issue açmayın).
-- Destek kapsamı: [SUPPORT.md](SUPPORT.md) — community sürümü best-effort
-  desteklidir, SLA yoktur; ücretli Managed Cloud ayrı bir hizmettir.
+- Destek kapsamı: [SUPPORT.md](SUPPORT.md) — self-hosted community sürümü
+  best-effort desteklidir ve SLA yoktur; managed cloud işletilmez.
 - Katkı süreci ve DCO: [CONTRIBUTING.md](CONTRIBUTING.md),
   davranış kuralları: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 - Public release süreci: [public release checklist](docs/operations/public-release-checklist.md)

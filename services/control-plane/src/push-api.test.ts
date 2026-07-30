@@ -3,15 +3,15 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ExplicitDevAuthenticationAdapter } from '@persistent-codex/authz'
+import { ExplicitDevAuthenticationAdapter } from '@perseverance/authz'
 import {
   EnvelopeEncryption,
   LocalKmsProvider,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import {
   InMemoryPushRepository,
   PushProviderEmulator,
-} from '@persistent-codex/push-notifications'
+} from '@perseverance/push-notifications'
 import { buildControlPlane } from './server'
 
 const roots: string[] = []

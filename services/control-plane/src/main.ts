@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import {
   runAlphaPreflight,
   type AlphaConfig,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 import {
   createAnthropicCostReconciliationPort,
   createOpenAiCostReconciliationPort,
@@ -15,37 +15,37 @@ import {
   providerModelCatalogSchema,
   type ProviderCostReconciliationPort,
   type ProviderId,
-} from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-platform'
 import {
   ExplicitDevAuthenticationAdapter,
   OidcAuthenticationAdapter,
-} from '@persistent-codex/authz'
+} from '@perseverance/authz'
 import {
   createPostgresSupportAccessRepository,
   InMemorySupportAccessRepository,
-} from '@persistent-codex/support-access'
+} from '@perseverance/support-access'
 import {
   createPostgresCorpusRepository,
   EncryptedFilesystemCorpusSnapshotStorage,
-} from '@persistent-codex/corpus-ingestion'
+} from '@perseverance/corpus-ingestion'
 import {
   ChunkedEnvelopeEncryption,
   EnvelopeEncryption,
   LocalKmsProvider,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import {
   createPostgresPushRepository,
   InMemoryPushRepository,
   PushProviderEmulator,
-} from '@persistent-codex/push-notifications'
+} from '@perseverance/push-notifications'
 import {
   createBillingPostgresRepository,
   DeterministicBillingEmulator,
   type DevelopmentCommercialSeed,
-} from '@persistent-codex/billing-platform'
+} from '@perseverance/billing-platform'
 import { resolveBillingBootstrap } from './billing-composition'
-import { InMemorySharedFolderRepository } from '@persistent-codex/shared-folders'
-import { createPostgresSharedFolderRepository } from '@persistent-codex/shared-folders/postgres'
+import { InMemorySharedFolderRepository } from '@perseverance/shared-folders'
+import { createPostgresSharedFolderRepository } from '@perseverance/shared-folders/postgres'
 import {
   createProductionTopologyReadiness,
   resolveProductionTopology,

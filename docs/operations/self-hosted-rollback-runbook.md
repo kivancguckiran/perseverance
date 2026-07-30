@@ -24,7 +24,7 @@ bash infra/self-hosted/self-hosted.sh rollback
 
   ```bash
   bash infra/self-hosted/self-hosted.sh restore \
-    "${SELF_HOSTED_HOME:-/var/lib/persistent-codex}/backups/<upgrade-öncesi>.tar.enc"
+    "${SELF_HOSTED_HOME:-/var/lib/perseverance}/backups/<upgrade-öncesi>.tar.enc"
   ```
 
 ## Doğrulama

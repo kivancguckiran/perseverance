@@ -4,7 +4,7 @@
 - Plan tarihi: 16 Temmuz 2026
 - Aktif iş paketi: Yok
 - Ön koşul: Faz 2 ve WP16 tamamlandı
-- Kaynak spesifikasyon: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
+- Kaynak spesifikasyon: `docs/architecture/perseverance-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç ve faz numarası düzeltmesi
 

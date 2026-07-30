@@ -37,7 +37,7 @@ Kurulum sırasıyla şunları yapar; her adım fail-closed'dur:
    uygulama servisleri.
 7. İç healthcheck'ler ve public origin üzerinden `/readyz` doğrulaması.
 
-Varsayılan durum dizini `/var/lib/persistent-codex`'tir (`--home` ile
+Varsayılan durum dizini `/var/lib/perseverance`'tir (`--home` ile
 değiştirilebilir). Tek dışa açık servis proxy'dir (80/443); diğer tüm servisler
 compose iç ağında kalır.
 
@@ -123,7 +123,7 @@ Kurallar ve davranış:
 - Base path **build-time**'dır (web bundle'ı Vite `base` ile üretilir): değeri
   değiştirmek `install`/`upgrade` ile yeni bir product imajı build'i
   gerektirir; imaj tag'i base slug'ı içerir
-  (`persistent-self-hosted-product:<commit>-workspace` gibi).
+  (`perseverance-self-hosted-product:<commit>-workspace` gibi).
 - Kök `/healthz` ve `/readyz` her durumda korunur (monitoring geriye
   uyumluluğu); base altındaki `/{base}/readyz` da control-plane'e gider. Kök
   `/` isteği `/{base}/`'e 308 redirect edilir; diğer base dışı yollar 404'tür.
@@ -137,7 +137,7 @@ altından `include` edilen path-prefix düzenine birebir uyan örnek —
 `locations-enabled/workspace.location.conf`:
 
 ```nginx
-# Persistent Codex Workspace — /workspace/ alt-path'i (WP38, ADR-0038).
+# Perseverance — /workspace/ alt-path'i (WP38, ADR-0038).
 # URI'yi OLDUĞU GİBİ iletin (sonda / olmadan proxy_pass = strip yok);
 # uygulama base'i kendisi sahiplenir.
 location ^~ /workspace/ {

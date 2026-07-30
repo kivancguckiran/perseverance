@@ -15,7 +15,7 @@ turn'lere bağlanmalıdır.
 
 ## Karar
 
-- `@persistent-codex/provider-platform` paketindeki schema version 1; provider/model
+- `@perseverance/provider-platform` paketindeki schema version 1; provider/model
   identity, capability matrix, session/turn lifecycle, interrupt, approval, normalized
   event, usage delta/snapshot ve typed provider error sözleşmelerinin ortak kaynağıdır.
   Capability değerleri `supported`, `unsupported` veya `degraded` olur; adapter eksik

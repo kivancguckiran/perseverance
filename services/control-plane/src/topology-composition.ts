@@ -3,7 +3,7 @@ import {
   assertProductionStorage,
   evaluateDependencyReadiness,
   type DependencyReadiness,
-} from '@persistent-codex/production-topology'
+} from '@perseverance/production-topology'
 
 export interface ProductionTopologyConfig {
   instanceId: string

@@ -1,5 +1,5 @@
 import { setImmediate as waitForImmediate } from 'node:timers/promises'
-import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
+import { LocalArtifactStorage } from '@perseverance/artifact-storage'
 import {
   evaluateAdmission,
   BillingWebhookError,
@@ -10,7 +10,7 @@ import {
   type SubscriptionState as BillingSubscriptionState,
   type BillingProviderPort,
   type BillingPostgresRepository,
-} from '@persistent-codex/billing-platform'
+} from '@perseverance/billing-platform'
 import {
   CorpusIngestionService,
   CorpusError,
@@ -20,7 +20,7 @@ import {
   type CorpusRepository,
   type CorpusSnapshotStorage,
   type EmbeddingProvider,
-} from '@persistent-codex/corpus-ingestion'
+} from '@perseverance/corpus-ingestion'
 import {
   AuthenticationError,
   CorpusWorkloadCredentialAuthority,
@@ -29,7 +29,7 @@ import {
   type AuthenticationAdapter,
   type CorpusWorkloadAction,
   type MembershipDirectory,
-} from '@persistent-codex/authz'
+} from '@perseverance/authz'
 import {
   artifactDownloadTokenSchema,
   artifactMetadataSchema,
@@ -82,24 +82,24 @@ import {
   revokeFolderInvitationRequestSchema,
   sharedFolderSchema,
   transferFolderOwnershipRequestSchema,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import type {
   PushProvider,
   PushRepository,
-} from '@persistent-codex/push-notifications'
+} from '@perseverance/push-notifications'
 import {
   InMemorySupportAccessRepository,
   SupportAccessError,
   type SupportActor,
   type SupportAccessRepository,
   type SupportAccessScope,
-} from '@persistent-codex/support-access'
+} from '@perseverance/support-access'
 import {
   InMemorySharedFolderRepository,
   SharedFolderError,
   type FolderIdentity,
   type SharedFolderRepository,
-} from '@persistent-codex/shared-folders'
+} from '@perseverance/shared-folders'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import {
   accessSync,
@@ -152,30 +152,30 @@ import {
   type OrganizationMembership,
   type DependencyReadiness,
   meResponseSchema,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import type {
   ModelAliasConfig,
   PriceCatalog,
   ProviderCostReconciliationPort,
   ProviderId,
   ProviderModelCatalog,
-} from '@persistent-codex/provider-platform'
-import type { TimelineEvent } from '@persistent-codex/domain-events'
+} from '@perseverance/provider-platform'
+import type { TimelineEvent } from '@perseverance/domain-events'
 import {
   SqliteEventStore,
   StoreConflictError,
   StoreError,
   StoreNotFoundError,
   type StoreScope,
-} from '@persistent-codex/event-store'
+} from '@perseverance/event-store'
 import type {
   WorkspaceRuntimeClient,
   WorkspaceRuntimeIdentity,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 import {
   PersistentCodexHomeManager,
   WorkspaceCorpusRuntimeServices,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 import Fastify from 'fastify'
 import {
   isIdempotencyConflict,

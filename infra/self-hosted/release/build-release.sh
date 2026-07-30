@@ -40,7 +40,8 @@ docker buildx version >/dev/null 2>&1 || fail "docker buildx gerekli (multi-arch
 [ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ] ||
   fail "release yalnız temiz worktree'den üretilir"
 SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
-SOURCE_DATE_EPOCH=1753056000
+RELEASE_VERSION=1.0.0
+SOURCE_DATE_EPOCH=1785369600
 export SOURCE_DATE_EPOCH
 
 mkdir -p "${OUTPUT}"
@@ -52,18 +53,25 @@ docker buildx build \
   --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
   -f "${SELF_HOSTED_DIR}/product.Dockerfile" \
   -o "type=oci,dest=${OUTPUT}/product-oci.tar,tar=true" \
-  -t "persistent-self-hosted-product:${SOURCE_COMMIT}" \
+  -t "perseverance-self-hosted-product:${SOURCE_COMMIT}" \
   "${REPO_ROOT}"
 
 echo "[release] kurulum bundle'ı paketleniyor"
-tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
-  -C "${REPO_ROOT}" \
-  -cf "${OUTPUT}/self-hosted-dist.tar" \
+TAR_IMAGE="$(sed -n 's/^SELF_HOSTED_TAR_IMAGE=//p' "${SELF_HOSTED_DIR}/images.env")"
+docker run --rm \
+  -v "${REPO_ROOT}:/src:ro" \
+  -v "${OUTPUT}:/out" \
+  -e "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+  -w /src \
+  "${TAR_IMAGE}" \
+  tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+  -cf /out/self-hosted-dist.tar \
   infra/self-hosted infra/postgres/migrations
 
 echo "[release] release-manifest.json üretiliyor"
 NODE_IMAGE="$(sed -n 's/^SELF_HOSTED_NODE_IMAGE=//p' "${SELF_HOSTED_DIR}/images.env")"
 docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
+  -e "RELEASE_VERSION=${RELEASE_VERSION}" \
   -e "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" "${NODE_IMAGE}" node -e '
   const { createHash } = require("node:crypto")
   const { readFileSync, writeFileSync, readdirSync } = require("node:fs")
@@ -75,7 +83,8 @@ docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
   }))
   const manifest = {
     schemaVersion: 1,
-    repository: "persistent-codex-workspace",
+    repository: "perseverance",
+    releaseVersion: process.env.RELEASE_VERSION,
     sourceCommit: process.env.SOURCE_COMMIT,
     sourceDateEpoch: Number(process.env.SOURCE_DATE_EPOCH),
     platforms: ["linux/amd64", "linux/arm64"],
@@ -91,9 +100,10 @@ docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
     predicateType: "https://slsa.dev/provenance/v1",
     predicate: {
       buildDefinition: {
-        buildType: "https://persistent-codex.example/wp32/self-hosted-release/v1",
+        buildType: "https://perseverance.invalid/wp32/self-hosted-release/v1",
         externalParameters: {
-          repository: "persistent-codex-workspace",
+          repository: "perseverance",
+          releaseVersion: process.env.RELEASE_VERSION,
           sourceCommit: process.env.SOURCE_COMMIT,
         },
       },
@@ -103,7 +113,8 @@ docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
   writeFileSync("/out/provenance.intoto.json", JSON.stringify(provenance, null, 2) + "\n")
   const validUntil = new Date((Number(process.env.SOURCE_DATE_EPOCH) + 90 * 24 * 3600) * 1000)
   writeFileSync("/out/trust-policy.json", JSON.stringify({
-    repository: "persistent-codex-workspace",
+    repository: "perseverance",
+    releaseVersion: process.env.RELEASE_VERSION,
     sourceCommit: process.env.SOURCE_COMMIT,
     validUntil: validUntil.toISOString(),
     revoked: false,

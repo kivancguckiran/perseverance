@@ -3,7 +3,7 @@ import {
   ProductionTelemetry,
   createTrace,
   traceparent,
-} from '@persistent-codex/production-observability'
+} from '@perseverance/production-observability'
 import { buildProductionControlPlane } from './production-server'
 
 const scope = {

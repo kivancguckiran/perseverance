@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/shared-folders",
-  "version": "0.0.0",
+  "name": "@perseverance/shared-folders",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@persistent-codex/control-plane-contracts": "workspace:*",
+    "@perseverance/control-plane-contracts": "workspace:*",
     "pg": "^8.22.0"
   },
   "devDependencies": {

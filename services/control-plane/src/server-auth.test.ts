@@ -1,18 +1,18 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SqliteEventStore } from '@persistent-codex/event-store'
+import { SqliteEventStore } from '@perseverance/event-store'
 import type {
   AuthPrincipal,
   OrganizationMembership,
   ServerMessage,
-} from '@persistent-codex/control-plane-contracts'
-import { serverMessageSchema } from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
+import { serverMessageSchema } from '@perseverance/control-plane-contracts'
 import type {
   AuthenticationAdapter,
   MembershipDirectory,
-} from '@persistent-codex/authz'
-import { AuthenticationError } from '@persistent-codex/authz'
+} from '@perseverance/authz'
+import { AuthenticationError } from '@perseverance/authz'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildControlPlane, PUBLIC_ROUTE_AUTHORIZATION_CATALOG } from './server'
 

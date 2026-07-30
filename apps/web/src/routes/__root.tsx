@@ -20,9 +20,9 @@ export const Route = createRootRouteWithContext<{
         name: 'viewport',
         content: 'width=device-width, initial-scale=1',
       },
-      { title: 'Persistent Codex Workspace' },
+      { title: 'Perseverance' },
       { name: 'theme-color', content: '#0d1714' },
-      { name: 'application-name', content: 'Persistent Codex Workspace' },
+      { name: 'application-name', content: 'Perseverance' },
     ],
     links: [
       { rel: 'stylesheet', href: appStyles },

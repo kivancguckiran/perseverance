@@ -6,13 +6,13 @@
 - Aktif iş paketi: yok (bu planda); WP31–WP34 bağımsız kabul edildi, WP35 retire edildi
 - Ön koşul: WP0–WP30 ve Faz 5 tamamlanmış olmalıdır
 - Kaynak spesifikasyon:
-  `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
+  `docs/architecture/perseverance-tasarim-spesifikasyonu.md`
 - Provider auth araştırma kararı:
   `docs/security/wp34-provider-subscription-auth-research.md`
 
 ## 1. Amaç
 
-Persistent Codex Workspace'i iki tamamlayıcı dağıtım modeliyle yayımlamak:
+Perseverance'i iki tamamlayıcı dağıtım modeliyle yayımlamak:
 
 1. Kendi makinesi veya VPS'i olan kullanıcı için açık kaynak, tek komutla kurulabilen
    ve kullanıcının kendi provider hesabını kendi altyapısında kullanan self-hosted ürün.

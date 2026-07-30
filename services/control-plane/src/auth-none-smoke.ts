@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildControlPlane } from './server'
-import { SqliteEventStore } from '@persistent-codex/event-store'
+import { SqliteEventStore } from '@perseverance/event-store'
 
 const root = mkdtempSync(join(tmpdir(), 'persistent-codex-auth-none-'))
 const hiddenEnvironment = ['OPENAI_API_KEY', 'CODEX_API_KEY'] as const

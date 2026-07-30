@@ -1,6 +1,6 @@
 # İş Paketi Yönetim Protokolü
 
-- Belge durumu: Aktif
+- Belge durumu: Kapatıldı
 - Başlangıç tarihi: 14 Temmuz 2026
 - Yönetim kaynakları: `docs/planning/poc-implementation-plan.md` ve
   `docs/planning/phase-1-alpha-plan.md` ve
@@ -12,7 +12,7 @@
 
 ## Bu task'ın rolü
 
-Bu task kod implementasyonu yapmak yerine Persistent Codex Workspace PoC iş paketlerini yönetir, teslimatları kabul kriterlerine göre değerlendirir ve ilerleme durumunu takip eder.
+Bu task kod implementasyonu yapmak yerine Perseverance PoC iş paketlerini yönetir, teslimatları kabul kriterlerine göre değerlendirir ve ilerleme durumunu takip eder.
 
 ## Zorunlu çalışma kuralları
 
@@ -54,48 +54,48 @@ Uygulama task'ına verilecek prompt şu alanları içerir:
 
 ## Güncel iş paketi durumu
 
-| İş paketi                                    | Durum      | Not                                                                                                           |
-| -------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
-| WP0 — Repository ve protokol temeli          | Tamamlandı | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                                |
-| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı   |
-| WP2 — Normalize event adapter                | Tamamlandı | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı    |
-| WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı              |
-| WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı      |
-| WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                    |
-| WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                        |
-| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                    |
-| WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı                 |
-| WP9 — Alfa başlatma ve auth bootstrap        | Tamamlandı | Güvenli provisioning, readiness ve actionable auth recovery bağımsız olarak doğrulandı                        |
-| WP10 — Workspace ve Git görünürlüğü          | Tamamlandı | Scoped session navigasyonu, durable Git snapshot ve responsive salt-okunur yüzey doğrulandı                   |
-| WP11 — Audit ve temel metrics                | Tamamlandı | Atomik durable audit, dinamik readiness, bounded metrics ve contention davranışı doğrulandı                   |
-| WP12 — Alfa hardening ve kabul               | Tamamlandı | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                          |
-| WP13 — Platform ve usage ledger temeli       | Tamamlandı | Provider-neutral sözleşme, schema v9, model politikası ve append-only usage ledger doğrulandı                 |
-| WP14 — Durable detached execution            | Tamamlandı | Schema v10 durable run, disconnect/replay, explicit interrupt, recovery ve accounting doğrulandı              |
-| WP15 — Çok sağlayıcılı conversation          | Tamamlandı | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                            |
-| WP16 — PWA ve Faz 2 kabulü                   | Tamamlandı | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlandı                                        |
-| WP17 — Cursor Agent provider adapter         | Tamamlandı | Cursor adapter güncel runtime ve gerçek smoke ile bağımsız kabul edildi                                       |
-| WP18 — Tenant kimliği ve data isolation      | Tamamlandı | OIDC, deny-by-default authorization, RLS/object/cache tenant sınırı bağımsız kabul edildi                     |
-| WP19 — Runtime ve encryption isolation       | Tamamlandı | Kata runtime, egress, secret lease, KMS envelope encryption ve restore sınırı bağımsız kabul edildi           |
-| WP20 — Security beta kabulü                  | Tamamlandı | Durable support grant/JIT/break-glass ve birleşik adversarial Faz 3 kabulü bağımsız doğrulandı                |
-| WP21 — Corpus ingestion temeli               | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index omurgası bağımsız kabul edildi               |
-| WP22 — Hybrid retrieval ve MCP               | Tamamlandı | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP bağımsız kabul edildi            |
-| WP23 — Mobil approval ve push                | Tamamlandı | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği bağımsız kabul edildi                            |
-| WP24 — Billing, kredi ve gelir/marj kabulü   | Tamamlandı | Prepaid kredi, reservation, gelir/COGS/marj ve billing kabulü bağımsız doğrulandı                             |
-| WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Tamamlandı | Davet, rol/ACL, durable ortak task/billing ve birleşik Faz 4 kabulü bağımsız doğrulandı                       |
-| WP26 — HA topology ve kapasite               | Tamamlandı | Production HA, durable scheduler, fencing recovery ve noisy-neighbor sınırları bağımsız kabul edildi          |
-| WP27 — SLO ve DR                             | Tamamlandı | Gerçek PITR/restore, dependency game-day, SLO alertleri ve telemetry güvenliği bağımsız kabul edildi          |
-| WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                   |
-| WP29 — Supply-chain ve canary                | Tamamlandı | İmzalı build, provider canary, güvenli upgrade ve compliance evidence bağımsız kabul edildi                   |
-| WP30 — Production kabul ve rollout           | Tamamlandı | WP30-L local production-like engineering kabulü geçti; WP30-E production go-live öncesi zorunlu               |
-| WP31 — Open-source release hazırlığı         | Tamamlandı | AGPL-3.0-only lisans, secret/history taraması ve deterministik public-release gate bağımsız kabul edildi      |
-| WP32 — Self-hosted dağıtım                   | Tamamlandı | Tek komutlu kurulum, lifecycle, şifreli yedek ve credential sınırı teslim edilip kabul edildi                 |
-| WP33 — Managed tenant runtime                | Tamamlandı | Profil contract'ı, tenant-isolated provisioning/izolasyon ve fail-closed cloud boot bağımsız kabul edildi     |
-| WP34 — Provider account bağlantıları         | Tamamlandı | Capability matrisi, durable OAuth/vault, kill switch ve credential lifecycle bağımsız kabul edildi            |
-| WP35 — Managed Cloud public beta             | Retire     | Uygulama teslim edildi (`36f41c2`, `15ec71a`) ancak kabul denetimi yapılmadan retire edildi (27 Tem 2026)     |
-| WP36 — Gerçek ortam doğrulama koşusu         | Tamamlandı | ARM64 gerçek ortamda wp32 gate'leri + golden kanıtı bağımsız kabul edildi (28 Tem 2026)                       |
-| WP37 — Kullanıcı hesapları ve mahremiyet     | Tamamlandı | Kayıt/giriş, allowlist, parola-türevli at-rest şifreleme ve wp37:privacy kanıtı bağımsız kabul edildi         |
-| WP38 — Base-path (subpath) deployment        | Aktif      | Reverse-proxy alt-path'i altında tam işlev: SELF_HOSTED_BASE_PATH, PWA/SW/API base farkındalığı, wp38:subpath |
-| WP39 — v1.0 release ve proje kapanışı        | Bekliyor   | Marka kararı, public yayın, v1.0.0 tag/artifact ve proje kapanış kaydı                                        |
+| İş paketi                                    | Durum      | Not                                                                                                         |
+| -------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| WP0 — Repository ve protokol temeli          | Tamamlandı | Generator, sürüm pini, schema hash ve `pnpm verify` doğrulandı                                              |
+| WP1 — Workspace Agent process ve RPC köprüsü | Tamamlandı | Typed lifecycle hataları, timeout, restart/backoff, crash-loop, health state ve gerçek handshake doğrulandı |
+| WP2 — Normalize event adapter                | Tamamlandı | Hedef mapping'ler, runtime validation, reconciliation, redaction/checksum ve golden fixture'lar doğrulandı  |
+| WP3 — Session, event store ve replay         | Tamamlandı | Atomik ingest, durable session/event store ve boşluksuz high-water replay/live geçişi doğrulandı            |
+| WP4 — Gerçek thread ve turn akışı            | Tamamlandı | Restart-safe ingest, collision guard, observable delivery error ve iki-instance browser akışı doğrulandı    |
+| WP5 — Approval state machine                 | Tamamlandı | Durable state machine, concurrent karar, gerçek smoke ve responsive approval UI doğrulandı                  |
+| WP6 — Resume, reconnect ve recovery          | Tamamlandı | Kalıcı home, aynı-thread resume, recovery, steer/interrupt ve session route doğrulandı                      |
+| WP7 — Büyük çıktı ve timeline dayanıklılığı  | Tamamlandı | Uçtan uca bounded output, redakte artifact, backpressure ve responsive timeline doğrulandı                  |
+| WP8 — Golden senaryolar ve PoC demosu        | Tamamlandı | Üç gerçek golden görev, dört arıza senaryosu, cleanup ve responsive browser kabulü doğrulandı               |
+| WP9 — Alfa başlatma ve auth bootstrap        | Tamamlandı | Güvenli provisioning, readiness ve actionable auth recovery bağımsız olarak doğrulandı                      |
+| WP10 — Workspace ve Git görünürlüğü          | Tamamlandı | Scoped session navigasyonu, durable Git snapshot ve responsive salt-okunur yüzey doğrulandı                 |
+| WP11 — Audit ve temel metrics                | Tamamlandı | Atomik durable audit, dinamik readiness, bounded metrics ve contention davranışı doğrulandı                 |
+| WP12 — Alfa hardening ve kabul               | Tamamlandı | Deterministic gate, gerçek canary, lifecycle ve responsive release kabulü doğrulandı                        |
+| WP13 — Platform ve usage ledger temeli       | Tamamlandı | Provider-neutral sözleşme, schema v9, model politikası ve append-only usage ledger doğrulandı               |
+| WP14 — Durable detached execution            | Tamamlandı | Schema v10 durable run, disconnect/replay, explicit interrupt, recovery ve accounting doğrulandı            |
+| WP15 — Çok sağlayıcılı conversation          | Tamamlandı | Claude/Gemini adapter, model seçimi ve otomatik başlık uygulanacak                                          |
+| WP16 — PWA ve Faz 2 kabulü                   | Tamamlandı | PWA, maliyet görünümü ve uçtan uca provider/recovery kabulü tamamlandı                                      |
+| WP17 — Cursor Agent provider adapter         | Tamamlandı | Cursor adapter güncel runtime ve gerçek smoke ile bağımsız kabul edildi                                     |
+| WP18 — Tenant kimliği ve data isolation      | Tamamlandı | OIDC, deny-by-default authorization, RLS/object/cache tenant sınırı bağımsız kabul edildi                   |
+| WP19 — Runtime ve encryption isolation       | Tamamlandı | Kata runtime, egress, secret lease, KMS envelope encryption ve restore sınırı bağımsız kabul edildi         |
+| WP20 — Security beta kabulü                  | Tamamlandı | Durable support grant/JIT/break-glass ve birleşik adversarial Faz 3 kabulü bağımsız doğrulandı              |
+| WP21 — Corpus ingestion temeli               | Tamamlandı | Tenant-aware source registry, extraction, chunk ve derived index omurgası bağımsız kabul edildi             |
+| WP22 — Hybrid retrieval ve MCP               | Tamamlandı | ACL filtreli hybrid search, citation, watcher/reindex ve workspace-local MCP bağımsız kabul edildi          |
+| WP23 — Mobil approval ve push                | Tamamlandı | Güvenli push, mobil diff/approval ve çoklu cihaz sürekliliği bağımsız kabul edildi                          |
+| WP24 — Billing, kredi ve gelir/marj kabulü   | Tamamlandı | Prepaid kredi, reservation, gelir/COGS/marj ve billing kabulü bağımsız doğrulandı                           |
+| WP25 — Paylaşımlı klasör ve Faz 4 kabulü     | Tamamlandı | Davet, rol/ACL, durable ortak task/billing ve birleşik Faz 4 kabulü bağımsız doğrulandı                     |
+| WP26 — HA topology ve kapasite               | Tamamlandı | Production HA, durable scheduler, fencing recovery ve noisy-neighbor sınırları bağımsız kabul edildi        |
+| WP27 — SLO ve DR                             | Tamamlandı | Gerçek PITR/restore, dependency game-day, SLO alertleri ve telemetry güvenliği bağımsız kabul edildi        |
+| WP28 — Enterprise lifecycle                  | Tamamlandı | Gerçek SSO/SCIM, retention/export/delete, crypto-erasure ve residency bağımsız kabul edildi                 |
+| WP29 — Supply-chain ve canary                | Tamamlandı | İmzalı build, provider canary, güvenli upgrade ve compliance evidence bağımsız kabul edildi                 |
+| WP30 — Production kabul ve rollout           | Tamamlandı | WP30-L local production-like engineering kabulü geçti; WP30-E production go-live öncesi zorunlu             |
+| WP31 — Open-source release hazırlığı         | Tamamlandı | AGPL-3.0-only lisans, secret/history taraması ve deterministik public-release gate bağımsız kabul edildi    |
+| WP32 — Self-hosted dağıtım                   | Tamamlandı | Tek komutlu kurulum, lifecycle, şifreli yedek ve credential sınırı teslim edilip kabul edildi               |
+| WP33 — Managed tenant runtime                | Tamamlandı | Profil contract'ı, tenant-isolated provisioning/izolasyon ve fail-closed cloud boot bağımsız kabul edildi   |
+| WP34 — Provider account bağlantıları         | Tamamlandı | Capability matrisi, durable OAuth/vault, kill switch ve credential lifecycle bağımsız kabul edildi          |
+| WP35 — Managed Cloud public beta             | Retire     | Uygulama teslim edildi (`36f41c2`, `15ec71a`) ancak kabul denetimi yapılmadan retire edildi (27 Tem 2026)   |
+| WP36 — Gerçek ortam doğrulama koşusu         | Tamamlandı | ARM64 gerçek ortamda wp32 gate'leri + golden kanıtı bağımsız kabul edildi (28 Tem 2026)                     |
+| WP37 — Kullanıcı hesapları ve mahremiyet     | Tamamlandı | Kayıt/giriş, allowlist, parola-türevli at-rest şifreleme ve wp37:privacy kanıtı bağımsız kabul edildi       |
+| WP38 — Base-path (subpath) deployment        | Tamamlandı | Reverse-proxy alt-path'i altında PWA/SW/API/realtime akışı ARM64 gerçek ortamda bağımsız kabul edildi       |
+| WP39 — v1.0 release ve proje kapanışı        | Tamamlandı | Perseverance v1.0.0 public canonical repo, doğrulanabilir artifact ve kapanış kaydı                         |
 
 ## WP1 nihai denetim sonucu
 
@@ -121,7 +121,7 @@ Doğrulama kanıtı:
 
 - `pnpm verify`: başarılı.
 - Vitest: 4 test dosyası, 13 test başarılı.
-- `pnpm --filter @persistent-codex/workspace-agent smoke:real`: gerçek Codex `0.144.2` initialize handshake başarılı.
+- `pnpm --filter @perseverance/workspace-agent smoke:real`: gerçek Codex `0.144.2` initialize handshake başarılı.
 
 ## WP2 nihai denetim sonucu
 
@@ -215,7 +215,7 @@ Doğrulama kanıtı:
 - `pnpm verify`: başarılı.
 - Vitest: 4 test dosyası, 56 test başarılı.
 - Bütün package typecheck'leri ve TanStack Start client/SSR production build başarılı.
-- `pnpm --filter @persistent-codex/workspace-agent smoke:real-flow`: gerçek Codex final mesajı `TAMAM`.
+- `pnpm --filter @perseverance/workspace-agent smoke:real-flow`: gerçek Codex final mesajı `TAMAM`.
 - Uygulama commit'i: `81b6881` (`feat: complete persistent Codex workspace through WP4`).
 
 Aktif iş paketi WP5'tir.
@@ -1517,6 +1517,50 @@ monte edilebilmelidir. v1.0 release ve kapanış WP39'a kaymıştır. Sıra
 bağımlılıkla ilerler: her paket bir öncekinin bağımsız kabulünden sonra
 başlar; WP39 kabul edilmeden proje kapanmaz.
 
-Aktif iş paketi WP38'dir. Uygulama prompt'u hazırlanıp teslim edilmiştir
-(`wp38-uygulama-promptu.md`); teslimat `feat: support base-path deployment
-behind a reverse proxy` commit'i ve bağımsız kabul denetimiyle kapanacaktır.
+## WP38 nihai kabul sonucu ve WP39 aktivasyonu
+
+Karar: **Tamamlandı**
+
+- Teslimat commit'i `ccc13be` (`feat: deliver WP37 privacy and WP38 base-path
+deployment`).
+- ARM64 Linux kabul ortamında `wp32:preflight`, `wp32:test`, `wp37:test`,
+  `wp38:subpath`, `wp32:install-smoke`, `wp32:lifecycle`,
+  `wp32:credential-scan` ve `wp37:privacy` kesintisiz geçti.
+- `/workspace` altında SSR, asset/manifest/service worker, kullanıcı
+  kayıt→session→turn/event, WebSocket ve offline replay doğrulandı; kök kurulum
+  regresyonsuz kaldı.
+- Redakte kanıt bundle'ı SHA-256:
+  `35e4224c9641d7406e47b2c19d460b5ddf278b23ce355ac4146a1911e2f73016`.
+- Host `pnpm verify` 62 dosyada 602 testle geçti. WP38 bağımsız kabulü
+  30 Temmuz 2026'da kapandı.
+
+WP39 tek aktif iş paketi olarak başlatıldı. Yönetici kararları: ürün adı
+**Perseverance**; public canonical hedef
+`https://github.com/kivancguckiran/perseverance`; görünürlük public; ayrı
+mirror yok.
+
+## WP39 nihai kabul sonucu ve proje kapanışı
+
+Karar: **Tamamlandı**
+
+- Ürün, package scope'ları, self-hosted imaj/proje adları, UI/PWA metinleri,
+  yayın metadata'sı ve dokümantasyon **Perseverance** adı altında
+  birleştirildi. Storage upgrade uyumluluğu için mevcut `persistent_codex`
+  PostgreSQL şema adı kasıtlı olarak korundu.
+- Tüm workspace sürümleri `1.0.0`; `CHANGELOG.md`, public issue/PR şablonları,
+  destek sınırı ve marka kararı yayımlandı.
+- Host ve ARM64 Linux Node 24 ortamlarında `pnpm verify` geçti: 62 test
+  dosyasında 602 test, typecheck/build ve SSR HTTP smoke yeşil.
+- ARM64 Linux üzerinde `wp32:preflight`, `wp32:test`, `wp37:test`,
+  `wp38:subpath`, `wp32:install-smoke`, `wp32:lifecycle`,
+  `wp32:credential-scan` ve `wp37:privacy` kesintisiz geçti; static/runtime
+  credential bulgusu 0. Redakte kanıt SHA-256:
+  `cb83339e9b13c9030fb1c7bb54361334cb4d1f52a98e059008937d9620f4b393`.
+- Release commit'i `chore: release v1.0.0 and close the project`; kesin hash
+  `git rev-parse v1.0.0^{commit}` ile çözülür. Tag, checksum, imza,
+  provenance ve bundle GitHub v1.0.0 release'inde yayımlanır.
+- Public canonical repository
+  `https://github.com/kivancguckiran/perseverance`'dır; ayrı mirror yoktur.
+  WP35, WP30-E ve managed cloud launch retire kalır.
+
+WP0–WP39 yönetim zinciri kapanmıştır; aktif veya bekleyen iş paketi yoktur.

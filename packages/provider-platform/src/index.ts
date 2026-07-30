@@ -1,7 +1,7 @@
 import {
   timelineEventSchema,
   type TimelineEvent,
-} from '@persistent-codex/domain-events'
+} from '@perseverance/domain-events'
 import { z } from 'zod'
 
 export const PROVIDER_CONTRACT_VERSION = 1 as const

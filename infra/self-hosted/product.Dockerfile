@@ -23,7 +23,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 RUN pnpm exec esbuild services/control-plane/src/production-api-process.ts --bundle --platform=node --format=esm --external:pg-native --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/control-plane.mjs \
  && pnpm exec esbuild services/control-plane/src/production-worker-process.ts --bundle --platform=node --format=esm --external:pg-native --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/workspace-agent.mjs \
  && pnpm exec esbuild infra/self-hosted/bootstrap/self-hosted-bootstrap.ts --bundle --platform=node --format=esm --external:pg-native --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/self-hosted-bootstrap.mjs \
- && VITE_BASE_PATH="${SELF_HOSTED_BASE_PATH}" VITE_CONTROL_PLANE_URL=https://public-origin.invalid pnpm --filter @persistent-codex/web build \
+ && VITE_BASE_PATH="${SELF_HOSTED_BASE_PATH}" VITE_CONTROL_PLANE_URL=https://public-origin.invalid pnpm --filter @perseverance/web build \
  && pnpm exec esbuild apps/web/dist/server/server.js --bundle --platform=node --format=esm --outfile=/out/web-server.mjs \
  && mkdir -p /out/web \
  && cp -R apps/web/dist/client /out/web/client \
@@ -36,8 +36,8 @@ RUN pnpm exec esbuild services/control-plane/src/production-api-process.ts --bun
 
 FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
 ARG SOURCE_DATE_EPOCH=1753056000
-LABEL org.opencontainers.image.title="persistent-self-hosted-product" \
-      org.opencontainers.image.description="Persistent Codex Workspace self-hosted product image (WP32)" \
+LABEL org.opencontainers.image.title="perseverance-self-hosted-product" \
+      org.opencontainers.image.description="Perseverance self-hosted product image (WP32)" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.created="2026-07-21T00:00:00Z"
 RUN addgroup -S workspace && adduser -S -G workspace -u 10001 workspace

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: mailto:kivancguckiran@gmail.com
+    about: Güvenlik açıklarını public issue yerine özel olarak bildirin.
+  - name: Support boundary
+    url: https://github.com/kivancguckiran/perseverance/blob/main/SUPPORT.md
+    about: Desteklenen self-hosted kapsamını ve sınırları okuyun.

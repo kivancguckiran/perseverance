@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WP32 — Persistent Codex Workspace self-hosted dağıtım CLI'ı (ADR-0032).
+# WP32 — Perseverance self-hosted dağıtım CLI'ı (ADR-0032).
 #
 # Tek komut kurulum:
 #   bash infra/self-hosted/self-hosted.sh install \
@@ -213,7 +213,7 @@ cmd_verify_release() {
     const assert = (ok, message) => { if (!ok) { console.error("FAIL: " + message); process.exit(1) } }
     assert(policy.revoked === false, "trust policy revoked")
     assert(Date.parse(policy.validUntil) > Date.now(), "trust policy süresi dolmuş")
-    assert(policy.repository === "persistent-codex-workspace", "repository uyuşmazlığı")
+    assert(policy.repository === "perseverance", "repository uyuşmazlığı")
     assert(policy.sourceCommit === manifest.sourceCommit, "sourceCommit uyuşmazlığı")
     assert(provenance.predicateType === "https://slsa.dev/provenance/v1", "provenance predicateType")
     const sums = Object.fromEntries(
@@ -759,7 +759,7 @@ cmd_rollback() {
   previous_commit="$(sed -n 's/^SELF_HOSTED_SOURCE_COMMIT=//p' "$(previous_release_file)")"
   # WP38: imaj referansı state'ten okunur (base'li kurulumda tag slug içerir).
   previous_image="$(sed -n 's/^SELF_HOSTED_PRODUCT_IMAGE=//p' "$(previous_release_file)")"
-  [ -n "${previous_image}" ] || previous_image="persistent-self-hosted-product:${previous_commit}"
+  [ -n "${previous_image}" ] || previous_image="perseverance-self-hosted-product:${previous_commit}"
   docker image inspect "${previous_image}" >/dev/null 2>&1 ||
     fail "önceki sürüm imajı yok: ${previous_image}"
   log "rollback: $(read_env SELF_HOSTED_SOURCE_COMMIT) → ${previous_commit}"
@@ -798,7 +798,7 @@ cmd_uninstall() {
 
   log "stack kaldırılıyor (yalnız ${SELF_HOSTED_LABEL} etiketli kaynaklar)"
   compose down --volumes --remove-orphans
-  docker image ls -q 'persistent-self-hosted-product' | sort -u |
+  docker image ls -q 'perseverance-self-hosted-product' | sort -u |
     xargs -r docker image rm -f >/dev/null
 
   local leftover

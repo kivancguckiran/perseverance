@@ -1,18 +1,16 @@
 # Marka ve endorsement politikası
 
 - Durum: Yürürlükte
-- Tarih: 2026-07-23
-- Kapsam: WP31 (ADR-0031)
+- Tarih: 2026-07-23; WP39 kararı 2026-07-30
+- Kapsam: WP31 (ADR-0031) + WP39 public release
 
 ## Community ve Managed Cloud ayrımı
 
 - **Community edition**: Bu repository'nin AGPL-3.0-only lisanslı açık kaynak
   sürümüdür. Adı repository adıyla sınırlıdır; herkes lisans koşulları içinde
   kurabilir, değiştirebilir ve dağıtabilir.
-- **Managed Cloud**: Ürünün ticari, tenant-isolated hosted sürümüdür ve ayrı
-  bir ticari marka altında sunulur. Managed Cloud markası, logosu ve alan
-  adları bu repository lisansına dahil değildir; AGPL kodu kullanmak Managed
-  Cloud markasını kullanma hakkı vermez.
+- **Cloud profili**: Kod tabanında tarihsel mimari ve contract testleri için
+  korunur; işletilen veya desteklenen bir Perseverance hosted hizmeti değildir.
 - Community sürümünü baz alan üçüncü taraf dağıtımlar ve hosted hizmetler
   kendi adlarını kullanmalı, resmî Managed Cloud hizmetiyle karıştırılacak
   adlandırmadan kaçınmalıdır.
@@ -27,15 +25,14 @@
 - Katkıcılar ve dağıtıcılar, proje adına provider'larla ortaklık veya onay
   iması yapamaz.
 
-## Bilinen marka riski: "Codex" adı
+## WP39 marka kararı
 
-Mevcut çalışma adı **Persistent Codex Workspace**, OpenAI'nin "Codex"
-markasını içerir. Ürün çok sağlayıcılı hale gelmiştir (Codex, Claude, Gemini,
-Cursor) ve adın public launch öncesi hem marka riski hem doğruluk açısından
-yeniden değerlendirilmesi gerekir. Bu bir **açık yönetici kararıdır** ve
-`docs/operations/public-release-checklist.md` içinde publish öncesi zorunlu
-adım olarak listelenir. Yeniden adlandırma WP31 kapsamı dışındadır; karar
-verilene kadar README ve NOTICE bağımsızlık beyanlarını açıkça taşır.
+Proje sahibi 30 Temmuz 2026'da ürün/community adını **Perseverance** olarak
+belirledi. Önceki çalışma adındaki “Codex” ibaresi kaldırıldı; paket scope'u,
+ürün imajları, UI metinleri ve yayın metadata'sı aynı ad altında
+birleştirildi. “Codex” bundan sonra yalnız desteklenen bir provider ve
+interoperability hedefi olarak kullanılabilir. Bu karar public launch
+öncesindeki açık marka riskini kapatır.
 
 ## Uygulama
 
