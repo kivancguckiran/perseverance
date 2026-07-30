@@ -90,19 +90,44 @@ describe('wp32 dağıtım dosyaları', () => {
     ])
   })
 
-  it('release manifesti v1.0.0 sürümünü ve geçerli deterministik trust epochunu taşır', () => {
+  it('release manifesti package sürümünü ve uzun ömürlü deterministik trust epochunu taşır', () => {
     const release = read('infra/self-hosted/release/build-release.sh')
     const images = read('infra/self-hosted/images.env')
-    expect(release).toContain('RELEASE_VERSION=1.0.0')
+    expect(release).toContain('"version"')
     expect(release).toContain('SOURCE_DATE_EPOCH=1785369600')
     expect(release).toContain('releaseVersion: process.env.RELEASE_VERSION')
+    expect(release).toContain('5 * 365 * 24 * 3600')
+    expect(release).toContain('linux/amd64) suffix=linux-amd64')
+    expect(release).toContain('linux/arm64) suffix=linux-arm64')
+    expect(release).toContain('artifact="product-${suffix}.tar"')
+    expect(release).toContain('type=docker')
+    expect(release).toContain('--driver docker-container')
+    expect(release).toContain('SELF_HOSTED_RELEASE_BUILDKIT_IMAGE')
+    for (const sourceDirectory of ['apps', 'agents', 'packages', 'services'])
+      expect(release).toMatch(
+        new RegExp(`(?:^|\\s)${sourceDirectory}(?:\\s|$)`),
+      )
     expect(release).toContain('SELF_HOSTED_TAR_IMAGE')
     expect(release).not.toMatch(/^tar --sort=name/m)
     expect(images).toMatch(
       /^SELF_HOSTED_TAR_IMAGE=debian:bookworm-slim@sha256:[a-f0-9]{64}$/m,
     )
-    const validUntil = (1785369600 + 90 * 24 * 3600) * 1000
-    expect(validUntil).toBeGreaterThan(Date.parse('2026-07-30T00:00:00Z'))
+    expect(images).toMatch(
+      /^SELF_HOSTED_RELEASE_BUILDKIT_IMAGE=moby\/buildkit:buildx-stable-1@sha256:[a-f0-9]{64}$/m,
+    )
+    const validUntil = (1785369600 + 5 * 365 * 24 * 3600) * 1000
+    expect(validUntil).toBeGreaterThan(Date.parse('2031-01-01T00:00:00Z'))
+  })
+
+  it('bundle kurulumu manifest commitini ve mimariye özel Docker archiveı kullanır', () => {
+    const script = read('infra/self-hosted/self-hosted.sh')
+    const install = extractShellFunction(script, 'cmd_install')
+    expect(script).toContain('product-linux-amd64.tar')
+    expect(script).toContain('product-linux-arm64.tar')
+    expect(script).toContain('docker load --input')
+    expect(script).toContain('release_manifest_value')
+    expect(install).toContain('load_release_product_image')
+    expect(install).not.toContain('echo bundle')
   })
 
   it('yedek, provider credential volumeunu yalnız açık bayrakla içerir', () => {
@@ -154,6 +179,27 @@ describe('wp32 dağıtım dosyaları', () => {
     expect(dockerfile).toContain(
       'VITE_CONTROL_PLANE_URL=https://public-origin.invalid',
     )
+    for (const tool of [
+      'bash=5.3.9-r1',
+      'git=2.54.0-r0',
+      'openssh-client-default=10.3_p1-r0',
+      'ripgrep=15.1.0-r0',
+    ])
+      expect(dockerfile).toContain(tool)
+    expect(dockerfile).toContain('mkdir -p /codex-home /workspace')
+    expect(dockerfile).toContain('chown 10001:10001 /codex-home /workspace')
+  })
+
+  it('workspace import canonical Git worktree, read-only bind ve explicit replace uygular', () => {
+    const script = read('infra/self-hosted/self-hosted.sh')
+    const workspaceImport = extractShellFunction(script, 'cmd_workspace_import')
+    expect(workspaceImport).toContain('pwd -P')
+    expect(workspaceImport).toContain('/.git')
+    expect(workspaceImport).toContain(':/import:ro')
+    expect(workspaceImport).toContain('--replace')
+    expect(workspaceImport).toContain('chown -R 10001:10001')
+    expect(workspaceImport).toContain('git -C /workspace rev-parse')
+    expect(script).toContain('prepare_workspace_volume')
   })
 
   it('identity servisi ağ üzerinden token basmaz (mint yalnız CLI)', () => {

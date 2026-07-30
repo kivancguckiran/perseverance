@@ -75,12 +75,18 @@ Self-hosted kurulum:
 git clone https://github.com/kivancguckiran/perseverance.git
 cd perseverance
 bash infra/self-hosted/self-hosted.sh install \
-  --domain workspace.example.com --acme-email admin@example.com
+  --domain workspace.example.com --acme-email admin@example.com \
+  --provider-auth=defer
+bash infra/self-hosted/self-hosted.sh codex-login
+bash infra/self-hosted/self-hosted.sh workspace-import /path/to/your/repository
+bash infra/self-hosted/self-hosted.sh set-allowed-users "your-user"
 ```
 
 Gereksinimler, TLS seçenekleri, subpath kurulumu ve yaşam döngüsü işlemleri
 [self-hosted kurulum runbook'unda](docs/operations/self-hosted-install-runbook.md)
-belgelenir.
+belgelenir. `workspace-import`, Git repository'sini kalıcı ve agent tarafından
+yazılabilir workspace volume'una kopyalar; host repository'sini doğrudan
+değiştirmez.
 
 ## Mimari temel
 

@@ -8,7 +8,13 @@
 // timestamp'siz ve redakte yazılır.
 import assert from 'node:assert/strict'
 import { execFile, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import {
@@ -214,6 +220,39 @@ const installSmoke = () => {
     'sandbox temiz değil: persistent.self-hosted etiketli kaynak var',
   )
   const install = selfHosted(['install'])
+  const importFixture = join(stateDir, 'workspace-import-fixture')
+  rmSync(importFixture, { recursive: true, force: true })
+  mkdirSync(importFixture, { recursive: true })
+  writeFileSync(
+    join(importFixture, 'README.md'),
+    '# Workspace import fixture\n\nperseverance-import-marker\n',
+  )
+  run('git', ['-C', importFixture, 'init', '--quiet'])
+  run('git', ['-C', importFixture, 'config', 'user.name', 'WP32 Fixture'])
+  run('git', [
+    '-C',
+    importFixture,
+    'config',
+    'user.email',
+    'wp32-fixture@example.invalid',
+  ])
+  run('git', ['-C', importFixture, 'add', 'README.md'])
+  run('git', ['-C', importFixture, 'commit', '--quiet', '-m', 'fixture'])
+  selfHosted(['workspace-import', importFixture])
+  const workspaceProbe = run('docker', [
+    ...composeArgs('exec', '-T', 'workspace-agent'),
+    'bash',
+    '-lc',
+    [
+      'set -euo pipefail',
+      'test -w /workspace',
+      'git -C /workspace status --short',
+      'rg -q perseverance-import-marker /workspace/README.md',
+      'ssh -V >/dev/null 2>&1',
+      'printf "\\nagent-write-ok\\n" >> /workspace/README.md',
+      'git -C /workspace diff --exit-code --quiet && exit 1 || true',
+    ].join('; '),
+  ])
   const publicReady = curlReady('/readyz')
   const webReady =
     spawnSync('curl', ['-fsSk', '--max-time', '5', 'https://localhost/'], {
@@ -234,6 +273,10 @@ const installSmoke = () => {
     publicReadyz: publicReady,
     webRoot: webReady,
     resourcesDuringRun: resourcesUp,
+    workspaceWritable: true,
+    workspaceGitRepositoryImported: true,
+    runtimeToolchain: ['bash', 'git', 'rg', 'ssh'],
+    workspaceProbeOutputBytes: workspaceProbe.stdout.length,
     uninstallCleanupVerified: true,
     installLogSha256Lines: install.stdout.split('\n').length,
   })

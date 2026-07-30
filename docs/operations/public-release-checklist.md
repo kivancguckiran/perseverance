@@ -59,8 +59,9 @@ Self-hosted dağıtım artifact'i yayımlanacaksa, §2'deki imza hattının üze
      bash infra/self-hosted/release/build-release.sh --output dist/self-hosted-release
    ```
 
-   Çıktı: `product-oci.tar`, `self-hosted-dist.tar`, `release-manifest.json`,
-   `SHA256SUMS`, cosign imzaları, `provenance.intoto.json`, `trust-policy.json`.
+   Çıktı: `product-linux-amd64.tar`, `product-linux-arm64.tar`,
+   `self-hosted-dist.tar`, `release-manifest.json`, `SHA256SUMS`, her artifact
+   için cosign imzası, `provenance.intoto.json`, `trust-policy.json`.
 
 3. Doğrulama provası: temiz bir makinede
    `bash infra/self-hosted/self-hosted.sh verify-release <bundle>` fail-closed

@@ -49,12 +49,6 @@ export const checkImagesEnv = (text: string): string[] => {
   )
   if (entries.length === 0) problems.push('images.env: hiç imaj tanımı yok')
   for (const [key, value] of entries) {
-    // Cosign wp29 hattıyla aynı tag pinindedir (ADR-0032'de gerekçeli istisna).
-    if (key === 'SELF_HOSTED_COSIGN_IMAGE') {
-      if (!/^ghcr\.io\/sigstore\/cosign\/cosign:v[0-9.]+$/.test(value))
-        problems.push(`images.env: ${key} beklenen cosign pin biçiminde değil`)
-      continue
-    }
     if (!WP32_PINNED_IMAGE_PATTERN.test(value))
       problems.push(`images.env: ${key} sürüm+digest pinli değil: ${value}`)
   }

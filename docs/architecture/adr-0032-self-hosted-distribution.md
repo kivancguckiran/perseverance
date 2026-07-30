@@ -140,7 +140,7 @@ Yönlendirme: `/v1/*`, `/healthz`, `/readyz` → `control-plane:3300`; kalan her
 - Product imajı `perseverance-self-hosted-product:<source-commit>` olarak etiketlenir;
   kaynak commit'i kurulum durum dizinine kaydedilir ve upgrade/rollback bu kayıt
   üzerinden yürür.
-- Cosign imajı wp29 ile aynı pin'dedir (`ghcr.io/sigstore/cosign/cosign:v2.5.3`);
+- Cosign imajı sürüm ve multi-arch index digest'iyle pinlidir;
   imza/provenance doğrulaması bu imajla, docker üzerinden koşar.
 
 ### Güvenli default config
