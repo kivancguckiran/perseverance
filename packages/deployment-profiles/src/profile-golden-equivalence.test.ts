@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { CodexEventAdapter } from '@persistent-codex/codex-event-adapter'
+import { CodexEventAdapter } from '@perseverance/codex-event-adapter'
 import {
   DEPLOYMENT_PROFILES,
   type DeploymentProfile,

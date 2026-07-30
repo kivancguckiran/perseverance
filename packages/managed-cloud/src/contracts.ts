@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { capacityVectorSchema } from '@persistent-codex/production-topology/contracts'
-import { providerAuthModeSchema } from '@persistent-codex/provider-auth'
-import { providerIdSchema } from '@persistent-codex/provider-platform'
+import { capacityVectorSchema } from '@perseverance/production-topology/contracts'
+import { providerAuthModeSchema } from '@perseverance/provider-auth'
+import { providerIdSchema } from '@perseverance/provider-platform'
 
 export const MANAGED_CLOUD_CONTRACT_VERSION = 1 as const
 const id = z.string().trim().min(1).max(255)

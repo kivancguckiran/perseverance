@@ -106,7 +106,7 @@ Mevcut durum:
 
 ### Compose topolojisi
 
-`infra/self-hosted/compose.yml`, proje adı `persistent-self-hosted`, tüm kaynaklarda
+`infra/self-hosted/compose.yml`, proje adı `perseverance-self-hosted`, tüm kaynaklarda
 `persistent.self-hosted=true` etiketi (yaşam döngüsü keşfi ve temizlik doğrulaması
 yalnız bu etiketle yapılır — wp30 deseni):
 
@@ -137,7 +137,7 @@ Yönlendirme: `/v1/*`, `/healthz`, `/readyz` → `control-plane:3300`; kalan her
   doğrular (wp30 `assertPinnedImage` sözleşmesi).
 - Index digest'i pinlemek amd64 ve arm64'ü aynı anda sabitler; mimariye özgü digest
   çözümü Docker'a bırakılır.
-- Product imajı `persistent-self-hosted-product:<source-commit>` olarak etiketlenir;
+- Product imajı `perseverance-self-hosted-product:<source-commit>` olarak etiketlenir;
   kaynak commit'i kurulum durum dizinine kaydedilir ve upgrade/rollback bu kayıt
   üzerinden yürür.
 - Cosign imajı wp29 ile aynı pin'dedir (`ghcr.io/sigstore/cosign/cosign:v2.5.3`);

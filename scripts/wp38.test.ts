@@ -54,13 +54,13 @@ describe('normalize_base_path (lib.sh)', () => {
 describe('product_image_tag (lib.sh)', () => {
   it('kökte tag değişmez, base slug eklenir', () => {
     expect(libCall(`product_image_tag abc123 ''`).stdout).toBe(
-      'persistent-self-hosted-product:abc123',
+      'perseverance-self-hosted-product:abc123',
     )
     expect(libCall(`product_image_tag abc123 '/workspace'`).stdout).toBe(
-      'persistent-self-hosted-product:abc123-workspace',
+      'perseverance-self-hosted-product:abc123-workspace',
     )
     expect(libCall(`product_image_tag abc123 '/a/b'`).stdout).toBe(
-      'persistent-self-hosted-product:abc123-a-b',
+      'perseverance-self-hosted-product:abc123-a-b',
     )
   })
 })

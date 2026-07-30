@@ -3,7 +3,7 @@ import {
   supportGrantSchema,
   type SupportAccessAction,
   type SupportGrant,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 
 export type SupportRole =
   | 'tenant_user'

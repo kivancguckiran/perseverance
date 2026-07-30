@@ -1,9 +1,9 @@
 import Fastify from 'fastify'
-import { EnterpriseBoundaryError } from '@persistent-codex/enterprise-lifecycle'
+import { EnterpriseBoundaryError } from '@perseverance/enterprise-lifecycle'
 import type {
   EnterpriseRepository,
   ScimWrite,
-} from '@persistent-codex/enterprise-lifecycle/postgres'
+} from '@perseverance/enterprise-lifecycle/postgres'
 
 type Scope = { tenantId: string; organizationId: string }
 const scope = (headers: Record<string, unknown>): Scope => {

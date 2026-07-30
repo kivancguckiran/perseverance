@@ -1,4 +1,4 @@
-import { codexV2 } from '@persistent-codex/codex-protocol-generated'
+import { codexV2 } from '@perseverance/codex-protocol-generated'
 import { CodexAppServerClient } from './index'
 import { createIsolatedCodexHome } from './isolated-codex-home'
 

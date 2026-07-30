@@ -3,7 +3,7 @@ import {
   DeploymentProfileError,
   assertEntitled,
   type DeploymentProfile,
-} from '@persistent-codex/deployment-profiles'
+} from '@perseverance/deployment-profiles'
 import {
   TenantRuntimeError,
   tenantCapacityBudgetSchema,
@@ -12,8 +12,8 @@ import {
   type RuntimeDataPlaneAuthority,
   type TenantProvisioningService,
   type TenantRuntimeRepository,
-} from '@persistent-codex/tenant-runtime'
-import { capacityVectorSchema } from '@persistent-codex/production-topology/contracts'
+} from '@perseverance/tenant-runtime'
+import { capacityVectorSchema } from '@perseverance/production-topology/contracts'
 import { z } from 'zod'
 
 // WP33 — managed tenant runtime admin/internal API'si (ADR-0033).

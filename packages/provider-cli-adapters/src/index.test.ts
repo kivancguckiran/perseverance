@@ -21,7 +21,7 @@ import {
   type CliRunResult,
   type CliProcessRunner,
 } from './index'
-import type { ProviderModelCatalog } from '@persistent-codex/provider-platform'
+import type { ProviderModelCatalog } from '@perseverance/provider-platform'
 
 const fixture = (provider: 'claude' | 'gemini' | 'cursor') =>
   readFileSync(

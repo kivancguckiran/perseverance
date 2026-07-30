@@ -4,11 +4,11 @@ import {
   fitsCapacity,
   selectWeightedFairCandidate,
   type FairQueueCandidate,
-} from '@persistent-codex/production-topology'
+} from '@perseverance/production-topology'
 import type {
   CapacityVector,
   TenantSchedulingPolicy,
-} from '@persistent-codex/production-topology/contracts'
+} from '@perseverance/production-topology/contracts'
 import {
   DELETE_STEPS,
   PROVISION_STEPS,

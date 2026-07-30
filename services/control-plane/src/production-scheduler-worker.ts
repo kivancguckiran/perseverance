@@ -6,34 +6,34 @@ import {
   OtlpHttpExporter,
   createTrace,
   type TraceContext,
-} from '@persistent-codex/production-observability'
+} from '@perseverance/production-observability'
 import {
   createBillingPostgresRepository,
   type BillingPostgresRepository,
-} from '@persistent-codex/billing-platform'
-import { codexV2 } from '@persistent-codex/codex-protocol-generated'
+} from '@perseverance/billing-platform'
+import { codexV2 } from '@perseverance/codex-protocol-generated'
 import {
   ZERO_CAPACITY,
   type CapacityVector,
-} from '@persistent-codex/production-topology'
+} from '@perseverance/production-topology'
 import {
   createPostgresTopologyRepository,
   type ClaimedWork,
   type PostgresTopologyRepository,
-} from '@persistent-codex/production-topology/postgres'
+} from '@perseverance/production-topology/postgres'
 import {
   createProductionPostgresRepository,
   type ProductionPostgresRepository,
   type ProductionScope,
-} from '@persistent-codex/production-topology/production-postgres'
+} from '@perseverance/production-topology/production-postgres'
 import {
   S3CompatibleObjectStore,
   type ObjectStore,
-} from '@persistent-codex/production-topology/durable-dependencies'
+} from '@perseverance/production-topology/durable-dependencies'
 import {
   CodexAppServerClient,
   createIsolatedCodexHome,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 import {
   decryptUserContent,
   encryptUserContent,

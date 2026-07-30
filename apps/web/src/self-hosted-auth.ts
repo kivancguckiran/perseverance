@@ -125,7 +125,7 @@ export async function signOut(apiBaseUrl: string): Promise<void> {
   } finally {
     clearStoredAuth()
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('persistent-codex:sign-out'))
+      window.dispatchEvent(new Event('perseverance:sign-out'))
       window.location.href = withBase('/login')
     }
   }

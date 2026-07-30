@@ -17,7 +17,7 @@ const results = [
   ],
   [
     'contracts',
-    ['--filter', '@persistent-codex/production-readiness', 'typecheck'],
+    ['--filter', '@perseverance/production-readiness', 'typecheck'],
   ],
 ] as const
 for (const [name, args] of results) {

@@ -1,10 +1,10 @@
-# Persistent Codex Workspace Agent Guide
+# Perseverance Agent Guide
 
 Bu repository, `codex app-server` tabanlı kalıcı ve çok kiracılı Codex çalışma alanı ürünüdür. Kullanıcıyla varsayılan iletişim dili Türkçedir; kod, protokol alanları ve teknik terimler doğal İngilizce adlarıyla kalabilir.
 
 ## Doğruluk kaynakları
 
-1. Ürün ve mimari için `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`.
+1. Ürün ve mimari için `docs/architecture/perseverance-tasarim-spesifikasyonu.md`.
 2. Kabul edilmiş teknik kararlar için `docs/architecture/adr-*.md`.
 3. Aktif uygulama sırası için `docs/planning/poc-roadmap.md`.
 4. Çalışılan alt dizinde daha yakın bir `AGENTS.md` varsa o dosya önce gelir.

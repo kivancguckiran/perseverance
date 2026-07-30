@@ -171,7 +171,7 @@ try {
     ),
   })
   await app.listen({ host: '127.0.0.1', port: apiPort })
-  execFileSync('pnpm', ['--filter', '@persistent-codex/web', 'build'], {
+  execFileSync('pnpm', ['--filter', '@perseverance/web', 'build'], {
     cwd: repositoryRoot,
     env: { ...process.env, VITE_CONTROL_PLANE_URL: apiUrl },
     stdio: ['ignore', 'pipe', 'pipe'],

@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/provider-cli-adapters",
-  "version": "0.0.0",
+  "name": "@perseverance/provider-cli-adapters",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@persistent-codex/domain-events": "workspace:*",
-    "@persistent-codex/provider-platform": "workspace:*"
+    "@perseverance/domain-events": "workspace:*",
+    "@perseverance/provider-platform": "workspace:*"
   }
 }

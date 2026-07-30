@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { ZERO_CAPACITY } from '@persistent-codex/production-topology'
+import { ZERO_CAPACITY } from '@perseverance/production-topology'
 import type {
   CapacityVector,
   TenantSchedulingPolicy,
-} from '@persistent-codex/production-topology/contracts'
-import type { FairQueueCandidate } from '@persistent-codex/production-topology'
+} from '@perseverance/production-topology/contracts'
+import type { FairQueueCandidate } from '@perseverance/production-topology'
 import {
   InMemoryTenantRuntimeRepository,
   InMemoryTenantRuntimeResources,

@@ -1,15 +1,15 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import type { DeploymentProfile } from '@persistent-codex/deployment-profiles'
-import type { ProviderId } from '@persistent-codex/provider-platform'
+import type { DeploymentProfile } from '@perseverance/deployment-profiles'
+import type { ProviderId } from '@perseverance/provider-platform'
 import {
   RuntimeDataPlaneAuthority,
   type RuntimeCredentialClaims,
-} from '@persistent-codex/tenant-runtime'
+} from '@perseverance/tenant-runtime'
 import {
   EnvelopeEncryption,
   type EncryptionContextV1,
   type EnvelopeV1,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import {
   PROVIDER_AUTH_CONTRACT_VERSION,
   oauthTransactionSchema,

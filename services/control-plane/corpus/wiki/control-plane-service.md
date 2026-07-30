@@ -20,7 +20,7 @@ tags:
 
 ## Özet
 
-`@persistent-codex/control-plane`, Fastify tabanlı modüler monolith servisidir. HTTP/WebSocket sınırını kurar, request scope'u doğrular ve Codex runtime yaşam döngüsünü `SessionOrchestrator` üzerinden yönetir.
+`@perseverance/control-plane`, Fastify tabanlı modüler monolith servisidir. HTTP/WebSocket sınırını kurar, request scope'u doğrular ve Codex runtime yaşam döngüsünü `SessionOrchestrator` üzerinden yönetir.
 
 ## Ana bileşenler
 

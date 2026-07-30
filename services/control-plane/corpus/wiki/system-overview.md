@@ -17,7 +17,7 @@ tags:
 
 ## Özet
 
-Persistent Codex Workspace, gerçek ve pinli `codex app-server` orkestrasyonunu kalıcı bir workspace ürünü olarak sunar. Control plane oturum, replay, approval, audit ve istemci API'lerini yönetirken; workspace data plane Codex sürecini, repository'yi ve kalıcı `CODEX_HOME` alanını taşır.
+Perseverance, gerçek ve pinli `codex app-server` orkestrasyonunu kalıcı bir workspace ürünü olarak sunar. Control plane oturum, replay, approval, audit ve istemci API'lerini yönetirken; workspace data plane Codex sürecini, repository'yi ve kalıcı `CODEX_HOME` alanını taşır.
 
 ```text
 Web client
@@ -49,6 +49,6 @@ Workspace Agent bir model ajanı değildir; process supervisor ve protocol adapt
 
 ## Kaynaklar
 
-- `SRC-REPO-005` — `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
+- `SRC-REPO-005` — `docs/architecture/perseverance-tasarim-spesifikasyonu.md`
 - `SRC-ADR-0001` — app-server integration kararı
 - `SRC-ADR-0002` — PoC technology stack kararı

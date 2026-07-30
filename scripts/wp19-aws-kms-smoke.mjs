@@ -8,7 +8,7 @@ if (!keyId) {
   process.exit(2)
 }
 const context =
-  'tenantId=wp19-smoke,organizationId=wp19-smoke,workspaceId=wp19-smoke,purpose=persistent-codex-workspace-envelope-v1'
+  'tenantId=wp19-smoke,organizationId=wp19-smoke,workspaceId=wp19-smoke,purpose=perseverance-envelope-v1'
 function aws(args) {
   const result = spawnSync('aws', args, {
     encoding: 'utf8',
@@ -61,7 +61,7 @@ const mismatch = spawnSync(
     '--ciphertext-blob',
     ciphertext,
     '--encryption-context',
-    'tenantId=other-tenant,organizationId=wp19-smoke,workspaceId=wp19-smoke,purpose=persistent-codex-workspace-envelope-v1',
+    'tenantId=other-tenant,organizationId=wp19-smoke,workspaceId=wp19-smoke,purpose=perseverance-envelope-v1',
     '--output',
     'text',
     '--query',

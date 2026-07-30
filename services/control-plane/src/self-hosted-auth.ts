@@ -30,7 +30,7 @@ import {
   wrapContentKey,
   type UserKdfParamsV1,
   type WrappedContentKeyV1,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import {
   provisionWorkspace,
   snapshotSelfHostedBilling,

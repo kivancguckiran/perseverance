@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/control-plane-contracts",
-  "version": "0.0.0",
+  "name": "@perseverance/control-plane-contracts",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,11 +10,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@persistent-codex/billing-platform": "workspace:*",
-    "@persistent-codex/domain-events": "workspace:*",
-    "@persistent-codex/production-readiness": "workspace:*",
-    "@persistent-codex/production-topology": "workspace:*",
-    "@persistent-codex/provider-platform": "workspace:*",
+    "@perseverance/billing-platform": "workspace:*",
+    "@perseverance/domain-events": "workspace:*",
+    "@perseverance/production-readiness": "workspace:*",
+    "@perseverance/production-topology": "workspace:*",
+    "@perseverance/provider-platform": "workspace:*",
     "zod": "^4.4.3"
   }
 }

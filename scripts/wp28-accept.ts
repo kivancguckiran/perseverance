@@ -113,7 +113,7 @@ const browserSessions = spawnSync('agent-browser', ['session', 'list'], {
 }).stdout
 assert(!browserSessions.includes('wp28-'), 'temporary browser session remains')
 const temporaryHomes = readdirSync(tmpdir()).filter((name) =>
-  name.startsWith('persistent-codex-smoke-'),
+  name.startsWith('perseverance-smoke-'),
 )
 assert.equal(temporaryHomes.length, 0, 'temporary Codex homes remain')
 const lingeringProcesses = spawnSync('ps', ['-axo', 'command='], {

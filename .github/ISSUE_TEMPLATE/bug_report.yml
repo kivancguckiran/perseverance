@@ -1,0 +1,49 @@
+name: Bug report
+description: Perseverance self-hosted dağıtımında yeniden üretilebilir bir hata bildirin.
+title: '[Bug]: '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Güvenlik açıklarını public issue olarak bildirmeyin; SECURITY.md içindeki özel kanalı kullanın.
+  - type: input
+    id: version
+    attributes:
+      label: Sürüm
+      description: Release etiketi veya commit hash'i.
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Dağıtım
+      options:
+        - self-hosted (supported)
+        - local development
+        - cloud profile (unsupported)
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Hata
+      description: Beklenen ve gerçekleşen davranışı yazın.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Yeniden üretim adımları
+      description: Secret, token veya kişisel veri eklemeyin.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ortam
+      description: İşletim sistemi, mimari, Node/pnpm ve Docker sürümleri.
+    validations:
+      required: true

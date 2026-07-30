@@ -1,4 +1,4 @@
-apiVersion: persistent-codex.dev/v1
+apiVersion: perseverance.invalid/v1
 kind: DisasterRecoverySchedule
 metadata: { name: production-dr, owner: disaster-recovery }
 spec:

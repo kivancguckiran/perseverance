@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
-import type { UsageReport } from '@persistent-codex/provider-platform'
+import type { UsageReport } from '@perseverance/provider-platform'
 
 export interface CodexTitleProcessInput {
   binary: string

@@ -488,7 +488,7 @@ try {
   const runtimeConnection = `postgresql://billing_runtime:runtime@127.0.0.1:${port}/postgres`
   const main = spawn(
     'pnpm',
-    ['--filter', '@persistent-codex/control-plane', 'start'],
+    ['--filter', '@perseverance/control-plane', 'start'],
     {
       cwd: process.cwd(),
       env: {

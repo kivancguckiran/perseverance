@@ -98,12 +98,12 @@ export function PushNotificationControl({
       )
     }
     navigator.serviceWorker.addEventListener('message', refresh)
-    window.addEventListener('persistent-codex:sign-out', signOut)
+    window.addEventListener('perseverance:sign-out', signOut)
     if (Notification.permission === 'granted' && state === 'idle')
       void subscribe().catch(() => setState('idle'))
     return () => {
       navigator.serviceWorker.removeEventListener('message', refresh)
-      window.removeEventListener('persistent-codex:sign-out', signOut)
+      window.removeEventListener('perseverance:sign-out', signOut)
     }
   }, [apiBaseUrl, headers, namespace, online, state, subscribe, supported])
 

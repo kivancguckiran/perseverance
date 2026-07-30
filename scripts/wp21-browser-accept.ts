@@ -79,7 +79,7 @@ let store: SqliteEventStore | undefined
 const workers: CorpusIngestionService[] = []
 let failure: unknown
 try {
-  execFileSync('pnpm', ['--filter', '@persistent-codex/web', 'build'], {
+  execFileSync('pnpm', ['--filter', '@perseverance/web', 'build'], {
     cwd: root,
     env: { ...process.env, VITE_CONTROL_PLANE_URL: apiUrl },
     encoding: 'utf8',

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { ZERO_CAPACITY } from '@persistent-codex/production-topology'
+import { ZERO_CAPACITY } from '@perseverance/production-topology'
 import {
   InMemoryTenantRuntimeRepository,
   InMemoryTenantRuntimeResources,
   RuntimeDataPlaneAuthority,
   TenantProvisioningService,
-} from '@persistent-codex/tenant-runtime'
+} from '@perseverance/tenant-runtime'
 import { buildTenantRuntimeApi } from './tenant-runtime-api'
 
 const capacity = { ...ZERO_CAPACITY, cpuMillis: 1_000, memoryBytes: 1_000_000 }

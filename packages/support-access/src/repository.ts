@@ -9,7 +9,7 @@ import {
   type SupportAccessState,
   type SupportApprovalRecord,
 } from './index'
-import type { SupportGrant } from '@persistent-codex/control-plane-contracts'
+import type { SupportGrant } from '@perseverance/control-plane-contracts'
 
 export interface SupportAccessScope {
   tenantId: string

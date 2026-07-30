@@ -6,11 +6,11 @@ import type {
   PushSubscription,
   PushSubscriptionRequest,
   PushNotificationResolution,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import {
   EnvelopeEncryption,
   type EnvelopeV1,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import { Pool, type PoolClient } from 'pg'
 
 export const PUSH_REPOSITORY_VERSION = 1 as const

@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/workspace-security",
-  "version": "0.0.0",
+  "name": "@perseverance/workspace-security",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {

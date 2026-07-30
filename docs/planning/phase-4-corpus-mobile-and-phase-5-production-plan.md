@@ -5,7 +5,7 @@
 - Aktif iş paketi: Yok
 - Ön koşul: WP0–WP20 ve Faz 3 tamamlandı
 - Kaynak spesifikasyon:
-  `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
+  `docs/architecture/perseverance-tasarim-spesifikasyonu.md`
 
 ## 1. Amaç ve numaralandırma
 

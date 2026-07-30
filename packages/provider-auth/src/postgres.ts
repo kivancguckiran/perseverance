@@ -1,6 +1,6 @@
 import pg from 'pg'
-import type { ProviderId } from '@persistent-codex/provider-platform'
-import type { EnvelopeV1 } from '@persistent-codex/workspace-security'
+import type { ProviderId } from '@perseverance/provider-platform'
+import type { EnvelopeV1 } from '@perseverance/workspace-security'
 import {
   PROVIDER_AUTH_CONTRACT_VERSION,
   oauthTransactionSchema,

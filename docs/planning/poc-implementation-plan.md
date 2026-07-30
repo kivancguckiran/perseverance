@@ -1,16 +1,16 @@
-# Persistent Codex Workspace — PoC Uygulama Planı
+# Perseverance — PoC Uygulama Planı
 
 - Belge durumu: Aktif
 - Plan sürümü: 1.0
 - Başlangıç tarihi: 14 Temmuz 2026
 - Kapsam: Faz 0 — tek kullanıcı, tek lokal workspace
-- Ana mimari kaynak: `docs/architecture/persistent-codex-workspace-tasarim-spesifikasyonu.md`
+- Ana mimari kaynak: `docs/architecture/perseverance-tasarim-spesifikasyonu.md`
 - Teknoloji kararı: `docs/architecture/adr-0002-poc-technology-stack.md`
 - İş paketi yönetim protokolü: `docs/planning/work-package-management.md`
 
 ## 1. Amaç
 
-Bu PoC'nin amacı, gerçek ve pinli bir `codex app-server` ile çalışan en küçük uçtan uca Persistent Codex Workspace deneyimini kanıtlamaktır.
+Bu PoC'nin amacı, gerçek ve pinli bir `codex app-server` ile çalışan en küçük uçtan uca Perseverance deneyimini kanıtlamaktır.
 
 Kullanıcı web arayüzünden bir görev başlatabilmeli; Codex'in mesaj, reasoning summary, plan, komut, çıktı, diff ve approval olaylarını canlı görebilmelidir. Browser bağlantısı kesildiğinde turn workspace içinde devam etmeli, kullanıcı geri geldiğinde olaylar kayıpsız replay edilmeli ve aynı Codex thread'i sürdürülebilmelidir.
 
@@ -399,7 +399,7 @@ pnpm verify
 ### Gerçek app-server handshake
 
 ```bash
-pnpm --filter @persistent-codex/workspace-agent smoke:real
+pnpm --filter @perseverance/workspace-agent smoke:real
 ```
 
 Gerçek smoke komutları opt-in'dir ve `pnpm verify` tarafından çalıştırılmaz. Her çalışma, yalnız mevcut auth/config dosyalarını symlink eden geçici bir `CODEX_HOME` kullanır; Codex Desktop task/session/state depoları bağlanmaz ve child process durduktan sonra geçici home silinir. Kullanıcının mevcut task'ları test cleanup işleminin parçası değildir.

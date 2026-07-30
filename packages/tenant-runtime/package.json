@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/tenant-runtime",
-  "version": "0.0.0",
+  "name": "@perseverance/tenant-runtime",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@persistent-codex/production-topology": "workspace:*",
+    "@perseverance/production-topology": "workspace:*",
     "pg": "^8.22.0",
     "zod": "^4.3.6"
   },

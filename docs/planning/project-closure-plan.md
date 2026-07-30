@@ -1,9 +1,9 @@
 # Proje Kapanış Planı — Self-Hosted v1.0
 
-- Plan durumu: Yürürlükte
+- Plan durumu: Kapatıldı
 - Plan tarihi: 27 Temmuz 2026 (28 Tem 2026 revizyonları: WP37 eklendi; WP36 ve
   WP37 kabul edildi; WP38 base-path deployment eklendi, release WP39'a kaydı)
-- Aktif iş paketi: WP38
+- Aktif iş paketi: Yok
 - Yönetim kaydı: `docs/planning/work-package-management.md`
 - Revize ettiği plan: `docs/planning/phase-6-open-source-and-managed-cloud-plan.md`
 
@@ -33,7 +33,7 @@ beta` + `15ec71a` hardening) ancak bağımsız kabulü yapılmamıştır. Kabul 
 | WP30-E — Production go-live doğrulaması | Tanımlandığı kapsamıyla (managed cloud pentest/soak/cohort) retire edildi. Self-hosted için gerçek-ortam kanıtı WP36'da üretilir.                                                                  |
 | WP33 gerçek Kata/Kubernetes + KMS smoke | Retire edildi (yalnız managed cloud üretim ortamını ilgilendirir).                                                                                                                                 |
 | WP34 `wp34:provider-smoke` (cloud)      | Managed cloud bağlamında retire edildi. Self-hosted trusted runner'da gerçek provider koşusu WP36 golden senaryosuyla karşılanır.                                                                  |
-| ARM64 gerçek-ortam koşusu               | Opsiyonel'e düşürüldü. v1.0 için zorunlu gerçek-ortam kanıtı x86_64 VPS'tir; ARM64 desteği "build-time doğrulanmış, gerçek ortamda topluluk geri bildirimine açık" olarak belgelenir.              |
+| x86_64 gerçek-ortam koşusu              | Opsiyonel'e düşürüldü. v1.0 zorunlu gerçek-ortam kanıtı ARM64 Linux'ta WP36–WP38 boyunca tamamlandı; x86_64 topluluk geri bildirimine açıktır.                                                     |
 
 Retire kararları geri alınabilir: ileride Managed Cloud'a dönülmek istenirse WP35 ve
 WP30-E, Faz 6 planındaki tanımlarıyla yeniden aktive edilebilir. Bu plan onları siler
@@ -210,7 +210,8 @@ artifact'iyle çıkarmak ve projeyi belgelenmiş biçimde kapatmak.
   desteklenmiyor" beyanıyla işaretlenir.
 - Planlama dokümanlarında kapanış kaydı: `work-package-management.md` belge durumu
   `Kapatıldı` yapılır; retire ve kabul kayıtları son haline getirilir.
-- Origin'e push ve public mirror yayını.
+- `kivancguckiran/perseverance` origin'ine push ve repository'nin doğrudan
+  public canonical kaynak olarak yayımlanması; ayrı mirror kullanılmaz.
 
 #### Kapsam dışı
 
@@ -234,12 +235,19 @@ artifact'iyle çıkarmak ve projeyi belgelenmiş biçimde kapatmak.
 
 ## 4. Kapanış exit kriteri
 
-Aşağıdakilerin tümü sağlandığında proje kapanmış sayılır:
+Aşağıdaki exit kriterleri WP39 release transaction'ıyla karşılanmıştır:
 
-- WP36, WP37, WP38 ve WP39 bağımsız kabul edilmiştir.
-- Self-hosted ürün gerçek bir Linux ortamında kurulmuş, yaşam döngüsü (upgrade/rollback/backup)
-  ve mobil/PWA golden senaryosu gerçek ortamda kanıtlanmıştır.
-- Repository public'tir; v1.0.0 doğrulanabilir artifact'iyle yayımlanmıştır.
-- Retire edilen kapsam (WP35, WP30-E, managed cloud launch) yönetim kaydında açık ve
-  geri alınabilir biçimde belgelenmiştir.
-- Ana dal origin ile senkrondur; working tree temizdir.
+- [x] WP36, WP37, WP38 ve WP39 bağımsız kabul edilmiştir.
+- [x] Self-hosted ürün gerçek ARM64 Linux ortamında kurulmuş; lifecycle
+      (upgrade/rollback/backup), mobil/PWA ve subpath senaryoları
+      kanıtlanmıştır.
+- [x] Repository public canonical kaynaktır; v1.0.0 doğrulanabilir
+      artifact'iyle yayımlanmıştır.
+- [x] Retire edilen kapsam (WP35, WP30-E, managed cloud launch) yönetim
+      kaydında açık ve geri alınabilir biçimde belgelenmiştir.
+- [x] `main`, origin ile senkrondur ve release commit'inde working tree
+      temizdir.
+
+Kapanış kaydı: 30 Temmuz 2026. Sürüm commit'i
+`git rev-parse v1.0.0^{commit}`, release artifact checksum'ları ise yayımlanan
+`SHA256SUMS` dosyasıyla doğrulanır.

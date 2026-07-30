@@ -9,8 +9,8 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import type { ConversationAttachment } from '@persistent-codex/control-plane-contracts'
-import type { StoreScope } from '@persistent-codex/event-store'
+import type { ConversationAttachment } from '@perseverance/control-plane-contracts'
+import type { StoreScope } from '@perseverance/event-store'
 
 const supportedMediaTypes = new Set<ConversationAttachment['mediaType']>([
   'image/png',

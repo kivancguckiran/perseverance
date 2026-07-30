@@ -1,6 +1,6 @@
 # Self-hosted dağıtım (WP32)
 
-Persistent Codex Workspace'i kendi VPS'inizde veya makinenizde tek komutla kurmak
+Perseverance'i kendi VPS'inizde veya makinenizde tek komutla kurmak
 için:
 
 ```bash

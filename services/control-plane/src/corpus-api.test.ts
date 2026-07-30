@@ -2,15 +2,15 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { sourceListResponseSchema } from '@persistent-codex/control-plane-contracts'
+import { sourceListResponseSchema } from '@perseverance/control-plane-contracts'
 import {
   createPostgresCorpusRepository,
   EncryptedFilesystemCorpusSnapshotStorage,
-} from '@persistent-codex/corpus-ingestion'
+} from '@perseverance/corpus-ingestion'
 import {
   ChunkedEnvelopeEncryption,
   LocalKmsProvider,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import { buildControlPlane } from './server'
 
 const roots: string[] = []

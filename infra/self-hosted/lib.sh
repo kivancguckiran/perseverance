@@ -4,11 +4,11 @@
 
 set -euo pipefail
 
-SELF_HOSTED_PROJECT=persistent-self-hosted
+SELF_HOSTED_PROJECT=perseverance-self-hosted
 SELF_HOSTED_LABEL='persistent.self-hosted=true'
 SELF_HOSTED_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SELF_HOSTED_REPO_ROOT="$(cd "${SELF_HOSTED_SCRIPT_DIR}/../.." && pwd)"
-SELF_HOSTED_HOME="${SELF_HOSTED_HOME:-/var/lib/persistent-codex}"
+SELF_HOSTED_HOME="${SELF_HOSTED_HOME:-/var/lib/perseverance}"
 
 log() { printf '[self-hosted] %s\n' "$*"; }
 fail() {
@@ -90,10 +90,10 @@ product_image_tag() {
   # kurulumda base slug'ı eklenir ki base değişikliği yeni build tetiklesin.
   local commit="$1" base="${2:-}"
   if [ -n "${base}" ]; then
-    printf 'persistent-self-hosted-product:%s-%s' "${commit}" \
+    printf 'perseverance-self-hosted-product:%s-%s' "${commit}" \
       "$(printf '%s' "${base#/}" | tr '/' '-')"
   else
-    printf 'persistent-self-hosted-product:%s' "${commit}"
+    printf 'perseverance-self-hosted-product:%s' "${commit}"
   fi
 }
 
@@ -172,7 +172,7 @@ write_release_state() {
   fi
   {
     printf 'SELF_HOSTED_SOURCE_COMMIT=%s\n' "$1"
-    printf 'SELF_HOSTED_PRODUCT_IMAGE=%s\n' "${2:-persistent-self-hosted-product:$1}"
+    printf 'SELF_HOSTED_PRODUCT_IMAGE=%s\n' "${2:-perseverance-self-hosted-product:$1}"
   } >"$(release_state_file)"
   chmod 600 "$(release_state_file)"
 }

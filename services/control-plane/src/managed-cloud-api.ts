@@ -10,7 +10,7 @@ import {
   type ManagedCloudOnboardingService,
   type ManagedCloudScope,
   type ManagedCloudUsageViewPort,
-} from '@persistent-codex/managed-cloud'
+} from '@perseverance/managed-cloud'
 
 export interface ManagedCloudAuthenticatedPrincipal {
   issuer: string

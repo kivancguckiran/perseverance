@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/workspace-agent",
-  "version": "0.0.0",
+  "name": "@perseverance/workspace-agent",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -18,10 +18,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@persistent-codex/control-plane-contracts": "workspace:*",
-    "@persistent-codex/codex-event-adapter": "workspace:*",
-    "@persistent-codex/codex-protocol-generated": "workspace:*",
-    "@persistent-codex/domain-events": "workspace:*"
+    "@perseverance/control-plane-contracts": "workspace:*",
+    "@perseverance/codex-event-adapter": "workspace:*",
+    "@perseverance/codex-protocol-generated": "workspace:*",
+    "@perseverance/domain-events": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.23.1"

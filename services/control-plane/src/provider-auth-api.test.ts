@@ -4,12 +4,12 @@ import {
   ProviderAuthKillSwitch,
   ProviderCredentialVault,
   StaticProviderAuthCapabilitySource,
-} from '@persistent-codex/provider-auth'
-import { RuntimeDataPlaneAuthority } from '@persistent-codex/tenant-runtime'
+} from '@perseverance/provider-auth'
+import { RuntimeDataPlaneAuthority } from '@perseverance/tenant-runtime'
 import {
   EnvelopeEncryption,
   LocalKmsProvider,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import { buildProviderAuthApi } from './provider-auth-api'
 
 const headers = {

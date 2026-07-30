@@ -7,14 +7,14 @@ import {
   replayResponseSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
-} from '@persistent-codex/control-plane-contracts'
-import { SqliteEventStore } from '@persistent-codex/event-store'
+} from '@perseverance/control-plane-contracts'
+import { SqliteEventStore } from '@perseverance/event-store'
 import {
   CodexAppServerClient,
   createIsolatedCodexHome,
   type ProcessHealth,
   type WorkspaceRuntimeClient,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 import { buildControlPlane } from './server'
 
 const timeoutMs = Number(process.env.CODEX_APPROVAL_SMOKE_TIMEOUT_MS ?? 120_000)

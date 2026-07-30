@@ -13,39 +13,39 @@ import {
   type ManagedCloudScope,
   type ManagedCloudUsageViewPort,
   type RolloutAdmissionPort,
-} from '@persistent-codex/managed-cloud'
+} from '@perseverance/managed-cloud'
 import {
   PostgresAccountWorkspaceProvisioner,
   PostgresManagedCloudAuthorization,
   PostgresManagedCloudPlanCatalog,
   PostgresManagedCloudRepository,
-} from '@persistent-codex/managed-cloud/postgres'
+} from '@perseverance/managed-cloud/postgres'
 import {
   ProviderCredentialVault,
   RepositoryProviderAuthKillSwitch,
   assertProviderAuthCapability,
   type ProviderAuthCapabilitySource,
-} from '@persistent-codex/provider-auth'
-import { PostgresProviderAuthRepository } from '@persistent-codex/provider-auth/postgres'
+} from '@perseverance/provider-auth'
+import { PostgresProviderAuthRepository } from '@perseverance/provider-auth/postgres'
 import {
   RuntimeDataPlaneAuthority,
   TenantProvisioningService,
   type TenantRuntimeResources,
-} from '@persistent-codex/tenant-runtime'
-import { PostgresTenantRuntimeRepository } from '@persistent-codex/tenant-runtime/postgres'
+} from '@perseverance/tenant-runtime'
+import { PostgresTenantRuntimeRepository } from '@perseverance/tenant-runtime/postgres'
 import {
   EnvelopeEncryption,
   type KmsProvider,
-} from '@persistent-codex/workspace-security'
-import type { BillingPostgresRepository } from '@persistent-codex/billing-platform'
+} from '@perseverance/workspace-security'
+import type { BillingPostgresRepository } from '@perseverance/billing-platform'
 import type {
   ProductionPostgresRepository,
   ProductionScope,
-} from '@persistent-codex/production-topology/production-postgres'
+} from '@perseverance/production-topology/production-postgres'
 import type {
   DurableEventBroker,
   ObjectStore,
-} from '@persistent-codex/production-topology/durable-dependencies'
+} from '@perseverance/production-topology/durable-dependencies'
 import { ProductionRolloutAuthority } from './production-rollout-authority'
 
 const digest = (value: string) =>

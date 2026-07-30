@@ -16,7 +16,7 @@ import {
   type AuthorizationAction,
   type AuthorizationDecision,
   type OrganizationMembership,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 
 export class AuthenticationError extends Error {
   readonly code: string
@@ -38,7 +38,7 @@ export interface AuthenticationAdapter {
 }
 
 export const CORPUS_WORKLOAD_AUDIENCE =
-  'urn:persistent-codex:workspace-corpus' as const
+  'urn:perseverance:workspace-corpus' as const
 export type CorpusWorkloadAction = 'source.search' | 'citation.read'
 
 interface WorkloadClaims {
@@ -211,7 +211,7 @@ export class CorpusWorkloadCredentialAuthority {
       version: 1,
       kind: 'internal_service',
       subject: claims.subject,
-      issuer: 'urn:persistent-codex:workload',
+      issuer: 'urn:perseverance:workload',
       audience: [claims.audience],
       authenticatedAt: new Date(claims.issuedAt).toISOString(),
       expiresAt: new Date(claims.expiresAt).toISOString(),
@@ -246,7 +246,7 @@ export class ExplicitDevAuthenticationAdapter implements AuthenticationAdapter {
   readonly issuer: string
   readonly subject: string
   constructor(options: { issuer?: string; subject?: string } = {}) {
-    this.issuer = options.issuer ?? 'urn:persistent-codex:dev-auth'
+    this.issuer = options.issuer ?? 'urn:perseverance:dev-auth'
     this.subject = options.subject ?? 'dev-user'
   }
   async authenticate(request: AuthenticationRequest) {

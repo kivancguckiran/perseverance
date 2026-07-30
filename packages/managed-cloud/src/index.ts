@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto'
 import type {
   CreditReservation,
   CreditSettlement,
-} from '@persistent-codex/billing-platform'
+} from '@perseverance/billing-platform'
 import {
   assertEntitled,
   type EntitlementFeature,
-} from '@persistent-codex/deployment-profiles'
+} from '@perseverance/deployment-profiles'
 import {
   evaluateProductionBudget,
   transitionProductionRollout,
@@ -14,19 +14,19 @@ import {
   type ProductionBudgetPolicy,
   type ProductionRolloutRecord,
   type ProductionRolloutStage,
-} from '@persistent-codex/production-readiness'
-import type { CapacityVector } from '@persistent-codex/production-topology/contracts'
+} from '@perseverance/production-readiness'
+import type { CapacityVector } from '@perseverance/production-topology/contracts'
 import type {
   ProviderAuthMode,
   ProviderAuthProfileMetadata,
   ProviderAuthScope,
-} from '@persistent-codex/provider-auth'
-import type { ProviderId } from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-auth'
+import type { ProviderId } from '@perseverance/provider-platform'
 import type {
   ManagedTenant,
   ProvisioningJob,
   TenantRuntime,
-} from '@persistent-codex/tenant-runtime'
+} from '@perseverance/tenant-runtime'
 import {
   MANAGED_CLOUD_CONTRACT_VERSION,
   domainVerificationSchema,

@@ -116,7 +116,7 @@ const selfHosted = (
 const composeArgs = (...args: string[]): string[] => [
   'compose',
   '--project-name',
-  'persistent-self-hosted',
+  'perseverance-self-hosted',
   '--env-file',
   join(sandboxHome, 'config/self-hosted.env'),
   '-f',

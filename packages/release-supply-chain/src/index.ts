@@ -9,7 +9,7 @@ import {
 } from 'node:crypto'
 
 export const WP29_SCHEMA_VERSION = 1 as const
-export const WP29_REPOSITORY = 'persistent-codex-workspace' as const
+export const WP29_REPOSITORY = 'perseverance' as const
 export const WP29_PREDICATE_TYPE = 'https://slsa.dev/provenance/v1' as const
 
 export const canonicalJson = (value: unknown): string => {
@@ -169,7 +169,7 @@ export const createProvenance = (
     predicateType: WP29_PREDICATE_TYPE,
     predicate: {
       buildDefinition: {
-        buildType: 'https://persistent-codex.example/build/v1',
+        buildType: 'https://perseverance.invalid/build/v1',
         externalParameters: {
           repository: manifest.repository,
           sourceCommit: manifest.sourceCommit,

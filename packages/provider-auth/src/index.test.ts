@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   LocalKmsProvider,
   EnvelopeEncryption,
-} from '@persistent-codex/workspace-security'
-import { RuntimeDataPlaneAuthority } from '@persistent-codex/tenant-runtime'
+} from '@perseverance/workspace-security'
+import { RuntimeDataPlaneAuthority } from '@perseverance/tenant-runtime'
 import {
   DurableOAuthCoordinator,
   InMemoryProviderAuthRepository,

@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   EnterpriseRepository,
   ScimWrite,
-} from '@persistent-codex/enterprise-lifecycle/postgres'
-import type { ScimResource } from '@persistent-codex/enterprise-lifecycle/contracts'
+} from '@perseverance/enterprise-lifecycle/postgres'
+import type { ScimResource } from '@perseverance/enterprise-lifecycle/contracts'
 import { buildEnterpriseApi } from './enterprise-api'
 const value = (input: ScimWrite): ScimResource => ({
   ...input,

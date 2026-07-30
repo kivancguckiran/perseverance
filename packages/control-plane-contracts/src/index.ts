@@ -1,4 +1,4 @@
-import { timelineEventSchema } from '@persistent-codex/domain-events'
+import { timelineEventSchema } from '@perseverance/domain-events'
 import {
   admissionDecisionSchema,
   billingWebhookPayloadSchema,
@@ -12,7 +12,7 @@ import {
   financialProjectionSchema,
   quotaPolicySchema,
   subscriptionStateSchema,
-} from '@persistent-codex/billing-platform/contracts'
+} from '@perseverance/billing-platform/contracts'
 import {
   capabilityMatrixSchema,
   modelSelectionSchema,
@@ -21,7 +21,7 @@ import {
   reasoningEffortSchema,
   turnOutcomeSchema,
   usageCountersSchema,
-} from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-platform'
 import { z } from 'zod'
 
 export {
@@ -37,14 +37,14 @@ export {
   tenantSchedulingPolicySchema,
   topologyScopeSchema,
   workspaceLeaseSchema,
-} from '@persistent-codex/production-topology/contracts'
+} from '@perseverance/production-topology/contracts'
 export type {
   CapacityVector,
   DependencyReadiness,
   SchedulerQueueItem,
   TenantSchedulingPolicy,
   WorkspaceLease,
-} from '@persistent-codex/production-topology/contracts'
+} from '@perseverance/production-topology/contracts'
 export {
   PRODUCTION_READINESS_CONTRACT_VERSION,
   goNoGoRecordSchema,
@@ -53,14 +53,14 @@ export {
   productionRolloutRecordSchema,
   productionRolloutScopeSchema,
   productionRolloutStageSchema,
-} from '@persistent-codex/production-readiness/contracts'
+} from '@perseverance/production-readiness/contracts'
 export type {
   GoNoGoRecord,
   ProductionBudgetObservation,
   ProductionBudgetPolicy,
   ProductionRolloutRecord,
   ProductionRolloutStage,
-} from '@persistent-codex/production-readiness/contracts'
+} from '@perseverance/production-readiness/contracts'
 
 const identifierSchema = z.string().min(1)
 const sequenceSchema = z.number().int().nonnegative()
@@ -1023,8 +1023,8 @@ export const attachmentMediaTypeSchema = z.enum([
   'application/json',
   'application/pdf',
 ])
-export const attachmentContextStart = '<persistent-codex-attachments>'
-export const attachmentContextEnd = '</persistent-codex-attachments>'
+export const attachmentContextStart = '<perseverance-attachments>'
+export const attachmentContextEnd = '</perseverance-attachments>'
 export const conversationAttachmentSchema = scopeSchema.extend({
   attachmentId: identifierSchema,
   name: z.string().trim().min(1).max(255),

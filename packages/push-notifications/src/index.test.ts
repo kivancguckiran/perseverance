@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EnvelopeEncryption,
   LocalKmsProvider,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import {
   InMemoryPushRepository,
   PushProviderEmulator,

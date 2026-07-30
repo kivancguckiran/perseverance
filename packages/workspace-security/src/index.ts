@@ -952,7 +952,7 @@ function kmsContext(scope: WorkspaceSecurityScope): Record<string, string> {
     tenantId: requireScopePart(scope.tenantId, 'tenantId'),
     organizationId: requireScopePart(scope.organizationId, 'organizationId'),
     workspaceId: requireScopePart(scope.workspaceId, 'workspaceId'),
-    purpose: 'persistent-codex-workspace-envelope-v1',
+    purpose: 'perseverance-envelope-v1',
   }
 }
 

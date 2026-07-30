@@ -35,7 +35,7 @@ const artifacts = (
 }))
 
 const manifest = createBuildManifest({
-  repository: 'persistent-codex-workspace',
+  repository: 'perseverance',
   sourceCommit: 'a'.repeat(40),
   sourceDirty: false,
   sourceMode: 'production',
@@ -73,7 +73,7 @@ describe('WP29 supply-chain authority', () => {
     ) as Record<ArtifactKind, string>
     expect(
       verifyReleaseAdmission(release, {
-        repository: 'persistent-codex-workspace',
+        repository: 'perseverance',
         sourceCommit: manifest.sourceCommit,
         artifactDigests: expected,
         trustedSigner: signer.identity,
@@ -83,7 +83,7 @@ describe('WP29 supply-chain authority', () => {
       verifyReleaseAdmission(
         { ...release, manifest: { ...manifest, repository: 'attacker/repo' } },
         {
-          repository: 'persistent-codex-workspace',
+          repository: 'perseverance',
           sourceCommit: manifest.sourceCommit,
           artifactDigests: expected,
           trustedSigner: signer.identity,

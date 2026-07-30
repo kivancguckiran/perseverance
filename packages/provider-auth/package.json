@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/provider-auth",
-  "version": "0.0.0",
+  "name": "@perseverance/provider-auth",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -12,10 +12,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@persistent-codex/deployment-profiles": "workspace:*",
-    "@persistent-codex/provider-platform": "workspace:*",
-    "@persistent-codex/tenant-runtime": "workspace:*",
-    "@persistent-codex/workspace-security": "workspace:*",
+    "@perseverance/deployment-profiles": "workspace:*",
+    "@perseverance/provider-platform": "workspace:*",
+    "@perseverance/tenant-runtime": "workspace:*",
+    "@perseverance/workspace-security": "workspace:*",
     "pg": "^8.22.0",
     "zod": "^4.3.6"
   },

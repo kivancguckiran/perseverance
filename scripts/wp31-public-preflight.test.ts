@@ -40,6 +40,24 @@ describe('wp31 secret policy', () => {
       expect(entry.description.trim().length).toBeGreaterThan(20)
   })
 
+  it('authoritative wp29 security scan public-release secret politikasını kullanır', () => {
+    const gate = readFileSync(join(root, 'scripts/wp29-real-gate.ts'), 'utf8')
+    expect(
+      gate.match(/--config=\/src\/infra\/release\/wp31-gitleaks\.toml/g)
+        ?.length,
+    ).toBe(2)
+    expect(gate).not.toContain('--config=/src/infra/release/wp29-gitleaks.toml')
+    for (const localOnly of [
+      '**/.runtime',
+      '**/node_modules',
+      '**/dist',
+      '**/.wp29',
+      '**/.wp31',
+      '/src/_to_delete',
+    ])
+      expect(gate).toContain(localOnly)
+  })
+
   it('gerekçesiz allowlist kaydını reddeder', () => {
     expect(() =>
       parseGitleaksToml(
@@ -82,6 +100,34 @@ describe('wp31 secret policy', () => {
       scanContent(
         'services/live.ts',
         "apiKey: 'sk-fixture-not-a-real-key-000000'",
+        policy,
+      ),
+    ).toEqual([])
+    expect(
+      scanContent(
+        'scripts/wp24-unified-e2e.ts',
+        'idempotencyKey: "synthetic-replay-key-000000"',
+        policy,
+      ),
+    ).toEqual([])
+    expect(
+      scanContent(
+        'scripts/wp24-unified-e2e.ts',
+        "'idempotency-key': 'synthetic-replay-value'",
+        policy,
+      ),
+    ).toEqual([])
+    expect(
+      scanContent(
+        'scripts/wp27-e2e.ts',
+        "const marker = 'WP27_SECRET_MARKER_fixture'",
+        policy,
+      ),
+    ).toEqual([])
+    expect(
+      scanContent(
+        'infra/security/wp30/templates/realtime-boundary.yaml',
+        'Sec-WebSocket-Key: synthetic-handshake-value',
         policy,
       ),
     ).toEqual([])
@@ -182,7 +228,7 @@ describe('wp31 lisans gate ve SBOM', () => {
     const first = collectDependencyInventory(root)
     const second = collectDependencyInventory(root)
     const meta = {
-      name: 'persistent-codex-workspace',
+      name: 'perseverance',
       version: '0.0.0',
       license: 'AGPL-3.0-only',
     }

@@ -1,26 +1,23 @@
 import type { FastifyInstance } from 'fastify'
 import { createHash } from 'node:crypto'
-import { LocalArtifactStorage } from '@persistent-codex/artifact-storage'
+import { LocalArtifactStorage } from '@perseverance/artifact-storage'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   ProcessHealth,
   WorkspaceRuntimeClient,
-} from '@persistent-codex/workspace-agent'
-import { RequestTimeoutError } from '@persistent-codex/workspace-agent'
-import type { TimelineEvent } from '@persistent-codex/domain-events'
+} from '@perseverance/workspace-agent'
+import { RequestTimeoutError } from '@perseverance/workspace-agent'
+import type { TimelineEvent } from '@perseverance/domain-events'
 import type {
   ProviderModelCatalog,
   ProviderRuntimeAdapterV1,
-} from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-platform'
 import {
   serverMessageSchema,
   sessionResponseSchema,
   type ServerMessage,
-} from '@persistent-codex/control-plane-contracts'
-import {
-  SqliteEventStore,
-  type StoreScope,
-} from '@persistent-codex/event-store'
+} from '@perseverance/control-plane-contracts'
+import { SqliteEventStore, type StoreScope } from '@perseverance/event-store'
 import {
   BoundedRealtimeSender,
   buildControlPlane,
@@ -29,7 +26,7 @@ import {
 import {
   DeterministicBillingEmulator,
   type CommercialPolicySnapshot,
-} from '@persistent-codex/billing-platform'
+} from '@perseverance/billing-platform'
 
 const scope: StoreScope = {
   tenantId: 'ten_test',
@@ -3725,7 +3722,7 @@ describe('WP4 session, turn and live event flow', () => {
         {
           type: 'text',
           text: expect.stringMatching(
-            /^Bu belgeyi incele[\s\S]*<persistent-codex-attachments>[\s\S]*document\.pdf[\s\S]*<\/persistent-codex-attachments>$/,
+            /^Bu belgeyi incele[\s\S]*<perseverance-attachments>[\s\S]*document\.pdf[\s\S]*<\/perseverance-attachments>$/,
           ),
         },
         {

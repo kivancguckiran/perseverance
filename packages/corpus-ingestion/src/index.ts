@@ -32,7 +32,7 @@ import type {
   IngestionAudit,
   Source,
   SourceRevision,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import { extractPdfInSandbox, PDF_PARSER_VERSION } from './pdf-parser'
 import type { RetrievalCandidate, RetrievalIdentity } from './retrieval'
 

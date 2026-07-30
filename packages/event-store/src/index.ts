@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   parseTimelineEvent,
   type TimelineEvent,
-} from '@persistent-codex/domain-events'
+} from '@perseverance/domain-events'
 import {
   estimateUsageCostMicros,
   modelSelectionSchema,
@@ -19,12 +19,12 @@ import {
   type ReasoningEffort,
   type UsageCounters,
   type UsageReport,
-} from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-platform'
 import { bootstrapSchema } from './schema'
 import {
   commercialUsageEntrySchema,
   type CommercialUsageEntry,
-} from '@persistent-codex/billing-platform'
+} from '@perseverance/billing-platform'
 
 export interface StoreScope {
   tenantId: string

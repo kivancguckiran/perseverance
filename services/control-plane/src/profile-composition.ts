@@ -5,7 +5,7 @@ import {
   type DeploymentProfile,
   type DeploymentProfileContract,
   type ObservedProfileAdapters,
-} from '@persistent-codex/deployment-profiles'
+} from '@perseverance/deployment-profiles'
 
 // WP33 — boot-time profil çözümleme ve cloud fail-closed sınırı (ADR-0033).
 // `local`/`self-hosted` davranışı değişmez; `cloud` profili development/local

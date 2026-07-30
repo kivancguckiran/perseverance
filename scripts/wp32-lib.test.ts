@@ -90,6 +90,21 @@ describe('wp32 dağıtım dosyaları', () => {
     ])
   })
 
+  it('release manifesti v1.0.0 sürümünü ve geçerli deterministik trust epochunu taşır', () => {
+    const release = read('infra/self-hosted/release/build-release.sh')
+    const images = read('infra/self-hosted/images.env')
+    expect(release).toContain('RELEASE_VERSION=1.0.0')
+    expect(release).toContain('SOURCE_DATE_EPOCH=1785369600')
+    expect(release).toContain('releaseVersion: process.env.RELEASE_VERSION')
+    expect(release).toContain('SELF_HOSTED_TAR_IMAGE')
+    expect(release).not.toMatch(/^tar --sort=name/m)
+    expect(images).toMatch(
+      /^SELF_HOSTED_TAR_IMAGE=debian:bookworm-slim@sha256:[a-f0-9]{64}$/m,
+    )
+    const validUntil = (1785369600 + 90 * 24 * 3600) * 1000
+    expect(validUntil).toBeGreaterThan(Date.parse('2026-07-30T00:00:00Z'))
+  })
+
   it('yedek, provider credential volumeunu yalnız açık bayrakla içerir', () => {
     const backup = extractShellFunction(
       read('infra/self-hosted/self-hosted.sh'),

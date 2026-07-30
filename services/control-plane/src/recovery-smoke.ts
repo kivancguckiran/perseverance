@@ -5,13 +5,13 @@ import {
   replayResponseSchema,
   sessionResponseSchema,
   turnAcceptedResponseSchema,
-} from '@persistent-codex/control-plane-contracts'
-import type { TimelineEvent } from '@persistent-codex/domain-events'
+} from '@perseverance/control-plane-contracts'
+import type { TimelineEvent } from '@perseverance/domain-events'
 import { buildControlPlane } from './server'
 import {
   CodexAppServerClient,
   createIsolatedCodexHome,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 
 const timeoutMs = Number(process.env.CODEX_RECOVERY_SMOKE_TIMEOUT_MS ?? 180_000)
 const tenantId = 'ten_recovery_smoke'

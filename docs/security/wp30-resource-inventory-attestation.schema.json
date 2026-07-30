@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://persistent-codex.invalid/security/wp30-resource-inventory-attestation.schema.json",
+  "$id": "https://perseverance.invalid/security/wp30-resource-inventory-attestation.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { capacityVectorSchema } from '@persistent-codex/production-topology/contracts'
+import { capacityVectorSchema } from '@perseverance/production-topology/contracts'
 
 // WP33 — tenant-isolated managed runtime contract'ları (ADR-0033).
 // Tenant kimliği repo değişmezine sadıktır: tenant_id = organization_id
@@ -175,7 +175,7 @@ export type OrphanRuntime = z.infer<typeof orphanRuntimeSchema>
 
 // Control plane ↔ runtime data plane internal auth contract'ı.
 export const RUNTIME_DATA_PLANE_AUDIENCE =
-  'urn:persistent-codex:runtime-data-plane' as const
+  'urn:perseverance:runtime-data-plane' as const
 
 export const RUNTIME_DATA_PLANE_ACTIONS = [
   'event.append',

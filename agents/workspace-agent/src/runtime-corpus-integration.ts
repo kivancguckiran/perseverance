@@ -69,7 +69,7 @@ interface FileState {
 }
 
 class ManagedCorpusMcpConfig {
-  static readonly marker = '# persistent-codex managed workspace corpus MCP v1'
+  static readonly marker = '# perseverance managed workspace corpus MCP v1'
   readonly #home: string
   readonly #configPath: string
   readonly #command: string

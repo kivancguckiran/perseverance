@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SupportAccessError, SupportAccessService } from './index'
-import type { SupportAccessAction } from '@persistent-codex/control-plane-contracts'
+import type { SupportAccessAction } from '@perseverance/control-plane-contracts'
 
 const tenant = {
   tenantId: 'ten_a',

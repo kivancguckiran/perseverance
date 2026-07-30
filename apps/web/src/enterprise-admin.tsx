@@ -3,7 +3,7 @@ import type {
   DeletionJob,
   ExportJob,
   LegalHold,
-} from '@persistent-codex/enterprise-lifecycle/contracts'
+} from '@perseverance/enterprise-lifecycle/contracts'
 
 export type EnterpriseAdminState = {
   domain: { name: string; verified: boolean; expiresAt: string }

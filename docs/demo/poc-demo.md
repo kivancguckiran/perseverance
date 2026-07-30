@@ -1,4 +1,4 @@
-# Persistent Codex Workspace — WP8 PoC Demo Rehberi
+# Perseverance — WP8 PoC Demo Rehberi
 
 Durum: Uygulandı / bağımsız kabul bekliyor
 Hedef sürümler: Node.js 24, pnpm 9.15.3, Codex CLI 0.144.2

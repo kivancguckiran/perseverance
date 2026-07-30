@@ -298,7 +298,7 @@ try {
     signal: AbortSignal.timeout(5_000),
   })
   assert.equal(productionPage.status, 200, 'Production SSR route did not load')
-  assert.match(await productionPage.text(), /Persistent Codex Workspace/)
+  assert.match(await productionPage.text(), /Perseverance/)
 
   console.log('[phase2-browser] desktop + service worker')
   await browser('set', 'viewport', '1280', '720')

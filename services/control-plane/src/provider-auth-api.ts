@@ -3,16 +3,16 @@ import {
   DeploymentProfileError,
   assertEntitled,
   type DeploymentProfile,
-} from '@persistent-codex/deployment-profiles'
+} from '@perseverance/deployment-profiles'
 import {
   ProviderAuthError,
   providerAuthModeSchema,
   providerAuthScopeSchema,
   type ProviderAuthRepository,
   type ProviderCredentialVault,
-} from '@persistent-codex/provider-auth'
-import { providerIdSchema } from '@persistent-codex/provider-platform'
-import { TenantRuntimeError } from '@persistent-codex/tenant-runtime'
+} from '@perseverance/provider-auth'
+import { providerIdSchema } from '@perseverance/provider-platform'
+import { TenantRuntimeError } from '@perseverance/tenant-runtime'
 import { z } from 'zod'
 
 const workspaceIdSchema = z.string().trim().min(1).max(255)

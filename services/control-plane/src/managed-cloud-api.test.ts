@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ZERO_CAPACITY } from '@persistent-codex/production-topology'
+import { ZERO_CAPACITY } from '@perseverance/production-topology'
 import {
   DomainVerificationService,
   InMemoryManagedCloudRepository,
@@ -10,12 +10,12 @@ import {
   type DurableTaskPort,
   type ManagedCloudPlan,
   type ManagedUsageEntry,
-} from '@persistent-codex/managed-cloud'
+} from '@perseverance/managed-cloud'
 import {
   InMemoryTenantRuntimeRepository,
   InMemoryTenantRuntimeResources,
   TenantProvisioningService,
-} from '@persistent-codex/tenant-runtime'
+} from '@perseverance/tenant-runtime'
 import { buildProductionControlPlane } from './production-server'
 
 const plan: ManagedCloudPlan = {

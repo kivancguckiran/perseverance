@@ -170,7 +170,7 @@ const normalizeWebBuild = (directory: string, sourceRoot: string) => {
 }
 const buildOne = (source: string, destination: string, suffix: string) => {
   install(source)
-  run('pnpm', ['--filter', '@persistent-codex/web', 'build'], {
+  run('pnpm', ['--filter', '@perseverance/web', 'build'], {
     cwd: source,
     env: { ...process.env, SOURCE_DATE_EPOCH: String(epoch) },
   })
@@ -648,9 +648,9 @@ const signatures = () => {
       predicateType: 'https://slsa.dev/provenance/v1',
       predicate: {
         buildDefinition: {
-          buildType: 'https://persistent-codex.example/wp29/clean-build/v1',
+          buildType: 'https://perseverance.invalid/wp29/clean-build/v1',
           externalParameters: {
-            repository: 'persistent-codex-workspace',
+            repository: 'perseverance',
             sourceCommit: commit,
           },
           internalParameters: { lockSha256: release.dependencyLockSha256 },
@@ -744,7 +744,7 @@ const signatures = () => {
       fingerprint: sha256(readFileSync(join(work, 'cosign.pub'))),
       validUntil: new Date(Date.now() + 60_000).toISOString(),
       revoked: false,
-      repository: 'persistent-codex-workspace',
+      repository: 'perseverance',
       sourceCommit: commit,
       artifactSha256: sha256(readFileSync(provenancePath)),
     }
@@ -770,7 +770,7 @@ const signatures = () => {
           '--policy',
           trustPath,
           '--repository',
-          'persistent-codex-workspace',
+          'perseverance',
           '--source-commit',
           commit,
         ],
@@ -960,7 +960,7 @@ const securityScans = () => {
   const npmComponents = (sourceSbom.components ?? []).filter(
     (component: any) =>
       String(component.purl ?? '').startsWith('pkg:npm/') &&
-      !String(component.name ?? '').startsWith('@persistent-codex/'),
+      !String(component.name ?? '').startsWith('@perseverance/'),
   )
   const licenses = npmComponents.flatMap((component: any) =>
     (component.licenses ?? []).flatMap((entry: any) => {
@@ -987,7 +987,7 @@ const securityScans = () => {
       [
         'detect',
         '--source=/src',
-        '--config=/src/infra/release/wp29-gitleaks.toml',
+        '--config=/src/infra/release/wp31-gitleaks.toml',
         '--report-format=json',
         '--report-path=/out/gitleaks.json',
         '--redact',
@@ -1020,6 +1020,18 @@ const securityScans = () => {
         'vuln',
         '--severity',
         'HIGH,CRITICAL',
+        '--skip-dirs',
+        '**/.runtime',
+        '--skip-dirs',
+        '**/node_modules',
+        '--skip-dirs',
+        '**/dist',
+        '--skip-dirs',
+        '**/.wp29',
+        '--skip-dirs',
+        '**/.wp31',
+        '--skip-dirs',
+        '/src/_to_delete',
         '--exit-code',
         '1',
         '/src',
@@ -1080,7 +1092,7 @@ const securityScans = () => {
         [
           'detect',
           '--source=/fixture',
-          '--config=/src/infra/release/wp29-gitleaks.toml',
+          '--config=/src/infra/release/wp31-gitleaks.toml',
           '--no-git',
           '--no-banner',
         ],

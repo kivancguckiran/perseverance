@@ -3,9 +3,9 @@ import {
   transitionProductionRollout,
   type ProductionRolloutRecord,
   type ProductionRolloutStage,
-} from '@persistent-codex/production-readiness'
+} from '@perseverance/production-readiness'
 import type { Pool, PoolClient } from 'pg'
-import type { ProductionScope } from '@persistent-codex/production-topology/production-postgres'
+import type { ProductionScope } from '@perseverance/production-topology/production-postgres'
 
 const commandSha256 = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex')

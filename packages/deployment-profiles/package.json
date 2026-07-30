@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/deployment-profiles",
-  "version": "0.0.0",
+  "name": "@perseverance/deployment-profiles",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -13,7 +13,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@persistent-codex/codex-event-adapter": "workspace:*",
-    "@persistent-codex/domain-events": "workspace:*"
+    "@perseverance/codex-event-adapter": "workspace:*",
+    "@perseverance/domain-events": "workspace:*"
   }
 }

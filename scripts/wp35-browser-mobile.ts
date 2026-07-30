@@ -245,16 +245,12 @@ try {
     managedCloud: composition,
   })
   await api.listen({ host: '127.0.0.1', port: apiPort })
-  const build = spawnSync(
-    'pnpm',
-    ['--filter', '@persistent-codex/web', 'build'],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      maxBuffer: 100 * 1024 * 1024,
-      env: { ...process.env, VITE_CONTROL_PLANE_URL: apiUrl },
-    },
-  )
+  const build = spawnSync('pnpm', ['--filter', '@perseverance/web', 'build'], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 100 * 1024 * 1024,
+    env: { ...process.env, VITE_CONTROL_PLANE_URL: apiUrl },
+  })
   assert.equal(build.status, 0, build.stderr || build.stdout)
   const clientRoot = join(root, 'apps/web/dist/client')
   const serverEntry = (

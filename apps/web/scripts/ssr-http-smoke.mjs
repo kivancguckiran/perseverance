@@ -26,7 +26,7 @@ try {
       200,
       `${pathname} returned ${response.status}`,
     )
-    assert.match(body, /Persistent Codex Workspace/)
+    assert.match(body, /Perseverance/)
     assert.doesNotMatch(body, /ReferenceError|SessionPage is not defined/)
   }
 

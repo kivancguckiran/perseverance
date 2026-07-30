@@ -11,7 +11,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts \
 
 FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
 ARG SOURCE_DATE_EPOCH=1753056000
-LABEL org.opencontainers.image.source="persistent-codex-workspace" \
+LABEL org.opencontainers.image.source="perseverance" \
       org.opencontainers.image.created="2026-07-21T00:00:00Z"
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /opt/yarn-* /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && addgroup -S workspace \

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CorpusSearchRequest } from '@persistent-codex/control-plane-contracts'
+import type { CorpusSearchRequest } from '@perseverance/control-plane-contracts'
 import {
   CorpusSearchCache,
   HybridCorpusRetrievalService,

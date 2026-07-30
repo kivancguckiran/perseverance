@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://persistent-codex.invalid/security/wp35-external-beta-attestation.schema.json",
+  "$id": "https://perseverance.invalid/security/wp35-external-beta-attestation.schema.json",
   "title": "WP35-E independent external beta acceptance attestation",
   "type": "object",
   "additionalProperties": false,

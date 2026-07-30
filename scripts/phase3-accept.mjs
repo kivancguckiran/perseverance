@@ -35,7 +35,7 @@ const steps = [
   [
     'production build for security browser',
     'pnpm',
-    ['--filter', '@persistent-codex/web', 'build'],
+    ['--filter', '@perseverance/web', 'build'],
     { VITE_CONTROL_PLANE_URL: 'http://127.0.0.1:3217' },
   ],
   [

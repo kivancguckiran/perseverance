@@ -250,7 +250,7 @@ try {
     throw new Error('Hybrid score or immutable citation was invalid')
 
   const principalId = `sha256:${createHash('sha256')
-    .update('urn:persistent-codex:dev-auth\0dev-user')
+    .update('urn:perseverance:dev-auth\0dev-user')
     .digest('hex')}`
   const aclRepository = createPostgresCorpusRepository({
     connectionString: url,

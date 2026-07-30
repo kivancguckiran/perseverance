@@ -57,8 +57,8 @@ import {
   type FolderMembership,
   type SharedFolder,
   type ApiErrorResponse,
-} from '@persistent-codex/control-plane-contracts'
-import type { TimelineEvent } from '@persistent-codex/domain-events'
+} from '@perseverance/control-plane-contracts'
+import type { TimelineEvent } from '@perseverance/domain-events'
 import { useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
@@ -3609,7 +3609,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       <header className="topbar">
         <div>
           <p className="eyebrow">FAZ 0 · CANLI CODEX AKIŞI</p>
-          <h1>Persistent Codex Workspace</h1>
+          <h1>Perseverance</h1>
           {identity.data ? (
             <label>
               Organization

@@ -3,7 +3,7 @@
 // paylaştığı idempotent kurulum adımları: organization, principal, owner
 // üyeliği, workspace, scheduling policy ve byok billing snapshot'ı.
 import type pg from 'pg'
-import { createBillingPostgresRepository } from '@persistent-codex/billing-platform'
+import { createBillingPostgresRepository } from '@perseverance/billing-platform'
 
 export const SELF_HOSTED_PLAN_VERSION = 32
 

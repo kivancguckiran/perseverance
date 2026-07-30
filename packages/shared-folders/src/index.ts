@@ -6,7 +6,7 @@ import type {
   FolderResourceType,
   FolderRole,
   SharedFolder,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 
 export const SHARED_FOLDER_SERVICE_VERSION = 1 as const
 

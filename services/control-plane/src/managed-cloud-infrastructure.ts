@@ -2,9 +2,9 @@ import type {
   ObservedRuntime,
   TenantResourceScope,
   TenantRuntimeResources,
-} from '@persistent-codex/tenant-runtime'
-import type { CapacityVector } from '@persistent-codex/production-topology/contracts'
-import type { AwsKmsClientPort } from '@persistent-codex/workspace-security'
+} from '@perseverance/tenant-runtime'
+import type { CapacityVector } from '@perseverance/production-topology/contracts'
+import type { AwsKmsClientPort } from '@perseverance/workspace-security'
 
 async function jsonRequest<T>(
   baseUrl: string,

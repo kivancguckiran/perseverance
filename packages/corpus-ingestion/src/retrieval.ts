@@ -6,7 +6,7 @@ import type {
   CorpusSearchRequest,
   CorpusSearchResponse,
   CorpusSearchResult,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import { CorpusError, type CorpusScope } from './index'
 import {
   EmbeddingProviderError,

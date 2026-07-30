@@ -24,7 +24,7 @@ tags:
 
 Bu index corpus içindeki sentez sayfalarının giriş noktasıdır. Sorular önce buradan yönlendirilir, önemli iddialar daha sonra [`../sources/index.md`](../sources/index.md) içindeki doğruluk kaynaklarında kontrol edilir.
 
-## Persistent Codex Workspace
+## Perseverance
 
 - [Sistem görünümü](system-overview.md) — Ürünün control plane/data plane ayrımı ve bu servisin sistemdeki yeri.
 - [Control-plane servisi](control-plane-service.md) — Fastify API, `SessionOrchestrator`, storage ve realtime sorumlulukları.

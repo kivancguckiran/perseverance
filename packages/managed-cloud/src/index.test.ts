@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { ZERO_CAPACITY } from '@persistent-codex/production-topology'
+import { ZERO_CAPACITY } from '@perseverance/production-topology'
 import {
   InMemoryTenantRuntimeRepository,
   InMemoryTenantRuntimeResources,
   TenantProvisioningService,
-} from '@persistent-codex/tenant-runtime'
-import type { ProviderAuthProfileMetadata } from '@persistent-codex/provider-auth'
-import type { ProductionRolloutRecord } from '@persistent-codex/production-readiness'
+} from '@perseverance/tenant-runtime'
+import type { ProviderAuthProfileMetadata } from '@perseverance/provider-auth'
+import type { ProductionRolloutRecord } from '@perseverance/production-readiness'
 import type {
   CreditReservation,
   CreditSettlement,
-} from '@persistent-codex/billing-platform'
+} from '@perseverance/billing-platform'
 import {
   DomainVerificationService,
   InMemoryManagedCloudRepository,

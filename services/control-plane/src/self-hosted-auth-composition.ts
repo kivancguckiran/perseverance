@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs'
 import Fastify, { type FastifyInstance } from 'fastify'
 import type pg from 'pg'
-import { ContentKeyLeaseManager } from '@persistent-codex/workspace-security'
+import { ContentKeyLeaseManager } from '@perseverance/workspace-security'
 import {
   SelfHostedAuthService,
   constantTimeTokenEquals,

@@ -277,7 +277,7 @@ try {
   const webPort = 43130
   web = spawn(
     'pnpm',
-    ['--filter', '@persistent-codex/web', 'dev', '--port', String(webPort)],
+    ['--filter', '@perseverance/web', 'dev', '--port', String(webPort)],
     {
       cwd: process.cwd(),
       env: { ...process.env, WP28_ENTERPRISE_API_ORIGIN: apiAddress },

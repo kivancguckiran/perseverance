@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/provider-platform",
-  "version": "0.0.0",
+  "name": "@perseverance/provider-platform",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": "./src/index.ts",
@@ -10,7 +10,7 @@
     "test": "cd ../.. && vitest run packages/provider-platform/src/index.test.ts"
   },
   "dependencies": {
-    "@persistent-codex/domain-events": "workspace:*",
+    "@perseverance/domain-events": "workspace:*",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   ChunkedEnvelopeEncryption,
   LocalKmsProvider,
-} from '@persistent-codex/workspace-security'
+} from '@perseverance/workspace-security'
 import {
   CorpusError,
   EncryptedFilesystemCorpusSnapshotStorage,

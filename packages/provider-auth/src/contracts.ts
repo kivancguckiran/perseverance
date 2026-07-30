@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { deploymentProfileSchema } from '@persistent-codex/deployment-profiles'
-import { providerIdSchema } from '@persistent-codex/provider-platform'
+import { deploymentProfileSchema } from '@perseverance/deployment-profiles'
+import { providerIdSchema } from '@perseverance/provider-platform'
 
 export const PROVIDER_AUTH_CONTRACT_VERSION = 1 as const
 

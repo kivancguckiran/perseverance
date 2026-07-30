@@ -1,6 +1,6 @@
 {
-  "name": "@persistent-codex/release-supply-chain",
-  "version": "0.0.0",
+  "name": "@perseverance/release-supply-chain",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {

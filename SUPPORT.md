@@ -24,9 +24,10 @@ yapılır.
 - Provider hesap/abonelik koşulları ve maliyetleri.
 - Kullanıcıya özel altyapı danışmanlığı.
 
-## Managed Cloud
+## Cloud profili
 
-Ücretli Managed Cloud hizmeti ayrı destek kanalları ve SLA'larla sunulur; bu
-repository'nin community desteği Managed Cloud yükümlülüğü doğurmaz. Marka ve
-hizmet ayrımı `docs/policies/brand-and-endorsement-policy.md` içinde
-tanımlanır.
+`cloud` profili, tenant runtime ve provider-auth kodu repository'de tarihsel
+mimari ve contract testleriyle birlikte korunur. İşletilen bir Perseverance
+Managed Cloud hizmeti yoktur; bu profil kurulabilir veya desteklenen bir
+dağıtım hedefi değildir. Destek taahhüdü yalnız yukarıdaki self-hosted
+community sınırı için geçerlidir.

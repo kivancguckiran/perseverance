@@ -666,10 +666,10 @@ export const buildDependencySbom = (
     },
     // Deterministiklik için bilinçli olarak timestamp ve serialNumber yoktur.
     properties: [
-      { name: 'persistent-codex:generator', value: 'wp31-release-lib' },
-      { name: 'persistent-codex:deterministic', value: 'true' },
+      { name: 'perseverance:generator', value: 'wp31-release-lib' },
+      { name: 'perseverance:deterministic', value: 'true' },
       {
-        name: 'persistent-codex:platform-specific-variants-excluded',
+        name: 'perseverance:platform-specific-variants-excluded',
         value: 'true',
       },
     ],
@@ -686,7 +686,7 @@ export const buildDependencySbom = (
         : { license: { id: component.normalizedLicense } },
     ],
     properties: [
-      { name: 'persistent-codex:direct', value: String(component.direct) },
+      { name: 'perseverance:direct', value: String(component.direct) },
     ],
   })),
 })
@@ -722,7 +722,7 @@ export const stableJson = (value: unknown): string =>
 export const REQUIRED_HYGIENE_FILES: { path: string; mustContain?: string }[] =
   [
     { path: 'LICENSE', mustContain: 'GNU AFFERO GENERAL PUBLIC LICENSE' },
-    { path: 'NOTICE', mustContain: 'Persistent Codex Workspace' },
+    { path: 'NOTICE', mustContain: 'Perseverance' },
     { path: 'README.md', mustContain: 'AGPL-3.0-only' },
     { path: 'SECURITY.md', mustContain: 'kivancguckiran@gmail.com' },
     { path: 'CONTRIBUTING.md', mustContain: 'pnpm install --frozen-lockfile' },

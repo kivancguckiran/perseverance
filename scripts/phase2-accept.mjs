@@ -20,16 +20,12 @@ const steps = [
   {
     name: 'unknown-event durable replay',
     command: 'pnpm',
-    args: [
-      '--filter',
-      '@persistent-codex/workspace-agent',
-      'smoke:unknown-replay',
-    ],
+    args: ['--filter', '@perseverance/workspace-agent', 'smoke:unknown-replay'],
   },
   {
     name: 'production PWA build',
     command: 'pnpm',
-    args: ['--filter', '@persistent-codex/web', 'build'],
+    args: ['--filter', '@perseverance/web', 'build'],
     env: { VITE_CONTROL_PLANE_URL: 'http://127.0.0.1:3216' },
   },
   {

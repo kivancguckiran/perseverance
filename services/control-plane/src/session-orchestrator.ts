@@ -3,17 +3,17 @@ import type {
   ArtifactMetadata,
   ArtifactStorage,
   ArtifactScope,
-} from '@persistent-codex/artifact-storage'
+} from '@perseverance/artifact-storage'
 import {
   DEFAULT_ARTIFACT_CHUNK_BYTES,
   redactCommandOutput,
-} from '@persistent-codex/artifact-storage'
-import { parseTimelineEvent } from '@persistent-codex/domain-events'
+} from '@perseverance/artifact-storage'
+import { parseTimelineEvent } from '@perseverance/domain-events'
 import {
   CodexEventAdapter,
   CodexProviderRuntimeAdapter,
-} from '@persistent-codex/codex-event-adapter'
-import { codexV2 } from '@persistent-codex/codex-protocol-generated'
+} from '@perseverance/codex-event-adapter'
+import { codexV2 } from '@perseverance/codex-protocol-generated'
 import {
   attachmentContextEnd,
   attachmentContextStart,
@@ -23,7 +23,7 @@ import {
   type SessionResponse,
   type ReadinessResponse,
   type TurnAcceptedResponse,
-} from '@persistent-codex/control-plane-contracts'
+} from '@perseverance/control-plane-contracts'
 import {
   SqliteEventStore,
   StoreConflictError,
@@ -31,7 +31,7 @@ import {
   type StoreScope,
   type ApprovalDecision,
   type ApprovalRecord,
-} from '@persistent-codex/event-store'
+} from '@perseverance/event-store'
 import {
   DEFAULT_CONVERSATION_POLICY,
   DEFAULT_TITLE_POLICY,
@@ -44,12 +44,12 @@ import {
   type ProviderModelCatalog,
   type ProviderRuntimeAdapterV1,
   type ModelSelection,
-} from '@persistent-codex/provider-platform'
+} from '@perseverance/provider-platform'
 import {
   ClaudeCodeRuntimeAdapter,
   CursorAgentRuntimeAdapter,
   GeminiCliRuntimeAdapter,
-} from '@persistent-codex/provider-cli-adapters'
+} from '@perseverance/provider-cli-adapters'
 import { CodexTitleProcessRunner } from './title-process-runner'
 import {
   CodexAppServerError,
@@ -65,7 +65,7 @@ import {
   type WorkspaceRuntimeIdentity,
   type WorkspaceRuntimeServices,
   type WorkspaceRuntimeRegistryOptions,
-} from '@persistent-codex/workspace-agent'
+} from '@perseverance/workspace-agent'
 
 type ThreadStartParams = codexV2.ThreadStartParams
 type ThreadStartResponse = codexV2.ThreadStartResponse
@@ -172,7 +172,7 @@ export interface SessionOrchestratorOptions {
     messages: string[]
   }) => Promise<{
     title: string
-    usage?: import('@persistent-codex/provider-platform').UsageReport
+    usage?: import('@perseverance/provider-platform').UsageReport
   }>
 }
 
@@ -2241,7 +2241,7 @@ export class SessionOrchestrator {
     messages: string[]
   }): Promise<{
     title: string
-    usage?: import('@persistent-codex/provider-platform').UsageReport
+    usage?: import('@perseverance/provider-platform').UsageReport
   }> {
     const prompt = [
       'Produce only a short, safe, single-line Turkish conversation title (maximum 8 words).',

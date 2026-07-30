@@ -1,8 +1,8 @@
-# WP32 — Persistent Codex Workspace self-hosted dağıtımı (ADR-0032).
+# WP32 — Perseverance self-hosted dağıtımı (ADR-0032).
 # Tek dışa açık servis proxy'dir (80/443, TLS zorunlu); diğer her şey iç ağda kalır.
 # Tüm imajlar images.env üzerinden sürüm+digest pinlidir. Yaşam döngüsü keşfi ve
 # temizlik doğrulaması yalnız `persistent.self-hosted=true` etiketiyle yapılır.
-name: persistent-self-hosted
+name: perseverance-self-hosted
 
 x-self-hosted-labels: &self-hosted-labels
   persistent.self-hosted: 'true'
@@ -310,7 +310,7 @@ services:
 
 networks:
   self-hosted:
-    name: persistent-self-hosted
+    name: perseverance-self-hosted
     labels: *self-hosted-labels
 
 volumes:
