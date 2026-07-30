@@ -25,7 +25,11 @@ pnpm verify
 `pnpm verify` tek doğrulama gate'idir: format kontrolü, typecheck, testler,
 build ve SSR smoke'unu birlikte çalıştırır. Temiz bir checkout'ta yukarıdaki
 adımlar dışında hiçbir manuel adım gerekmez; gerekiyorsa bu bir hatadır, issue
-açın.
+açın. Test suite'i Argon2/PDF gibi CPU-ağır işler ile Git/subprocess
+fixture'larını birlikte çalıştırdığı için Vitest dosya worker sayısı
+`vitest.config.ts` içinde birle sınırlandırılmıştır; kabul koşusunda bu sınırı
+artırmayın. Üretim maliyetindeki Argon2 kontrollerini tek test deadline'ında
+zincirlemeyin; her assertion aynı parametrelerle ayrı testte çalışmalıdır.
 
 Lokal geliştirme sunucusu için `README.md` içindeki `pnpm alpha:dev` bölümüne
 bakın.

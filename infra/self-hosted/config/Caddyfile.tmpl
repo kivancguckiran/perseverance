@@ -7,7 +7,12 @@
 	@@ACME_EMAIL_BLOCK@@
 }
 
-http://@@DOMAIN@@:80 {
+# WP36 gerçek-ortam bulgusu: bu blok host'a bağlıyken (http://@@DOMAIN@@:80)
+# healthcheck'in Host: 127.0.0.1 isteği siteyle eşleşmiyor ve proxy hiç
+# healthy olamıyordu. Health endpoint'i host-bağımsız :80 bloğunda sunulur;
+# diğer tüm HTTP istekleri kanonik domain'e yönlendirilir. ACME HTTP-01
+# challenge'ını Caddy bu route'lardan önce kendisi yakalar.
+:80 {
 	handle /caddy-healthz {
 		respond "ok" 200
 	}
@@ -16,6 +21,11 @@ http://@@DOMAIN@@:80 {
 	}
 }
 
+# WP38 (ADR-0038): base-path'li kurulumda @@CONTROL_PLANE_PATHS@@ base altındaki
+# API/health yollarını içerir ve @@CONTROL_PLANE_STRIP@@ prefix'i control-plane'e
+# geçmeden söker; kök /healthz ve /readyz her durumda korunur. @@BASE_REDIRECT@@
+# kök '/' isteğini base'e yönlendirir (boş base'de tüm placeholder'lar boştur ve
+# kök davranış bire bir aynı kalır).
 https://@@DOMAIN@@:443 {
 	@@TLS_DIRECTIVE@@
 	encode zstd gzip
@@ -27,10 +37,13 @@ https://@@DOMAIN@@:443 {
 		-Server
 	}
 
+	@@BASE_REDIRECT@@
+
 	@control-plane {
-		path /v1/* /healthz /readyz
+		path @@CONTROL_PLANE_PATHS@@
 	}
 	handle @control-plane {
+		@@CONTROL_PLANE_STRIP@@
 		reverse_proxy control-plane:3300
 	}
 

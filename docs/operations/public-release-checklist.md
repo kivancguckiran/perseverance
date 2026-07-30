@@ -23,7 +23,9 @@ Sırayla ve temiz working tree üzerinde:
    - dependency lisans gate'i + commit edilmiş deterministik SBOM/lisans
      raporu drift kontrolü (`infra/release/wp31-sbom.cdx.json`,
      `infra/release/wp31-license-report.json`),
-   - temiz klonda `pnpm install --frozen-lockfile && pnpm verify`.
+   - temiz klonda non-interactive `CI=true`
+     `pnpm install --frozen-lockfile && pnpm verify` (operatörün açık `CI`
+     değeri korunur).
 3. Determinizm kanıtı: preflight'ı iki kez ardışık çalıştırın;
    `.wp31/evidence/wp31-public-preflight.json` iki koşuda bayt-aynı olmalıdır.
 4. Docker mevcut ortamda authoritative tarayıcı koşusu (resmî gitleaks +

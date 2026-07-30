@@ -4,9 +4,12 @@
 # Tek komut kurulum:
 #   bash infra/self-hosted/self-hosted.sh install \
 #     --domain workspace.example.com --acme-email admin@example.com
+#   (opsiyonel: --base-path /workspace — reverse-proxy alt-path'i, ADR-0038)
 #
 # Komutlar: preflight | install | status | admin-token | codex-login | backup |
-#           restore | upgrade | rollback | uninstall | verify-release
+#           restore | upgrade | rollback | uninstall | verify-release |
+#           list-users | disable-user | reset-user --crypto-erase |
+#           set-allowed-users (WP37 kullanıcı yönetimi)
 # Tüm komutlar non-interactive'dir ve her eksikte actionable hata ile fail-closed
 # davranır. Ayrıntılar: docs/operations/self-hosted-install-runbook.md
 
@@ -53,6 +56,9 @@ check_disk() {
 }
 check_tls_mode() {
   case "${SELF_HOSTED_TLS_MODE:-acme}" in acme | internal | custom) return 0 ;; *) return 1 ;; esac
+}
+check_base_path() {
+  effective_base_path >/dev/null 2>&1
 }
 check_ports_free() {
   command -v ss >/dev/null 2>&1 || return 0
@@ -111,6 +117,9 @@ cmd_preflight() {
   run_check tls-mode-valid \
     "SELF_HOSTED_TLS_MODE acme|internal|custom olmalı" \
     check_tls_mode
+  run_check base-path-valid \
+    "SELF_HOSTED_BASE_PATH geçersiz: '/' ile başlamalı, '/' ile bitmemeli, segmentler [A-Za-z0-9._~-] olmalı ve /v1,/healthz,/readyz,/assets,/events ile çakışmamalı (boş = kök)" \
+    check_base_path
 
   if [ "${SELF_HOSTED_TLS_MODE:-acme}" = acme ]; then
     run_check acme-email-set \
@@ -224,6 +233,22 @@ cmd_verify_release() {
 # install
 # ---------------------------------------------------------------------------
 
+chown_runtime_secrets() {
+  # WP36 gerçek-ortam bulgusu: compose file-secret mount'ları host sahipliğini
+  # taşır. Product imajı servisleri (bootstrap dahil) uid 10001 (workspace) ile
+  # koştuğundan root:0600 kalan secret dosyaları /run/secrets altında EACCES
+  # verir. identity anahtarlarındaki sahiplik deseninin aynısı compose secrets
+  # olarak mount edilen dosyalara da uygulanır.
+  local node_image="$1"
+  docker run --rm -u 0 -v "$(secrets_dir):/sec" "${node_image}" node -e '
+    const { chmodSync, chownSync } = require("node:fs")
+    for (const file of ["/sec/postgres-password", "/sec/postgres-runtime-password", "/sec/internal-runtime-token"]) {
+      chmodSync(file, 0o600)
+      chownSync(file, 10001, 10001)
+    }
+  '
+}
+
 generate_identity_keys() {
   local node_image="$1"
   if [ -f "$(secrets_dir)/oidc-private.pem" ]; then return 0; fi
@@ -244,23 +269,37 @@ generate_identity_keys() {
 }
 
 render_caddyfile() {
-  local domain="$1" mode="$2" email="${3:-}"
+  local domain="$1" mode="$2" email="${3:-}" base_path="${4:-}"
   local tls_directive="" email_block=""
   case "${mode}" in
   acme) email_block="email ${email}" ;;
   internal) tls_directive="tls internal" ;;
   custom) tls_directive="tls /etc/self-hosted-tls/cert.pem /etc/self-hosted-tls/key.pem" ;;
   esac
+  # WP38 (ADR-0038): base-path'li kurulumda control-plane matcher'ı base
+  # altındaki yolları strip_prefix ile taşır; kök /healthz ve /readyz her
+  # durumda korunur (monitoring/lifecycle geriye uyumluluğu). Kök '/' isteği
+  # base'e yönlendirilir; diğer base dışı yollar web sunucusunda 404'tür.
+  local control_plane_paths="/v1/* /healthz /readyz"
+  local control_plane_strip="" base_redirect=""
+  if [ -n "${base_path}" ]; then
+    control_plane_paths="${base_path}/v1/* ${base_path}/healthz ${base_path}/readyz /healthz /readyz"
+    control_plane_strip="uri strip_prefix ${base_path}"
+    base_redirect="redir / ${base_path}/ 308"
+  fi
   sed \
     -e "s|@@DOMAIN@@|${domain}|g" \
     -e "s|@@TLS_DIRECTIVE@@|${tls_directive}|" \
     -e "s|@@ACME_EMAIL_BLOCK@@|${email_block}|" \
+    -e "s|@@CONTROL_PLANE_PATHS@@|${control_plane_paths}|" \
+    -e "s|@@CONTROL_PLANE_STRIP@@|${control_plane_strip}|" \
+    -e "s|@@BASE_REDIRECT@@|${base_redirect}|" \
     "${SELF_HOSTED_SCRIPT_DIR}/config/Caddyfile.tmpl" >"$(config_dir)/Caddyfile"
   chmod 600 "$(config_dir)/Caddyfile"
 }
 
 render_env_file() {
-  local domain="$1" source_commit="$2"
+  local domain="$1" source_commit="$2" base_path="${3:-}" product_image="$4"
   umask 077
   {
     echo "# WP32 self-hosted yapılandırması — self-hosted.sh install tarafından üretildi."
@@ -268,14 +307,16 @@ render_env_file() {
     cat "${SELF_HOSTED_SCRIPT_DIR}/images.env" | grep -v '^#'
     echo "SELF_HOSTED_DOMAIN=${domain}"
     echo "SELF_HOSTED_PUBLIC_ORIGIN=https://${domain}"
+    echo "SELF_HOSTED_BASE_PATH=${base_path}"
     echo "SELF_HOSTED_TLS_MODE=${SELF_HOSTED_TLS_MODE:-acme}"
     echo "SELF_HOSTED_HTTP_BIND=${SELF_HOSTED_HTTP_BIND:-0.0.0.0}"
     echo "SELF_HOSTED_HTTPS_BIND=${SELF_HOSTED_HTTPS_BIND:-0.0.0.0}"
     echo "SELF_HOSTED_SOURCE_COMMIT=${source_commit}"
-    echo "SELF_HOSTED_PRODUCT_IMAGE=persistent-self-hosted-product:${source_commit}"
+    echo "SELF_HOSTED_PRODUCT_IMAGE=${product_image}"
     echo "SELF_HOSTED_OIDC_ISSUER=${SELF_HOSTED_OIDC_ISSUER:-http://identity:3303}"
     echo "SELF_HOSTED_OIDC_AUDIENCE=${SELF_HOSTED_OIDC_AUDIENCE:-persistent-codex-self-hosted}"
     echo "SELF_HOSTED_ADMIN_SUBJECT=${SELF_HOSTED_ADMIN_SUBJECT:-self-hosted-admin}"
+    echo "SELF_HOSTED_ALLOWED_USERS=${SELF_HOSTED_ALLOWED_USERS:-}"
     echo "SELF_HOSTED_ORGANIZATION_NAME=${SELF_HOSTED_ORGANIZATION_NAME:-Self-hosted organization}"
     echo "SELF_HOSTED_ORGANIZATION_ID=org_$(openssl rand -hex 8)"
     echo "SELF_HOSTED_WORKSPACE_ID=wsp_$(openssl rand -hex 8)"
@@ -313,6 +354,13 @@ cmd_install() {
   local source_commit
   source_commit="$(git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo bundle)"
 
+  # WP38: base path'i erken ve fail-closed çöz (bayrak > mevcut env > kök).
+  local base_path
+  base_path="$(effective_base_path)" ||
+    fail "SELF_HOSTED_BASE_PATH geçersiz — '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
+  local product_image
+  product_image="$(product_image_tag "${source_commit}" "${base_path}")"
+
   log "secret'lar üretiliyor"
   ensure_secret_file postgres-password
   ensure_secret_file postgres-runtime-password
@@ -320,6 +368,7 @@ cmd_install() {
   ensure_secret_file minio-root-password
   ensure_secret_file telemetry-scope-salt
   ensure_secret_file backup-key
+  ensure_secret_file internal-runtime-token
 
   local node_image
   node_image="$(sed -n 's/^SELF_HOSTED_NODE_IMAGE=//p' "${SELF_HOSTED_SCRIPT_DIR}/images.env")"
@@ -332,23 +381,27 @@ cmd_install() {
   done < <(pinned_images)
 
   generate_identity_keys "${node_image}"
+  chown_runtime_secrets "${node_image}"
 
   if [ ! -f "$(env_file)" ]; then
     log "yapılandırma üretiliyor: $(env_file)"
-    render_env_file "${SELF_HOSTED_DOMAIN}" "${source_commit}"
+    render_env_file "${SELF_HOSTED_DOMAIN}" "${source_commit}" "${base_path}" \
+      "${product_image}"
   else
     log "mevcut yapılandırma korunuyor: $(env_file)"
+    update_env_value SELF_HOSTED_BASE_PATH "${base_path}"
     update_env_value SELF_HOSTED_SOURCE_COMMIT "${source_commit}"
-    update_env_value SELF_HOSTED_PRODUCT_IMAGE "persistent-self-hosted-product:${source_commit}"
+    update_env_value SELF_HOSTED_PRODUCT_IMAGE "${product_image}"
   fi
   render_caddyfile "$(read_env SELF_HOSTED_DOMAIN)" "$(read_env SELF_HOSTED_TLS_MODE)" \
-    "${SELF_HOSTED_ACME_EMAIL:-}"
+    "${SELF_HOSTED_ACME_EMAIL:-}" "${base_path}"
 
-  log "product imajı build ediliyor (persistent-self-hosted-product:${source_commit})"
-  if ! docker image inspect "persistent-self-hosted-product:${source_commit}" >/dev/null 2>&1; then
+  log "product imajı build ediliyor (${product_image})"
+  if ! docker image inspect "${product_image}" >/dev/null 2>&1; then
     docker build \
       -f "${SELF_HOSTED_SCRIPT_DIR}/product.Dockerfile" \
-      -t "persistent-self-hosted-product:${source_commit}" \
+      --build-arg "SELF_HOSTED_BASE_PATH=${base_path}" \
+      -t "${product_image}" \
       "${SELF_HOSTED_REPO_ROOT}"
   fi
 
@@ -366,13 +419,13 @@ cmd_install() {
 
   local origin
   origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
-  log "public origin üzerinden readiness doğrulanıyor: ${origin}/readyz"
+  log "public origin üzerinden readiness doğrulanıyor: ${origin}${base_path}/readyz"
   wait_public_ready "${origin}" 60 ||
-    fail "public readiness doğrulanamadı: ${origin}/readyz — 'self-hosted.sh status' ve proxy loglarına bakın"
+    fail "public readiness doğrulanamadı: ${origin}${base_path}/readyz — 'self-hosted.sh status' ve proxy loglarına bakın"
 
-  write_release_state "${source_commit}"
+  write_release_state "${source_commit}" "${product_image}"
 
-  log "kurulum tamam: ${origin}"
+  log "kurulum tamam: ${origin}${base_path}"
   log "sonraki adımlar:"
   log "  1) self-hosted.sh codex-login   # provider credential'ı (yalnız codex-home volume'unda kalır)"
   log "  2) self-hosted.sh admin-token   # PWA oturumu için kısa ömürlü admin token"
@@ -389,12 +442,13 @@ cmd_install() {
 
 cmd_status() {
   compose ps
-  local origin
+  local origin base
   origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
+  base="$(read_env SELF_HOSTED_BASE_PATH)"
   if wait_public_ready "${origin}" 1; then
-    log "public readiness: OK (${origin}/readyz)"
+    log "public readiness: OK (${origin}${base}/readyz)"
   else
-    log "public readiness: BAŞARISIZ (${origin}/readyz)"
+    log "public readiness: BAŞARISIZ (${origin}${base}/readyz)"
   fi
   if compose exec -T workspace-agent sh -c 'test -f /codex-home/auth.json' >/dev/null 2>&1; then
     log "provider auth: hazır (codex-home volume)"
@@ -418,6 +472,108 @@ cmd_codex_login() {
 }
 
 # ---------------------------------------------------------------------------
+# WP37 — kullanıcı yönetimi (ADR-0037)
+# ---------------------------------------------------------------------------
+
+psql_exec() {
+  # $1: SQL — superuser ile tek transaction'da çalıştırır (operatör akışı).
+  # -tA: yalnız satır değerleri döner (başlık/altbilgi ayrıştırma hatası olmaz).
+  compose exec -T postgres psql -v ON_ERROR_STOP=1 -U self_hosted_admin \
+    -d persistent_codex -q -tA -c "$1"
+}
+
+cmd_list_users() {
+  log "allowlist (env): $(read_env SELF_HOSTED_ALLOWED_USERS)"
+  compose exec -T postgres psql -U self_hosted_admin -d persistent_codex -c \
+    "SELECT username, status, organization_id, workspace_id, created_at, disabled_at
+     FROM persistent_codex.users ORDER BY username"
+}
+
+require_valid_username() {
+  # SQL enjeksiyonunu ve kayıt akışıyla uyumsuz adları reddeder.
+  case "${1}" in
+  *[!a-z0-9_-]*) fail "geçersiz kullanıcı adı: yalnız [a-z0-9_-]" ;;
+  esac
+}
+
+cmd_disable_user() {
+  local username="${1:-}"
+  [ -n "${username}" ] || fail "disable-user <kullanıcı-adı> gerekli"
+  require_valid_username "${username}"
+  local updated
+  updated="$(psql_exec "
+    WITH target AS (
+      UPDATE persistent_codex.users
+      SET status='disabled', disabled_at=now()
+      WHERE username='${username}' AND status <> 'disabled'
+      RETURNING user_id, organization_id
+    ), tokens AS (
+      UPDATE persistent_codex.user_refresh_tokens t SET revoked_at=now()
+      FROM target WHERE t.user_id=target.user_id AND t.revoked_at IS NULL
+    )
+    INSERT INTO persistent_codex.user_auth_audit(tenant_id,username,action,outcome,reason_code)
+    SELECT organization_id,'${username}','user.disabled','allow','OPERATOR_DISABLED' FROM target
+    RETURNING tenant_id" | head -n 1 | tr -d ' ')"
+  if [ -n "${updated}" ]; then
+    log "kullanıcı devre dışı: ${username} (aktif access token en geç TTL'de düşer;"
+    log "anında kesmek için: docker compose restart control-plane)"
+  else
+    log "değişiklik yok: kullanıcı bulunamadı veya zaten devre dışı (idempotent)"
+  fi
+}
+
+cmd_reset_user() {
+  local username="" crypto_erase=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --crypto-erase) crypto_erase=1 ;;
+    *) username="$1" ;;
+    esac
+    shift
+  done
+  [ -n "${username}" ] || fail "reset-user <kullanıcı-adı> --crypto-erase gerekli"
+  require_valid_username "${username}"
+  [ "${crypto_erase}" = 1 ] ||
+    fail "reset-user yalnız --crypto-erase ile çalışır: sarılmış content key kopyaları imha edilir ve mevcut içerik KALICI olarak çözülemez olur (parola + recovery key birlikte kaybedildiğinde kullanın)"
+  local erased
+  erased="$(psql_exec "
+    WITH target AS (
+      SELECT user_id, username, organization_id, workspace_id
+      FROM persistent_codex.users WHERE username='${username}'
+    ), keys AS (
+      DELETE FROM persistent_codex.user_content_keys k
+      USING target WHERE k.user_id=target.user_id
+    ), tokens AS (
+      DELETE FROM persistent_codex.user_refresh_tokens t
+      USING target WHERE t.user_id=target.user_id
+    ), sec AS (
+      INSERT INTO persistent_codex.workspace_security_audit(organization_id,workspace_id,action,outcome,reason_code,key_version)
+      SELECT organization_id,workspace_id,'workspace.crypto_erased','success','WP37_RESET_USER',NULL FROM target
+    ), audit AS (
+      INSERT INTO persistent_codex.user_auth_audit(tenant_id,username,action,outcome,reason_code)
+      SELECT organization_id,username,'user.crypto_erased','allow','OPERATOR_RESET' FROM target
+    )
+    DELETE FROM persistent_codex.users u USING target WHERE u.user_id=target.user_id
+    RETURNING u.user_id" | head -n 1 | tr -d ' ')"
+  if [ -n "${erased}" ]; then
+    log "crypto-erase tamam: ${username} — sarılmış content key kopyaları silindi;"
+    log "eski içerik kalıcı olarak çözülemez. Kullanıcı allowlist'teyse yeniden kayıt olabilir."
+    log "bellekteki lease'i anında düşürmek için: docker compose restart control-plane"
+  else
+    log "değişiklik yok: kullanıcı bulunamadı (idempotent)"
+  fi
+}
+
+cmd_set_allowed_users() {
+  local users="${1:-}"
+  [ -n "${users}" ] || fail "set-allowed-users <ad1,ad2,...> gerekli"
+  update_env_value SELF_HOSTED_ALLOWED_USERS "${users}"
+  log "allowlist güncellendi: ${users} — control-plane yeni env ile yeniden başlatılıyor"
+  compose up -d --wait --wait-timeout 300 control-plane
+  log "allowlist aktif"
+}
+
+# ---------------------------------------------------------------------------
 # backup / restore
 # ---------------------------------------------------------------------------
 
@@ -437,7 +593,7 @@ cmd_backup() {
   backup_id="backup-$(date -u +%Y%m%dT%H%M%SZ)"
   workdir="$(backups_dir)/tmp-$$"
   mkdir -p "${workdir}" && chmod 700 "${workdir}"
-  trap 'rm -rf "${workdir}"' RETURN
+  trap 'rm -rf "${workdir:-}"; trap - RETURN' RETURN
 
   log "postgres dump alınıyor (pg_dump -Fc)"
   compose exec -T postgres sh -c \
@@ -499,7 +655,7 @@ cmd_restore() {
   local workdir
   workdir="$(backups_dir)/restore-$$"
   mkdir -p "${workdir}" && chmod 700 "${workdir}"
-  trap 'rm -rf "${workdir}"' RETURN
+  trap 'rm -rf "${workdir:-}"; trap - RETURN' RETURN
 
   log "arşiv çözülüyor"
   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 \
@@ -559,14 +715,32 @@ cmd_upgrade() {
   log "upgrade öncesi otomatik yedek alınıyor"
   cmd_backup >/dev/null
 
-  log "yeni product imajı build ediliyor: ${new_commit}"
+  # WP37: eski kurulumlarda bulunmayan secret/env girdileri idempotent eklenir.
+  ensure_secret_file internal-runtime-token
+  chown_runtime_secrets "$(read_env SELF_HOSTED_NODE_IMAGE)"
+  grep -q '^SELF_HOSTED_ALLOWED_USERS=' "$(env_file)" ||
+    update_env_value SELF_HOSTED_ALLOWED_USERS "${SELF_HOSTED_ALLOWED_USERS:-}"
+
+  # WP38: base path fail-closed çözülür (bayrak > mevcut env > kök); eski
+  # kurulumlarda anahtar idempotent eklenir ve Caddyfile yeniden render edilir.
+  local base_path
+  base_path="$(effective_base_path)" ||
+    fail "SELF_HOSTED_BASE_PATH geçersiz — '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
+  update_env_value SELF_HOSTED_BASE_PATH "${base_path}"
+  render_caddyfile "$(read_env SELF_HOSTED_DOMAIN)" "$(read_env SELF_HOSTED_TLS_MODE)" \
+    "${SELF_HOSTED_ACME_EMAIL:-}" "${base_path}"
+  local product_image
+  product_image="$(product_image_tag "${new_commit}" "${base_path}")"
+
+  log "yeni product imajı build ediliyor: ${product_image}"
   docker build \
     -f "${SELF_HOSTED_SCRIPT_DIR}/product.Dockerfile" \
-    -t "persistent-self-hosted-product:${new_commit}" \
+    --build-arg "SELF_HOSTED_BASE_PATH=${base_path}" \
+    -t "${product_image}" \
     "${SELF_HOSTED_REPO_ROOT}"
 
   update_env_value SELF_HOSTED_SOURCE_COMMIT "${new_commit}"
-  update_env_value SELF_HOSTED_PRODUCT_IMAGE "persistent-self-hosted-product:${new_commit}"
+  update_env_value SELF_HOSTED_PRODUCT_IMAGE "${product_image}"
 
   log "migration'lar uygulanıyor"
   compose run --rm migrate
@@ -575,24 +749,27 @@ cmd_upgrade() {
   compose up -d --wait --wait-timeout 600
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "upgrade sonrası readiness doğrulanamadı — 'self-hosted.sh rollback' kullanılabilir"
-  write_release_state "${new_commit}"
+  write_release_state "${new_commit}" "${product_image}"
   log "upgrade tamam: ${current_commit} → ${new_commit}"
 }
 
 cmd_rollback() {
   [ -f "$(previous_release_file)" ] || fail "rollback için kayıtlı önceki sürüm yok"
-  local previous_commit
+  local previous_commit previous_image
   previous_commit="$(sed -n 's/^SELF_HOSTED_SOURCE_COMMIT=//p' "$(previous_release_file)")"
-  docker image inspect "persistent-self-hosted-product:${previous_commit}" >/dev/null 2>&1 ||
-    fail "önceki sürüm imajı yok: persistent-self-hosted-product:${previous_commit}"
+  # WP38: imaj referansı state'ten okunur (base'li kurulumda tag slug içerir).
+  previous_image="$(sed -n 's/^SELF_HOSTED_PRODUCT_IMAGE=//p' "$(previous_release_file)")"
+  [ -n "${previous_image}" ] || previous_image="persistent-self-hosted-product:${previous_commit}"
+  docker image inspect "${previous_image}" >/dev/null 2>&1 ||
+    fail "önceki sürüm imajı yok: ${previous_image}"
   log "rollback: $(read_env SELF_HOSTED_SOURCE_COMMIT) → ${previous_commit}"
   update_env_value SELF_HOSTED_SOURCE_COMMIT "${previous_commit}"
-  update_env_value SELF_HOSTED_PRODUCT_IMAGE "persistent-self-hosted-product:${previous_commit}"
+  update_env_value SELF_HOSTED_PRODUCT_IMAGE "${previous_image}"
   compose up -d --wait --wait-timeout 600
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "rollback sonrası readiness doğrulanamadı"
   mv "$(previous_release_file)" "$(state_dir)/rolled-back-from.env"
-  write_release_state "${previous_commit}"
+  write_release_state "${previous_commit}" "${previous_image}"
   log "rollback tamam (şema expand-only olduğundan migration geri alınmaz; veri korunur)"
   log "gerekirse upgrade öncesi yedeği 'self-hosted.sh restore' ile uygulayın"
 }
@@ -651,6 +828,7 @@ ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
   --domain) export SELF_HOSTED_DOMAIN="$2" && shift ;;
+  --base-path) export SELF_HOSTED_BASE_PATH="$2" && shift ;;
   --acme-email) export SELF_HOSTED_ACME_EMAIL="$2" && shift ;;
   --tls-mode) export SELF_HOSTED_TLS_MODE="$2" && shift ;;
   --home) export SELF_HOSTED_HOME="$2" && shift ;;
@@ -666,6 +844,10 @@ install) cmd_install ;;
 status) cmd_status ;;
 admin-token) cmd_admin_token ${ARGS[@]+"${ARGS[@]}"} ;;
 codex-login) cmd_codex_login ${ARGS[@]+"${ARGS[@]}"} ;;
+list-users) cmd_list_users ;;
+disable-user) cmd_disable_user ${ARGS[@]+"${ARGS[@]}"} ;;
+reset-user) cmd_reset_user ${ARGS[@]+"${ARGS[@]}"} ;;
+set-allowed-users) cmd_set_allowed_users ${ARGS[@]+"${ARGS[@]}"} ;;
 backup) cmd_backup ${ARGS[@]+"${ARGS[@]}"} ;;
 restore) cmd_restore ${ARGS[@]+"${ARGS[@]}"} ;;
 upgrade) cmd_upgrade ;;

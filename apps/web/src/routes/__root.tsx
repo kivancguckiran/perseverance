@@ -6,6 +6,7 @@ import {
   createRootRouteWithContext,
 } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
+import { withBase } from '../base-path'
 import appStyles from '../styles.css?url'
 import { PwaRuntime } from '../pwa-runtime'
 
@@ -25,9 +26,10 @@ export const Route = createRootRouteWithContext<{
     ],
     links: [
       { rel: 'stylesheet', href: appStyles },
-      { rel: 'manifest', href: '/manifest.webmanifest' },
-      { rel: 'icon', href: '/icon.svg', type: 'image/svg+xml' },
-      { rel: 'apple-touch-icon', href: '/icon-192.png' },
+      // WP38: statik PWA varlıkları base altından servis edilir (kökte no-op).
+      { rel: 'manifest', href: withBase('/manifest.webmanifest') },
+      { rel: 'icon', href: withBase('/icon.svg'), type: 'image/svg+xml' },
+      { rel: 'apple-touch-icon', href: withBase('/icon-192.png') },
     ],
   }),
   notFoundComponent: NotFoundPage,

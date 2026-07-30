@@ -2,9 +2,12 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  hkdfSync,
   randomBytes,
   randomUUID,
+  timingSafeEqual,
 } from 'node:crypto'
+import { argon2Verify, argon2id } from 'hash-wasm'
 import {
   closeSync,
   lstatSync,
@@ -1459,4 +1462,405 @@ export function readEncryptedFile(path: string): ChunkedEnvelopeV1 {
   if (!stat.isFile() || stat.isSymbolicLink())
     throw new CryptoError('ENCRYPTED_FILE_INVALID')
   return JSON.parse(readFileSync(path, 'utf8')) as ChunkedEnvelopeV1
+}
+
+// ---------------------------------------------------------------------------
+// WP37 — parola-türevli kullanıcı içerik anahtarı (ADR-0037).
+// Kullanıcı başına 32 baytlık content key; paroladan Argon2id+HKDF ile türeyen
+// user-KEK ve kayıtta bir kez gösterilen recovery key'den HKDF ile türeyen
+// recovery-KEK ile ayrı ayrı sarılır. Düz anahtarlar yalnız bellekte yaşar.
+// ---------------------------------------------------------------------------
+
+export const USER_CONTENT_KEY_FORMAT_VERSION = 1 as const
+export const USER_KEK_HKDF_INFO = 'persistent-codex-user-kek-v1' as const
+export const RECOVERY_KEK_HKDF_INFO =
+  'persistent-codex-recovery-kek-v1' as const
+
+export interface UserKdfParamsV1 {
+  formatVersion: typeof USER_CONTENT_KEY_FORMAT_VERSION
+  algorithm: 'argon2id-hkdf-sha256'
+  salt: string
+  memoryKib: number
+  iterations: number
+  parallelism: number
+  hkdfInfo: string
+}
+
+export interface WrappedContentKeyV1 {
+  formatVersion: typeof USER_CONTENT_KEY_FORMAT_VERSION
+  algorithm: 'AES-256-GCM'
+  nonce: string
+  authenticationTag: string
+  ciphertext: string
+}
+
+export interface UserContentKeyScope extends WorkspaceSecurityScope {
+  userId: string
+  wrapType: 'password' | 'recovery'
+}
+
+const DEFAULT_ARGON2ID = {
+  memoryKib: 65536,
+  iterations: 3,
+  parallelism: 1,
+} as const
+
+function contentKeyContext(scope: UserContentKeyScope): Buffer {
+  return Buffer.from(
+    JSON.stringify([
+      'user-content-key-context-v1',
+      requireScopePart(scope.tenantId, 'tenantId'),
+      requireScopePart(scope.organizationId, 'organizationId'),
+      requireScopePart(scope.workspaceId, 'workspaceId'),
+      requireScopePart(scope.userId, 'userId'),
+      scope.wrapType,
+    ]),
+  )
+}
+
+export function createUserKdfParams(hkdfInfo: string): UserKdfParamsV1 {
+  return {
+    formatVersion: USER_CONTENT_KEY_FORMAT_VERSION,
+    algorithm: 'argon2id-hkdf-sha256',
+    salt: randomBytes(16).toString('base64'),
+    ...DEFAULT_ARGON2ID,
+    hkdfInfo,
+  }
+}
+
+export async function deriveUserKek(
+  secret: string,
+  params: UserKdfParamsV1,
+): Promise<Buffer> {
+  if (
+    params.formatVersion !== USER_CONTENT_KEY_FORMAT_VERSION ||
+    params.algorithm !== 'argon2id-hkdf-sha256'
+  )
+    throw new CryptoError('UNSUPPORTED_KDF_PARAMS')
+  if (secret.length === 0) throw new CryptoError('EMPTY_KDF_SECRET')
+  const stretched = await argon2id({
+    password: secret,
+    salt: Buffer.from(params.salt, 'base64'),
+    memorySize: params.memoryKib,
+    iterations: params.iterations,
+    parallelism: params.parallelism,
+    hashLength: 32,
+    outputType: 'binary',
+  })
+  return Buffer.from(
+    hkdfSync(
+      'sha256',
+      Buffer.from(stretched),
+      Buffer.alloc(0),
+      params.hkdfInfo,
+      32,
+    ),
+  )
+}
+
+export function generateContentKey(): Buffer {
+  return randomBytes(32)
+}
+
+const RECOVERY_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+export function generateRecoveryKey(): string {
+  const bytes = randomBytes(20)
+  let bits = 0
+  let value = 0
+  let output = ''
+  for (const byte of bytes) {
+    value = (value << 8) | byte
+    bits += 8
+    while (bits >= 5) {
+      output += RECOVERY_ALPHABET[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  return `RK1-${output.match(/.{1,4}/g)?.join('-') ?? output}`
+}
+
+export function normalizeRecoveryKey(recoveryKey: string): string {
+  return recoveryKey
+    .trim()
+    .toUpperCase()
+    .replaceAll(/[^0-9A-Z]/g, '')
+}
+
+export function recoveryKeySha256(recoveryKey: string): string {
+  return createHash('sha256')
+    .update(normalizeRecoveryKey(recoveryKey))
+    .digest('hex')
+}
+
+export function recoveryKeyMatches(
+  recoveryKey: string,
+  storedSha256Hex: string,
+): boolean {
+  const candidate = Buffer.from(recoveryKeySha256(recoveryKey), 'hex')
+  const stored = Buffer.from(storedSha256Hex, 'hex')
+  if (candidate.byteLength !== stored.byteLength) return false
+  return timingSafeEqual(candidate, stored)
+}
+
+export async function hashUserPassword(password: string): Promise<string> {
+  if (password.length < 8) throw new CryptoError('PASSWORD_TOO_SHORT')
+  return await argon2id({
+    password,
+    salt: randomBytes(16),
+    memorySize: DEFAULT_ARGON2ID.memoryKib,
+    iterations: DEFAULT_ARGON2ID.iterations,
+    parallelism: DEFAULT_ARGON2ID.parallelism,
+    hashLength: 32,
+    outputType: 'encoded',
+  })
+}
+
+// Bilinmeyen kullanıcı adlarında zamanlama sızıntısını dengelemek için sabit
+// bir dummy hash'e karşı doğrulama yapılır (parola: rastgele, erişilemez).
+const TIMING_EQUALIZATION_HASH =
+  '$argon2id$v=19$m=65536,t=3,p=1$q83vASNFZ4mrze8BI0VniQ$' +
+  '5eDlyZ0IY0N9E5mLM2GAsuc9uEC7GD4XQGhoJnwwHVE'
+
+export async function verifyUserPassword(
+  password: string,
+  encodedHash: string | null,
+): Promise<boolean> {
+  const target = encodedHash ?? TIMING_EQUALIZATION_HASH
+  let matches = false
+  try {
+    matches = await argon2Verify({ password, hash: target })
+  } catch {
+    matches = false
+  }
+  return encodedHash === null ? false : matches
+}
+
+export function wrapContentKey(
+  contentKey: Uint8Array,
+  kek: Uint8Array,
+  scope: UserContentKeyScope,
+): WrappedContentKeyV1 {
+  if (contentKey.byteLength !== 32) throw new CryptoError('INVALID_CONTENT_KEY')
+  if (kek.byteLength !== 32) throw new CryptoError('INVALID_USER_KEK')
+  const nonce = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', Buffer.from(kek), nonce)
+  cipher.setAAD(contentKeyContext(scope))
+  const ciphertext = Buffer.concat([
+    cipher.update(Buffer.from(contentKey)),
+    cipher.final(),
+  ])
+  return {
+    formatVersion: USER_CONTENT_KEY_FORMAT_VERSION,
+    algorithm: 'AES-256-GCM',
+    nonce: nonce.toString('base64'),
+    authenticationTag: cipher.getAuthTag().toString('base64'),
+    ciphertext: ciphertext.toString('base64'),
+  }
+}
+
+export function unwrapContentKey(
+  wrapped: WrappedContentKeyV1,
+  kek: Uint8Array,
+  scope: UserContentKeyScope,
+): Buffer {
+  if (
+    wrapped.formatVersion !== USER_CONTENT_KEY_FORMAT_VERSION ||
+    wrapped.algorithm !== 'AES-256-GCM'
+  )
+    throw new CryptoError('CONTENT_KEY_FORMAT_INVALID')
+  if (kek.byteLength !== 32) throw new CryptoError('INVALID_USER_KEK')
+  try {
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      Buffer.from(kek),
+      Buffer.from(wrapped.nonce, 'base64'),
+    )
+    decipher.setAAD(contentKeyContext(scope))
+    decipher.setAuthTag(Buffer.from(wrapped.authenticationTag, 'base64'))
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(wrapped.ciphertext, 'base64')),
+      decipher.final(),
+    ])
+    if (plaintext.byteLength !== 32)
+      throw new CryptoError('INVALID_CONTENT_KEY')
+    return plaintext
+  } catch (error) {
+    if (error instanceof CryptoError) throw error
+    throw new CryptoError('CONTENT_KEY_UNWRAP_FAILED')
+  }
+}
+
+// Kullanıcının çözülmüş content key'ini KEK olarak kullanan KmsProvider.
+// EnvelopeEncryption'a değişiklik gerektirmeden mevcut DEK zincirine bağlanır.
+export class UserContentKmsProvider implements KmsProvider {
+  readonly name = 'user-content-key'
+  readonly production = true
+  readonly #key: Buffer
+  readonly #keyVersion: string
+
+  constructor(contentKey: Uint8Array, keyVersion: string) {
+    if (contentKey.byteLength !== 32)
+      throw new CryptoError('INVALID_CONTENT_KEY')
+    this.#key = Buffer.from(contentKey)
+    this.#keyVersion = keyVersion
+  }
+
+  async currentKeyVersion(): Promise<string> {
+    return this.#keyVersion
+  }
+
+  async wrapKey(
+    scope: WorkspaceSecurityScope,
+    plaintextDek: Uint8Array,
+    keyVersion: string,
+  ): Promise<WrappedKey> {
+    if (keyVersion !== this.#keyVersion)
+      throw new CryptoError('KMS_KEY_REVOKED_OR_MISSING')
+    const nonce = randomBytes(12)
+    const cipher = createCipheriv('aes-256-gcm', this.#key, nonce)
+    cipher.setAAD(workspaceContext(scope))
+    const ciphertext = Buffer.concat([
+      cipher.update(Buffer.from(plaintextDek)),
+      cipher.final(),
+    ])
+    return {
+      provider: this.name,
+      keyId: 'user-content-key',
+      keyVersion,
+      ciphertext: Buffer.concat([
+        nonce,
+        cipher.getAuthTag(),
+        ciphertext,
+      ]).toString('base64'),
+    }
+  }
+
+  async unwrapKey(
+    scope: WorkspaceSecurityScope,
+    wrapped: WrappedKey,
+  ): Promise<Uint8Array> {
+    if (wrapped.provider !== this.name)
+      throw new CryptoError('KMS_KEY_SUBSTITUTION_DENIED')
+    // keyVersion burada KEK sargı jenerasyonunu izler (parola/recovery
+    // rotasyonunda artar); content key'in kendisi değişmez. Eski jenerasyonla
+    // yazılmış zarflar recovery sonrası da açılabilmelidir; bu yüzden sürüm
+    // eşitliği dayatılmaz — GCM auth tag'i yanlış anahtarı zaten reddeder.
+    const raw = Buffer.from(wrapped.ciphertext, 'base64')
+    if (raw.byteLength < 29) throw new CryptoError('WRAPPED_KEY_TOO_SHORT')
+    try {
+      const decipher = createDecipheriv(
+        'aes-256-gcm',
+        this.#key,
+        raw.subarray(0, 12),
+      )
+      decipher.setAAD(workspaceContext(scope))
+      decipher.setAuthTag(raw.subarray(12, 28))
+      return Buffer.concat([
+        decipher.update(raw.subarray(28)),
+        decipher.final(),
+      ])
+    } catch {
+      throw new CryptoError('WRAPPED_KEY_AUTHENTICATION_FAILED')
+    }
+  }
+
+  async revokeWorkspace(): Promise<void> {
+    this.#key.fill(0)
+  }
+}
+
+export interface ContentKeyLeaseAudit {
+  scope: WorkspaceSecurityScope
+  userId: string
+  action: 'secret.lease_issued' | 'secret.lease_revoked'
+  leaseId: string
+}
+
+export interface ContentKeyLease {
+  leaseId: string
+  scope: WorkspaceSecurityScope
+  userId: string
+  keyVersion: string
+  expiresAt: number
+}
+
+// Login'de çözülen content key'lerin bellek-içi lease yöneticisi. Anahtarlar
+// hiçbir zaman diske yazılmaz; expiry veya revoke'ta sıfırlanır.
+export class ContentKeyLeaseManager {
+  readonly #leases = new Map<string, ContentKeyLease & { contentKey: Buffer }>()
+  readonly #ttlMs: number
+  readonly #now: () => number
+  readonly #audit: (event: ContentKeyLeaseAudit) => void
+
+  constructor(options: {
+    ttlMs: number
+    now?: () => number
+    audit?: (event: ContentKeyLeaseAudit) => void
+  }) {
+    if (!Number.isFinite(options.ttlMs) || options.ttlMs <= 0)
+      throw new CryptoError('INVALID_CONTENT_KEY_LEASE_TTL')
+    this.#ttlMs = options.ttlMs
+    this.#now = options.now ?? Date.now
+    this.#audit = options.audit ?? (() => {})
+  }
+
+  issue(input: {
+    scope: WorkspaceSecurityScope
+    userId: string
+    keyVersion: string
+    contentKey: Uint8Array
+  }): ContentKeyLease {
+    if (input.contentKey.byteLength !== 32)
+      throw new CryptoError('INVALID_CONTENT_KEY')
+    this.revoke(input.scope.workspaceId)
+    const lease = {
+      leaseId: `ckl_${randomUUID()}`,
+      scope: input.scope,
+      userId: input.userId,
+      keyVersion: input.keyVersion,
+      expiresAt: this.#now() + this.#ttlMs,
+      contentKey: Buffer.from(input.contentKey),
+    }
+    this.#leases.set(input.scope.workspaceId, lease)
+    this.#audit({
+      scope: input.scope,
+      userId: input.userId,
+      action: 'secret.lease_issued',
+      leaseId: lease.leaseId,
+    })
+    const { contentKey: _contentKey, ...publicLease } = lease
+    return publicLease
+  }
+
+  acquire(
+    workspaceId: string,
+  ): (ContentKeyLease & { contentKey: Buffer }) | null {
+    const lease = this.#leases.get(workspaceId)
+    if (!lease) return null
+    if (lease.expiresAt <= this.#now()) {
+      this.revoke(workspaceId)
+      return null
+    }
+    lease.expiresAt = this.#now() + this.#ttlMs
+    return lease
+  }
+
+  revoke(workspaceId: string): boolean {
+    const lease = this.#leases.get(workspaceId)
+    if (!lease) return false
+    lease.contentKey.fill(0)
+    this.#leases.delete(workspaceId)
+    this.#audit({
+      scope: lease.scope,
+      userId: lease.userId,
+      action: 'secret.lease_revoked',
+      leaseId: lease.leaseId,
+    })
+    return true
+  }
+
+  revokeAll(): void {
+    for (const workspaceId of [...this.#leases.keys()]) this.revoke(workspaceId)
+  }
 }

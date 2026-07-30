@@ -41,6 +41,62 @@ read_env() {
 
 gen_secret() { openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_'; }
 
+# --- WP38: base-path (subpath) yardımcıları (ADR-0038) ------------------------
+
+normalize_base_path() {
+  # $1: ham değer — normalize edilmiş base path'i basar (boş = kök).
+  # Kurallar: başta '/', sonda '/' yok, segmentler [A-Za-z0-9._~-], '.'/'..'
+  # yasak, uygulama-rezerve kökleriyle çakışma yasak. Geçersizse 1 döner.
+  local raw="${1:-}"
+  raw="${raw%/}"
+  if [ -z "${raw}" ]; then
+    printf ''
+    return 0
+  fi
+  case "${raw}" in
+  //* | */) return 1 ;;
+  /*) : ;;
+  *) return 1 ;;
+  esac
+  local segment
+  local IFS='/'
+  for segment in ${raw#/}; do
+    [ -n "${segment}" ] || return 1
+    case "${segment}" in
+    . | ..) return 1 ;;
+    *[!A-Za-z0-9._~-]*) return 1 ;;
+    esac
+  done
+  case "${raw}" in
+  /v1 | /v1/* | /healthz | /readyz | /assets | /assets/* | /events | /events/*) return 1 ;;
+  esac
+  printf '%s' "${raw}"
+}
+
+effective_base_path() {
+  # Bayrak/env verilmişse onu, yoksa kurulu env dosyasındaki değeri normalize
+  # eder; geçersiz değerde 1 döner (çağıran fail-closed davranır).
+  local raw=""
+  if [ -n "${SELF_HOSTED_BASE_PATH+x}" ]; then
+    raw="${SELF_HOSTED_BASE_PATH}"
+  elif [ -f "$(env_file)" ]; then
+    raw="$(read_env SELF_HOSTED_BASE_PATH)"
+  fi
+  normalize_base_path "${raw}"
+}
+
+product_image_tag() {
+  # $1: source commit, $2: normalize base path — kökte tag değişmez; base'li
+  # kurulumda base slug'ı eklenir ki base değişikliği yeni build tetiklesin.
+  local commit="$1" base="${2:-}"
+  if [ -n "${base}" ]; then
+    printf 'persistent-self-hosted-product:%s-%s' "${commit}" \
+      "$(printf '%s' "${base#/}" | tr '/' '-')"
+  else
+    printf 'persistent-self-hosted-product:%s' "${commit}"
+  fi
+}
+
 ensure_dirs() {
   umask 077
   mkdir -p "$(config_dir)/tls" "$(secrets_dir)" "$(backups_dir)" "$(state_dir)"
@@ -90,11 +146,14 @@ labeled_resources() {
 
 wait_public_ready() {
   # $1: public origin, $2: deneme sayısı — /readyz 'ready' dönene dek bekler.
-  local origin="$1" attempts="${2:-60}" insecure=()
+  # WP38: base-path'li kurulumda readiness base altından doğrulanır (kök
+  # /readyz ayrıca korunur; eski env dosyalarında anahtar yoksa base boştur).
+  local origin="$1" attempts="${2:-60}" insecure=() base=""
+  base="$(read_env SELF_HOSTED_BASE_PATH)"
   [ "$(read_env SELF_HOSTED_TLS_MODE)" != "acme" ] && insecure=(-k)
   local i
   for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS --max-time 5 "${insecure[@]}" "${origin}/readyz" >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 "${insecure[@]}" "${origin}${base}/readyz" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
@@ -106,13 +165,14 @@ release_state_file() { printf '%s/current-release.env' "$(state_dir)"; }
 previous_release_file() { printf '%s/previous-release.env' "$(state_dir)"; }
 
 write_release_state() {
-  # $1: source commit — mevcut sürümü state'e yazar, öncekini saklar.
+  # $1: source commit, $2: product imaj referansı (WP38: base'li kurulumda tag
+  # slug içerir) — mevcut sürümü state'e yazar, öncekini saklar.
   if [ -f "$(release_state_file)" ]; then
     cp "$(release_state_file)" "$(previous_release_file)"
   fi
   {
     printf 'SELF_HOSTED_SOURCE_COMMIT=%s\n' "$1"
-    printf 'SELF_HOSTED_PRODUCT_IMAGE=persistent-self-hosted-product:%s\n' "$1"
+    printf 'SELF_HOSTED_PRODUCT_IMAGE=%s\n' "${2:-persistent-self-hosted-product:$1}"
   } >"$(release_state_file)"
   chmod 600 "$(release_state_file)"
 }

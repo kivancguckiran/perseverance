@@ -3,7 +3,14 @@ if (mode === 'timeout') setInterval(() => {}, 1000)
 else if (mode === 'bytes') console.log('x'.repeat(2048))
 else if (mode === 'lines')
   for (let index = 0; index < 5; index += 1) console.log('{}')
-else {
+else if (mode === 'cwd') {
+  console.log(
+    JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: process.cwd() },
+    }),
+  )
+} else {
   console.log(
     JSON.stringify({
       type: 'item.completed',

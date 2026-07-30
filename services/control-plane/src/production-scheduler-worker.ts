@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import {
   ProductionTelemetry,
@@ -33,6 +34,54 @@ import {
   CodexAppServerClient,
   createIsolatedCodexHome,
 } from '@persistent-codex/workspace-agent'
+import {
+  decryptUserContent,
+  encryptUserContent,
+  parseUserContentEnvelope,
+  type UserContentKeyMaterial,
+} from './user-content-crypto'
+
+// WP37: workspace-agent, kullanıcı workspace'lerinin content key'ini
+// control-plane'in iç listener'ından alır (anahtar diske yazılmaz).
+export interface ContentKeyResolver {
+  resolve(scope: ProductionScope): Promise<UserContentKeyMaterial | null>
+}
+
+export class HttpContentKeyResolver implements ContentKeyResolver {
+  readonly #endpoint: string
+  readonly #token: string
+
+  constructor(endpoint: string, token: string) {
+    this.#endpoint = endpoint.replace(/\/$/, '')
+    this.#token = token
+  }
+
+  async resolve(
+    scope: ProductionScope,
+  ): Promise<UserContentKeyMaterial | null> {
+    const response = await fetch(
+      `${this.#endpoint}/internal/v1/content-key-leases`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.#token}`,
+        },
+        body: JSON.stringify({ workspaceId: scope.workspaceId }),
+      },
+    )
+    if (response.status === 404) return null
+    if (!response.ok) throw new Error('CONTENT_KEY_SERVICE_UNAVAILABLE')
+    const body = (await response.json()) as {
+      contentKey: string
+      keyVersion: string
+    }
+    return {
+      contentKey: Buffer.from(body.contentKey, 'base64'),
+      keyVersion: body.keyVersion,
+    }
+  }
+}
 
 export interface ProductionSchedulerWorkerOptions {
   ownerId: string
@@ -52,6 +101,7 @@ export interface ProductionSchedulerWorkerOptions {
   billing: BillingPostgresRepository
   telemetry?: ProductionTelemetry
   telemetryExporter?: OtlpHttpExporter
+  contentKeys?: ContentKeyResolver
 }
 
 export class ProductionSchedulerWorker {
@@ -251,9 +301,28 @@ export class ProductionSchedulerWorker {
         setTimeout(resolve, this.options.runtimeHoldMs),
       )
       await fence()
-      const prompt = new TextDecoder().decode(
-        await this.options.objectStore.get(stored.promptObjectKey),
+      const promptBytes = await this.options.objectStore.get(
+        stored.promptObjectKey,
       )
+      // WP37: envelope-şifreli prompt yalnız content key lease'i ile açılır;
+      // lease yoksa run fail-closed düşer (düz metin fallback yoktur).
+      const promptEnvelope = parseUserContentEnvelope(promptBytes)
+      let userContentKey: UserContentKeyMaterial | null = null
+      let prompt: string
+      if (promptEnvelope) {
+        if (!this.options.contentKeys) throw new Error('CONTENT_KEY_LOCKED')
+        userContentKey = await this.options.contentKeys.resolve(scope)
+        if (!userContentKey) throw new Error('CONTENT_KEY_LOCKED')
+        prompt = new TextDecoder().decode(
+          await decryptUserContent(
+            userContentKey,
+            { ...scope, recordType: 'prompt', recordId: stored.runId },
+            promptEnvelope,
+          ),
+        )
+      } else {
+        prompt = new TextDecoder().decode(promptBytes)
+      }
       const isolatedHome = createIsolatedCodexHome({
         ...(this.options.codexProvisioningSource
           ? { sourceHome: this.options.codexProvisioningSource }
@@ -357,8 +426,20 @@ export class ProductionSchedulerWorker {
         const outputObjectKey = `${scope.tenantId}/${scope.organizationId}/${scope.workspaceId}/runs/${stored.runId}/output`
         await this.options.objectStore.put(
           outputObjectKey,
-          outputBytes,
-          'text/plain; charset=utf-8',
+          userContentKey
+            ? await encryptUserContent(
+                userContentKey,
+                {
+                  ...scope,
+                  recordType: 'model_output',
+                  recordId: stored.runId,
+                },
+                outputBytes,
+              )
+            : outputBytes,
+          userContentKey
+            ? 'application/json; charset=utf-8'
+            : 'text/plain; charset=utf-8',
         )
         await append('agent.message.completed', {
           runId: stored.runId,
@@ -539,6 +620,14 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
         }
       : {}),
     runtimeTimeoutMs: Number(env.SCHEDULER_RUNTIME_TIMEOUT_MS ?? 180_000),
+    ...(env.CONTENT_KEY_SERVICE_URL && env.INTERNAL_RUNTIME_TOKEN_FILE
+      ? {
+          contentKeys: new HttpContentKeyResolver(
+            env.CONTENT_KEY_SERVICE_URL,
+            readFileSync(env.INTERNAL_RUNTIME_TOKEN_FILE, 'utf8').trim(),
+          ),
+        }
+      : {}),
     telemetry,
     ...(env.OTEL_EXPORTER_OTLP_ENDPOINT
       ? {

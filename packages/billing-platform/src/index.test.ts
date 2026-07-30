@@ -3,6 +3,7 @@ import {
   DeterministicBillingEmulator,
   evaluateAdmission,
   normalizeBillingWebhookPayload,
+  requiresPrepaidCredits,
   type CommercialPolicySnapshot,
 } from './index.js'
 
@@ -114,6 +115,14 @@ describe('commercial admission', () => {
         constrained,
       ),
     ).toMatchObject({ outcome: 'deny', reason: 'HARD_LIMIT_CORPUS_BYTE' })
+  })
+})
+
+describe('prepaid credit policy', () => {
+  it('does not reserve platform credits for BYOK plans', () => {
+    expect(requiresPrepaidCredits('byok')).toBe(false)
+    expect(requiresPrepaidCredits('platform_managed')).toBe(true)
+    expect(requiresPrepaidCredits('hybrid')).toBe(true)
   })
 })
 

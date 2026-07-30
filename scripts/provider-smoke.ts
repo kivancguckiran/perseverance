@@ -83,7 +83,7 @@ const Adapter =
 const smokeRoot =
   provider === 'cursor'
     ? mkdtempSync(join(tmpdir(), 'cursor-provider-smoke-'))
-    : '/private/tmp'
+    : tmpdir()
 if (provider === 'cursor') {
   mkdirSync(join(smokeRoot, '.cursor'))
   writeFileSync(join(smokeRoot, 'README.md'), '# Cursor provider smoke\n')

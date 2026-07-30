@@ -134,6 +134,25 @@ Resume başarısızlığı thread’i değiştirmez; `THREAD_NOT_RESUMABLE` ve r
 pnpm --filter @persistent-codex/workspace-agent smoke:real-recovery
 ```
 
+## Mahremiyet tehdit modeli ve bilinen sınırlar (WP37)
+
+Self-hosted kurulumda her kullanıcının konuşma içeriği (prompt ve model
+çıktısı), parolasından türetilen ve sunucu diskine asla yazılmayan bir
+anahtarla şifrelenir (ADR-0037). Garanti **at-rest** içindir: makinede root
+erişimi olan operatör dahil hiç kimse, kullanıcının parolası (veya kayıtta bir
+kez gösterilen recovery key'i) olmadan o kullanıcının konuşma geçmişini
+diskten, veritabanından, `pg_dump` çıktısından veya yedekten okuyamaz; kanıt
+gate'i `pnpm wp37:privacy`'dir. Bilinen ve bilinçli sınırlar:
+
+- Sistem çalışırken düz metin ve anahtarlar bellekte işlenir; runtime bellek
+  erişimine, iç ağ trafiğini dinleyen root'a veya ürün kodunu kötü niyetle
+  değiştiren operatöre karşı garanti verilmez.
+- Workspace çalışma dizini (agent'ın ürettiği dosyalar) şifreleme kapsamı
+  dışındadır; kapsam konuşma içeriğidir.
+- Parola ve recovery key birlikte kaybolursa veri kurtarılamaz; operatör
+  kurtarma anahtarı bilinçli olarak yoktur ve hesap yalnız crypto-erase ile
+  sıfırlanabilir.
+
 ## Lisans, güvenlik ve destek
 
 Bu repository **GNU AGPL-3.0-only** lisanslıdır; karar ve gerekçeler

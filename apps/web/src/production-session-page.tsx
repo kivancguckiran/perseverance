@@ -98,7 +98,8 @@ export function ProductionSessionPage({ sessionId }: { sessionId: string }) {
     let timer: number | undefined
     const connect = () => {
       if (!active) return
-      const url = new URL('/v1/realtime', apiBaseUrl)
+      // WP38: kök-mutlak path apiBaseUrl'deki base'i düşürür — string birleştir.
+      const url = new URL(`${apiBaseUrl}/v1/realtime`)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(url)
       setRealtime('connecting')
