@@ -10,6 +10,57 @@ desteklenmez (bkz. [NOTICE](NOTICE) ve
 
 Bu repository'nin mimari doğruluk kaynağı [tasarım spesifikasyonudur](docs/architecture/perseverance-tasarim-spesifikasyonu.md). Ürünün çekirdeği terminal çıktısını ekran kazıyarak taklit etmez; her izole workspace içinde gerçek `codex app-server` çalıştırır ve sürüme bağlı olayları kararlı platform olaylarına normalize eder.
 
+## Why this exists
+
+Perseverance is a personal, purely vibe-coded project that I built for my
+own daily use. I wanted a persistent workspace where agents can keep working,
+retain context, surface approvals, and remain reachable when I am away from
+the desktop.
+
+Today, capable coding agents are still largely bound to their desktop apps.
+Dispatch-style and mobile solutions are useful, but they do not yet give me
+the same continuity, visibility, and ease of use as a durable workspace. This
+project is my attempt to fill that gap.
+
+Perseverance is free to use, including for personal use, under the
+[GNU AGPL-3.0-only license](LICENSE). It is not restricted to personal use,
+but there is no commercial hosted service, warranty, SLA, or promise that it
+will fit anyone else's workflow. It is a self-hosted tool shared in the hope
+that it may also be useful to others.
+
+## Vibe-coded, command-accepted
+
+The implementation was developed with coding agents, but work packages were
+not accepted on an agent's claim that the work was complete. Development
+progressed through explicit work packages up to WP39. Each package defined its
+scope, architectural and security invariants, required commands, acceptance
+criteria, evidence, and cleanup obligations.
+
+The governing process is documented in the
+[Work Package Management Protocol](docs/planning/work-package-management.md).
+The final release and project closure are recorded in the
+[WP39 delivery report](wp39-teslimat-raporu.md) and
+[project closure plan](docs/planning/project-closure-plan.md).
+
+Acceptance is command-driven and fail-closed. The main release gates include:
+
+```bash
+pnpm verify                       # format, types, tests, build, SSR smoke
+pnpm release:public-preflight     # secrets, licenses, SBOM, clean checkout
+pnpm wp29:reproducible-build      # reproducible application artifacts
+pnpm wp29:sbom                    # artifact and image SBOMs
+pnpm wp29:signatures              # cosign signatures and SLSA provenance
+pnpm wp29:security-scans          # gitleaks, Semgrep, Trivy and policy gates
+pnpm wp32:test                    # self-hosted distribution invariants
+pnpm wp37:privacy                 # at-rest conversation privacy boundary
+```
+
+The `v1.0.0` release was also exercised from a clean public checkout and in a
+real ARM64 Linux environment. Release artifacts carry checksums, cosign
+signatures, provenance, a trust policy, and a source-commit manifest. The
+[public release checklist](docs/operations/public-release-checklist.md)
+describes the complete acceptance and publication path.
+
 ## v1.0 destek sınırı
 
 **Desteklenen dağıtım modeli self-hosted kurulumdur.** `cloud` profili ve
