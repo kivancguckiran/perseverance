@@ -6,8 +6,9 @@
 #     --domain workspace.example.com --acme-email admin@example.com
 #   (opsiyonel: --base-path /workspace — reverse-proxy alt-path'i, ADR-0038)
 #
-# Komutlar: preflight | install | status | admin-token | codex-login | backup |
-#           restore | upgrade | rollback | uninstall | verify-release |
+# Komutlar: preflight | install | status | admin-token | codex-login |
+#           workspace-import | backup | restore | upgrade | rollback |
+#           uninstall | verify-release |
 #           list-users | disable-user | reset-user --crypto-erase |
 #           set-allowed-users (WP37 kullanıcı yönetimi)
 # Tüm komutlar non-interactive'dir ve her eksikte actionable hata ile fail-closed
@@ -181,7 +182,7 @@ cmd_verify_release() {
   node_image="$(sed -n 's/^SELF_HOSTED_NODE_IMAGE=//p' "${SELF_HOSTED_SCRIPT_DIR}/images.env")"
 
   for required_file in SHA256SUMS release-manifest.json trust-policy.json \
-    provenance.intoto.json cosign.pub; do
+    provenance.intoto.json cosign.pub self-hosted-dist.tar; do
     [ -f "${bundle}/${required_file}" ] ||
       fail "bundle eksik: ${required_file} (imzalı release bundle'ı wp29 hattıyla üretilmelidir)"
   done
@@ -191,17 +192,21 @@ cmd_verify_release() {
     fail "SHA256SUMS doğrulaması başarısız — bundle bütünlüğü bozuk"
 
   log "cosign imzaları doğrulanıyor"
-  local signed
-  for signed in "${bundle}"/*.sig; do
-    [ -e "${signed}" ] || fail "bundle'da .sig imzası yok"
-    local target="${signed%.sig}"
+  local _digest target
+  while read -r _digest target; do
+    target="${target#\*}"
+    case "${target}" in
+    "" | */* | "." | "..") fail "SHA256SUMS içinde güvensiz artifact adı: ${target:-<boş>}" ;;
+    esac
+    [ -f "${bundle}/${target}" ] || fail "checksum artifact'i eksik: ${target}"
+    [ -f "${bundle}/${target}.sig" ] || fail "artifact imzası eksik: ${target}.sig"
     docker run --rm -v "${bundle}:/work:ro" "${cosign_image}" \
       verify-blob --insecure-ignore-tlog \
       --key /work/cosign.pub \
-      --signature "/work/$(basename "${signed}")" \
-      "/work/$(basename "${target}")" >/dev/null 2>&1 ||
-      fail "cosign imza doğrulaması başarısız: $(basename "${target}")"
-  done
+      --signature "/work/${target}.sig" \
+      "/work/${target}" >/dev/null 2>&1 ||
+      fail "cosign imza doğrulaması başarısız: ${target}"
+  done <"${bundle}/SHA256SUMS"
 
   log "trust policy ve provenance doğrulanıyor"
   docker run --rm -v "${bundle}:/work:ro" "${node_image}" node -e '
@@ -215,7 +220,18 @@ cmd_verify_release() {
     assert(Date.parse(policy.validUntil) > Date.now(), "trust policy süresi dolmuş")
     assert(policy.repository === "perseverance", "repository uyuşmazlığı")
     assert(policy.sourceCommit === manifest.sourceCommit, "sourceCommit uyuşmazlığı")
+    assert(policy.releaseVersion === manifest.releaseVersion, "releaseVersion uyuşmazlığı")
     assert(provenance.predicateType === "https://slsa.dev/provenance/v1", "provenance predicateType")
+    assert(Array.isArray(manifest.platforms) && manifest.platforms.length > 0,
+      "manifest platformları eksik")
+    const artifactNames = new Set((manifest.artifacts ?? []).map((artifact) => artifact.name))
+    assert(artifactNames.has("self-hosted-dist.tar"), "source distribution eksik")
+    for (const platform of manifest.platforms) {
+      const suffix = platform === "linux/amd64" ? "linux-amd64"
+        : platform === "linux/arm64" ? "linux-arm64" : null
+      assert(suffix && artifactNames.has(`product-${suffix}.tar`),
+        "platform product artifact eksik: " + platform)
+    }
     const sums = Object.fromEntries(
       readFileSync("/work/SHA256SUMS", "utf8").trim().split("\n")
         .map((line) => line.split(/\s+\*?/)).map(([digest, name]) => [name, digest]),
@@ -227,6 +243,32 @@ cmd_verify_release() {
   ' || fail "trust policy / provenance doğrulaması başarısız"
 
   log "release doğrulaması geçti: ${bundle}"
+}
+
+release_manifest_value() {
+  local bundle="$1" key="$2"
+  sed -n "s/^[[:space:]]*\"${key}\":[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" \
+    "${bundle}/release-manifest.json" | head -n 1
+}
+
+release_product_archive() {
+  local bundle="$1"
+  case "$(uname -m)" in
+  x86_64) printf '%s/product-linux-amd64.tar' "${bundle}" ;;
+  aarch64 | arm64) printf '%s/product-linux-arm64.tar' "${bundle}" ;;
+  *) fail "release product archive için desteklenmeyen mimari: $(uname -m)" ;;
+  esac
+}
+
+load_release_product_image() {
+  local bundle="$1" source_commit="$2" archive expected_image
+  archive="$(release_product_archive "${bundle}")"
+  [ -f "${archive}" ] || fail "bu mimari için product archive eksik: ${archive}"
+  expected_image="perseverance-self-hosted-product:${source_commit}"
+  log "imzalı release product imajı yükleniyor: $(basename "${archive}")"
+  docker load --input "${archive}" >/dev/null
+  docker image inspect "${expected_image}" >/dev/null 2>&1 ||
+    fail "release archive beklenen image tag'ini yüklemedi: ${expected_image}"
 }
 
 # ---------------------------------------------------------------------------
@@ -247,6 +289,14 @@ chown_runtime_secrets() {
       chownSync(file, 10001, 10001)
     }
   '
+}
+
+prepare_workspace_volume() {
+  # Named volume, eski image veya yarım kalmış kurulumdan root sahipliğiyle
+  # kalmış olabilir. Yalnız Perseverance'ın workspace-data volume'unda,
+  # servislerin çalıştığı sabit uid/gid 10001 sahipliğini idempotent uygula.
+  compose run --rm -T -u 0 ops-shell \
+    'mkdir -p /mnt/workspace-data && chown -R 10001:10001 /mnt/workspace-data'
 }
 
 generate_identity_keys() {
@@ -344,15 +394,19 @@ cmd_install() {
   ensure_dirs
   cmd_preflight pre-install
 
+  local source_commit
   if [ -n "${SELF_HOSTED_RELEASE_BUNDLE:-}" ]; then
     cmd_verify_release "${SELF_HOSTED_RELEASE_BUNDLE}"
+    SELF_HOSTED_RELEASE_BUNDLE="$(cd "${SELF_HOSTED_RELEASE_BUNDLE}" && pwd)"
+    source_commit="$(release_manifest_value "${SELF_HOSTED_RELEASE_BUNDLE}" sourceCommit)"
+    [[ "${source_commit}" =~ ^[0-9a-f]{40}$ ]] ||
+      fail "release manifest sourceCommit geçersiz: ${source_commit:-<boş>}"
   else
     log "release bundle verilmedi; kaynaktan kurulum (git worktree) doğrulanıyor"
     git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD >/dev/null 2>&1 ||
       fail "kaynak kurulumda repo checkout'u gerekli (veya SELF_HOSTED_RELEASE_BUNDLE verin)"
+    source_commit="$(git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD)"
   fi
-  local source_commit
-  source_commit="$(git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD 2>/dev/null || echo bundle)"
 
   # WP38: base path'i erken ve fail-closed çöz (bayrak > mevcut env > kök).
   local base_path
@@ -396,8 +450,13 @@ cmd_install() {
   render_caddyfile "$(read_env SELF_HOSTED_DOMAIN)" "$(read_env SELF_HOSTED_TLS_MODE)" \
     "${SELF_HOSTED_ACME_EMAIL:-}" "${base_path}"
 
-  log "product imajı build ediliyor (${product_image})"
-  if ! docker image inspect "${product_image}" >/dev/null 2>&1; then
+  log "workspace volume yazma izinleri hazırlanıyor"
+  prepare_workspace_volume
+
+  if [ -n "${SELF_HOSTED_RELEASE_BUNDLE:-}" ] && [ -z "${base_path}" ]; then
+    load_release_product_image "${SELF_HOSTED_RELEASE_BUNDLE}" "${source_commit}"
+  elif ! docker image inspect "${product_image}" >/dev/null 2>&1; then
+    log "product imajı kaynaktan build ediliyor (${product_image})"
     docker build \
       -f "${SELF_HOSTED_SCRIPT_DIR}/product.Dockerfile" \
       --build-arg "SELF_HOSTED_BASE_PATH=${base_path}" \
@@ -469,6 +528,58 @@ cmd_codex_login() {
   compose exec -T workspace-agent sh -c 'test -f /codex-home/auth.json' ||
     fail "login tamamlanmadı: /codex-home/auth.json oluşmadı"
   log "provider auth hazır"
+}
+
+# ---------------------------------------------------------------------------
+# Workspace repository import
+# ---------------------------------------------------------------------------
+
+cmd_workspace_import() {
+  [ -f "$(env_file)" ] || fail "kurulu bir stack yok (önce install)"
+  local candidate="" replace=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --replace) replace=1 ;;
+    *) [ -z "${candidate}" ] || fail "workspace-import yalnız tek kaynak dizin alır"
+      candidate="$1" ;;
+    esac
+    shift
+  done
+  [ -n "${candidate}" ] || fail "workspace-import <repository-dizini> [--replace] gerekli"
+  [ -d "${candidate}" ] || fail "repository dizini yok: ${candidate}"
+
+  local source_dir
+  source_dir="$(cd "${candidate}" && pwd -P)"
+  [ "${source_dir}" != / ] || fail "filesystem kökü workspace olarak import edilemez"
+  case "${source_dir}" in
+  *:* | *$'\n'*) fail "repository path ':' veya newline içeremez" ;;
+  esac
+  [ -e "${source_dir}/.git" ] ||
+    fail "workspace-import gerçek bir Git worktree bekler (.git bulunamadı): ${source_dir}"
+
+  if [ "${replace}" != 1 ]; then
+    compose run --rm -T ops-shell \
+      'test -z "$(find /mnt/workspace-data -mindepth 1 -print -quit)"' ||
+      fail "workspace boş değil; mevcut veriyi bilinçli değiştirmek için --replace kullanın"
+  fi
+
+  log "repository workspace volume'una import ediliyor: ${source_dir}"
+  compose run --rm -T -u 0 \
+    -v "${source_dir}:/import:ro" \
+    ops-shell "
+      set -eu
+      if [ '${replace}' = 1 ]; then
+        find /mnt/workspace-data -mindepth 1 -delete
+      fi
+      tar -C /import -cf /tmp/workspace-import.tar .
+      tar -C /mnt/workspace-data -xf /tmp/workspace-import.tar
+      rm -f /tmp/workspace-import.tar
+      chown -R 10001:10001 /mnt/workspace-data
+    "
+
+  compose exec -T workspace-agent sh -c \
+    'test -w /workspace && git -C /workspace rev-parse --is-inside-work-tree >/dev/null'
+  log "workspace import tamam; repository agent tarafından yazılabilir ve Git worktree olarak doğrulandı"
 }
 
 # ---------------------------------------------------------------------------
@@ -699,17 +810,22 @@ cmd_restore() {
 cmd_upgrade() {
   [ -f "$(env_file)" ] || fail "kurulu bir stack yok (önce install)"
   local new_commit current_commit
-  new_commit="$(git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD)" ||
-    fail "upgrade kaynak checkout'u gerektirir"
-  [ -z "$(git -C "${SELF_HOSTED_REPO_ROOT}" status --porcelain)" ] ||
-    fail "worktree temiz değil — upgrade yalnız temiz checkout'tan yapılır"
+  if [ -n "${SELF_HOSTED_RELEASE_BUNDLE:-}" ]; then
+    cmd_verify_release "${SELF_HOSTED_RELEASE_BUNDLE}"
+    SELF_HOSTED_RELEASE_BUNDLE="$(cd "${SELF_HOSTED_RELEASE_BUNDLE}" && pwd)"
+    new_commit="$(release_manifest_value "${SELF_HOSTED_RELEASE_BUNDLE}" sourceCommit)"
+    [[ "${new_commit}" =~ ^[0-9a-f]{40}$ ]] ||
+      fail "release manifest sourceCommit geçersiz: ${new_commit:-<boş>}"
+  else
+    new_commit="$(git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD)" ||
+      fail "upgrade kaynak checkout'u veya SELF_HOSTED_RELEASE_BUNDLE gerektirir"
+    [ -z "$(git -C "${SELF_HOSTED_REPO_ROOT}" status --porcelain)" ] ||
+      fail "worktree temiz değil — upgrade yalnız temiz checkout'tan yapılır"
+  fi
   current_commit="$(read_env SELF_HOSTED_SOURCE_COMMIT)"
   if [ "${new_commit}" = "${current_commit}" ]; then
     log "zaten bu sürümde: ${current_commit}"
     return 0
-  fi
-  if [ -n "${SELF_HOSTED_RELEASE_BUNDLE:-}" ]; then
-    cmd_verify_release "${SELF_HOSTED_RELEASE_BUNDLE}"
   fi
 
   log "upgrade öncesi otomatik yedek alınıyor"
@@ -732,12 +848,17 @@ cmd_upgrade() {
   local product_image
   product_image="$(product_image_tag "${new_commit}" "${base_path}")"
 
-  log "yeni product imajı build ediliyor: ${product_image}"
-  docker build \
-    -f "${SELF_HOSTED_SCRIPT_DIR}/product.Dockerfile" \
-    --build-arg "SELF_HOSTED_BASE_PATH=${base_path}" \
-    -t "${product_image}" \
-    "${SELF_HOSTED_REPO_ROOT}"
+  prepare_workspace_volume
+  if [ -n "${SELF_HOSTED_RELEASE_BUNDLE:-}" ] && [ -z "${base_path}" ]; then
+    load_release_product_image "${SELF_HOSTED_RELEASE_BUNDLE}" "${new_commit}"
+  else
+    log "yeni product imajı build ediliyor: ${product_image}"
+    docker build \
+      -f "${SELF_HOSTED_SCRIPT_DIR}/product.Dockerfile" \
+      --build-arg "SELF_HOSTED_BASE_PATH=${base_path}" \
+      -t "${product_image}" \
+      "${SELF_HOSTED_REPO_ROOT}"
+  fi
 
   update_env_value SELF_HOSTED_SOURCE_COMMIT "${new_commit}"
   update_env_value SELF_HOSTED_PRODUCT_IMAGE "${product_image}"
@@ -844,6 +965,7 @@ install) cmd_install ;;
 status) cmd_status ;;
 admin-token) cmd_admin_token ${ARGS[@]+"${ARGS[@]}"} ;;
 codex-login) cmd_codex_login ${ARGS[@]+"${ARGS[@]}"} ;;
+workspace-import) cmd_workspace_import ${ARGS[@]+"${ARGS[@]}"} ;;
 list-users) cmd_list_users ;;
 disable-user) cmd_disable_user ${ARGS[@]+"${ARGS[@]}"} ;;
 reset-user) cmd_reset_user ${ARGS[@]+"${ARGS[@]}"} ;;

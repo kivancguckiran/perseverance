@@ -40,12 +40,21 @@ LABEL org.opencontainers.image.title="perseverance-self-hosted-product" \
       org.opencontainers.image.description="Perseverance self-hosted product image (WP32)" \
       org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.created="2026-07-21T00:00:00Z"
+RUN apk add --no-cache \
+      bash=5.3.9-r1 \
+      git=2.54.0-r0 \
+      openssh-client-default=10.3_p1-r0 \
+      ripgrep=15.1.0-r0
 RUN addgroup -S workspace && adduser -S -G workspace -u 10001 workspace
 # WP36 gerçek-ortam bulgusu: codex-home named volume'u ilk mount'ta imajdaki
 # dizin sahipliğini devralır. Dizin imajda yokken root sahipliğiyle oluşuyor ve
 # uid 10001 ile koşan workspace-agent içindeki codex login /codex-home'a
 # yazamıyordu (gate'ler görmedi çünkü provider auth hep defer edilmişti).
-RUN mkdir -p /codex-home && chown 10001:10001 /codex-home
+# Aynı kural workspace-data volume'u için de geçerlidir: /workspace imajda
+# önceden 10001 sahipliğiyle bulunmazsa boş named volume root:root oluşur ve
+# gerçek agent turn'leri dosya yazamaz.
+RUN mkdir -p /codex-home /workspace \
+ && chown 10001:10001 /codex-home /workspace
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out ./
 COPY --chown=10001:10001 infra/self-hosted/web/self-hosted-web-server.mjs ./self-hosted-web-server.mjs

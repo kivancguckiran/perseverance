@@ -131,8 +131,10 @@ verify_pinned_image() {
 }
 
 pinned_images() {
-  # images.env içindeki üçüncü parti imaj referanslarını (cosign hariç) listeler.
-  sed -n 's/^SELF_HOSTED_[A-Z_]*_IMAGE=//p' "${SELF_HOSTED_SCRIPT_DIR}/images.env" |
+  # Runtime'ın ihtiyaç duyduğu üçüncü parti imajları listeler. Release builder
+  # yalnız artifact üreten hostta gerekir; kurulum hostuna çekilmez.
+  sed -n '/^SELF_HOSTED_RELEASE_/d; s/^SELF_HOSTED_[A-Z_]*_IMAGE=//p' \
+    "${SELF_HOSTED_SCRIPT_DIR}/images.env" |
     grep '@sha256:'
 }
 

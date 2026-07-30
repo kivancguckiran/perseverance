@@ -5,8 +5,29 @@ için:
 
 ```bash
 bash infra/self-hosted/self-hosted.sh install \
-  --domain workspace.example.com --acme-email admin@example.com
+  --domain workspace.example.com --acme-email admin@example.com \
+  --provider-auth=defer
+bash infra/self-hosted/self-hosted.sh codex-login
+bash infra/self-hosted/self-hosted.sh workspace-import /path/to/repository
+bash infra/self-hosted/self-hosted.sh set-allowed-users "your-user"
 ```
+
+Runtime product imajı agent çalışması için `bash`, `git`, `rg` ve OpenSSH
+client içerir. Repository, root-owned boş volume yerine uid 10001'e ait kalıcı
+`workspace-data` volume'unda çalışır.
+
+İmzalı release bundle'ından checkout olmadan kurulum:
+
+```bash
+tar -xf self-hosted-dist.tar
+SELF_HOSTED_RELEASE_BUNDLE=/path/to/release-bundle \
+  bash infra/self-hosted/self-hosted.sh install \
+  --domain workspace.example.com --acme-email admin@example.com \
+  --provider-auth=defer
+```
+
+Kurucu host mimarisine uygun `product-linux-amd64.tar` veya
+`product-linux-arm64.tar` Docker imajını doğrulayıp `docker load` ile yükler.
 
 - Mimari kararlar: `docs/architecture/adr-0032-self-hosted-distribution.md`,
   `docs/architecture/adr-0037-user-accounts-passphrase-privacy.md` (WP37

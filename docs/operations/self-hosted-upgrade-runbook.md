@@ -14,21 +14,28 @@
 
 ## Adımlar
 
-1. Kaynak checkout'unu yeni sürüme getirin (veya yeni imzalı bundle'ı doğrulayın):
+1. Kaynak checkout'unu yeni sürüme getirin veya yeni imzalı bundle dizinini
+   hazırlayın:
 
    ```bash
    git fetch && git checkout <yeni-sürüm>   # worktree temiz olmalı
-   # bundle ile: SELF_HOSTED_RELEASE_BUNDLE=<dizin>  (verify-release otomatik koşar)
+   # bundle ile checkout/gitrepo gerekmez; verify-release otomatik koşar
    ```
 
 2. Upgrade'i çalıştırın:
 
    ```bash
+   # kaynak checkout'undan:
    bash infra/self-hosted/self-hosted.sh upgrade
+
+   # release bundle'ından:
+   SELF_HOSTED_RELEASE_BUNDLE=/path/to/release \
+     bash infra/self-hosted/self-hosted.sh upgrade
    ```
 
    Sırasıyla: otomatik ön-yedek → (varsa) bundle imza/provenance doğrulaması →
-   yeni product imajının build'i → `migrate` (uygulanmamış migration'lar; içeriği
+   yeni product imajının build'i veya mimariye uygun imzalı Docker image
+   archive'ının yüklenmesi → `migrate` (uygulanmamış migration'lar; içeriği
    değişmiş eski migration'da fail-closed) → servislerin yeni sürüme geçişi →
    public `/readyz` doğrulaması.
 

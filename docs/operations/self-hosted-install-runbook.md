@@ -20,7 +20,8 @@
 
 ```bash
 bash infra/self-hosted/self-hosted.sh install \
-  --domain workspace.example.com --acme-email admin@example.com
+  --domain workspace.example.com --acme-email admin@example.com \
+  --provider-auth=defer
 ```
 
 Kurulum sırasıyla şunları yapar; her adım fail-closed'dur:
@@ -32,7 +33,9 @@ Kurulum sırasıyla şunları yapar; her adım fail-closed'dur:
    yedek anahtarı ve identity RSA anahtarı. Tümü `${SELF_HOSTED_HOME}/secrets`
    altında 0600 izinlidir.
 4. Pinli imajların çekilip digest'lerinin doğrulanması (`images.env`).
-5. Product imajının kaynaktan deterministik build'i.
+5. Kaynak kurulumunda product imajının deterministik build'i; release bundle
+   kurulumunda host mimarisine uygun, imzası doğrulanmış Docker image
+   archive'ının yüklenmesi.
 6. Altyapı servisleri → tracking tablolu migration'lar → ilk admin bootstrap →
    uygulama servisleri.
 7. İç healthcheck'ler ve public origin üzerinden `/readyz` doğrulaması.
@@ -49,10 +52,32 @@ compose iç ağında kalır.
    bash infra/self-hosted/self-hosted.sh codex-login
    ```
 
-   Kurulum, provider auth hazır olmadan başarı raporlamaz; bilinçli ertelemek
-   için `--provider-auth=defer` verin ve daha sonra login olun.
+   İlk kurulumda henüz credential olmadığı için önerilen akış install
+   komutuna `--provider-auth=defer` vermek, hemen ardından login olmak ve tam
+   preflight çalıştırmaktır. `defer`, auth gereksinimini kaldırmaz; yalnız ilk
+   bootstrap sırasında bilinçli erteler.
 
-2. **Kullanıcı hesapları (WP37, son kullanıcı akışı)**: izinli kullanıcı
+2. **Workspace repository'si**: host'taki Git worktree'yi kalıcı
+   `workspace-data` volume'una import edin:
+
+   ```bash
+   bash infra/self-hosted/self-hosted.sh workspace-import /srv/my-repository
+   ```
+
+   Kaynak read-only mount edilir ve volume'a kopyalanır; agent `/workspace`
+   altında uid 10001 ile yazabilir. Komut gerçek bir Git worktree bekler ve
+   dolu workspace'i varsayılan olarak reddeder. Mevcut workspace içeriğini
+   bilinçli silip değiştirmek için:
+
+   ```bash
+   bash infra/self-hosted/self-hosted.sh workspace-import \
+     /srv/my-repository --replace
+   ```
+
+   `--replace` geri alınamaz bir volume değişikliğidir; önce `backup`
+   çalıştırın.
+
+3. **Kullanıcı hesapları (WP37, son kullanıcı akışı)**: izinli kullanıcı
    adlarını belirleyin ve kullanıcılar `https://<domain>/login` üzerinden
    kayıt olsun:
 
@@ -79,7 +104,7 @@ compose iç ağında kalır.
    bash infra/self-hosted/self-hosted.sh reset-user <ad> --crypto-erase
    ```
 
-3. **Admin oturumu (yalnız operatör/acil akışı; son kullanıcılar /login
+4. **Admin oturumu (yalnız operatör/acil akışı; son kullanıcılar /login
    kullanır)**: kısa ömürlü admin token'ı basın ve PWA'da oturuma enjekte
    edin:
 
@@ -99,8 +124,30 @@ compose iç ağında kalır.
    ardından sayfayı yenileyin. Admin öznesi kullanıcı organizasyonlarında üye
    değildir ve kullanıcıların şifreli içeriğini açamaz.
 
-4. **Tam doğrulama**: `bash infra/self-hosted/self-hosted.sh preflight`
+5. **Tam doğrulama**: `bash infra/self-hosted/self-hosted.sh preflight`
    (provider auth dahil) ve `bash infra/self-hosted/self-hosted.sh status`.
+
+## Checkout olmadan imzalı release bundle kurulumu
+
+Release dizini host mimarisi için `product-linux-amd64.tar` veya
+`product-linux-arm64.tar`, tam kaynak dağıtımı olan `self-hosted-dist.tar`,
+manifest, checksum, provenance, trust policy ve cosign imzalarını içerir.
+
+```bash
+mkdir perseverance-self-hosted
+tar -C perseverance-self-hosted -xf /path/to/release/self-hosted-dist.tar
+cd perseverance-self-hosted
+
+SELF_HOSTED_RELEASE_BUNDLE=/path/to/release \
+  bash infra/self-hosted/self-hosted.sh install \
+  --domain workspace.example.com --acme-email admin@example.com \
+  --provider-auth=defer
+```
+
+Kurucu bundle'ı fail-closed doğrular, manifestteki source commit'i kullanır ve
+kök path kurulumunda hazır product image'ını `docker load` ile yükler. Subpath
+web asset'leri build-time base path gerektirdiğinden `--base-path` verilirse
+bundle içindeki tam kaynaktan host üzerinde yeni product image build edilir.
 
 ## Reverse-proxy alt-path'i (subpath) altında kurulum (WP38)
 
@@ -185,6 +232,8 @@ Notlar:
 | `FAIL ports-80-443-free`          | Başka bir web sunucusu 80/443 kullanıyor; durdurun veya bind adreslerini değiştirin                        |
 | `public readiness doğrulanamadı`  | `docker compose ... logs proxy control-plane` inceleyin; ACME modunda Let's Encrypt erişimi gerekir        |
 | `provider auth henüz hazır değil` | `self-hosted.sh codex-login` çalıştırın                                                                    |
+| `workspace boş değil`             | Önce backup alın; bilinçli değiştirme için `workspace-import ... --replace` kullanın                       |
+| `product archive eksik`           | Host mimarisine uygun release artifact'ini (`linux-amd64`/`linux-arm64`) indirin                           |
 | Kayıt `500` / PostgreSQL `42501`  | Aday eskiyse güncelleyin; provisioning workspace insertinden önce transaction-local RLS scope bağlamalıdır |
 
 ## İlgili belgeler

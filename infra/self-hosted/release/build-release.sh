@@ -40,21 +40,55 @@ docker buildx version >/dev/null 2>&1 || fail "docker buildx gerekli (multi-arch
 [ -z "$(git -C "${REPO_ROOT}" status --porcelain)" ] ||
   fail "release yalnız temiz worktree'den üretilir"
 SOURCE_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
-RELEASE_VERSION=1.0.0
+RELEASE_VERSION="$(
+  sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "${REPO_ROOT}/package.json" | head -n 1
+)"
+[ -n "${RELEASE_VERSION}" ] || fail "package.json version okunamadı"
 SOURCE_DATE_EPOCH=1785369600
 export SOURCE_DATE_EPOCH
 
+[ ! -d "${OUTPUT}" ] || [ -z "$(find "${OUTPUT}" -mindepth 1 -print -quit)" ] ||
+  fail "release output dizini boş olmalı: ${OUTPUT}"
 mkdir -p "${OUTPUT}"
 OUTPUT="$(cd "${OUTPUT}" && pwd)"
 
-echo "[release] multi-arch product imajı build ediliyor (${PLATFORMS})"
-docker buildx build \
-  --platform "${PLATFORMS}" \
-  --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
-  -f "${SELF_HOSTED_DIR}/product.Dockerfile" \
-  -o "type=oci,dest=${OUTPUT}/product-oci.tar,tar=true" \
-  -t "perseverance-self-hosted-product:${SOURCE_COMMIT}" \
-  "${REPO_ROOT}"
+BUILDKIT_IMAGE="$(
+  sed -n 's/^SELF_HOSTED_RELEASE_BUILDKIT_IMAGE=//p' "${SELF_HOSTED_DIR}/images.env"
+)"
+[ -n "${BUILDKIT_IMAGE}" ] || fail "release BuildKit image pin'i eksik"
+BUILDER_NAME="perseverance-release-$$"
+cleanup_builder() {
+  docker buildx rm "${BUILDER_NAME}" >/dev/null 2>&1 || true
+}
+trap cleanup_builder EXIT
+docker buildx create --name "${BUILDER_NAME}" --driver docker-container \
+  --driver-opt "image=${BUILDKIT_IMAGE}" >/dev/null
+docker buildx inspect --builder "${BUILDER_NAME}" --bootstrap >/dev/null
+
+IFS=',' read -r -a PLATFORM_LIST <<<"${PLATFORMS}"
+PRODUCT_ARTIFACTS=()
+NORMALIZED_PLATFORMS=()
+for platform in "${PLATFORM_LIST[@]}"; do
+  case "${platform}" in
+  linux/amd64) suffix=linux-amd64 ;;
+  linux/arm64) suffix=linux-arm64 ;;
+  *) fail "desteklenmeyen release platformu: ${platform}" ;;
+  esac
+  artifact="product-${suffix}.tar"
+  echo "[release] product imajı build ediliyor (${platform} → ${artifact})"
+  docker buildx build \
+    --builder "${BUILDER_NAME}" \
+    --platform "${platform}" \
+    --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" \
+    -f "${SELF_HOSTED_DIR}/product.Dockerfile" \
+    -o "type=docker,dest=${OUTPUT}/${artifact}" \
+    -t "perseverance-self-hosted-product:${SOURCE_COMMIT}" \
+    "${REPO_ROOT}"
+  PRODUCT_ARTIFACTS+=("${artifact}")
+  NORMALIZED_PLATFORMS+=("${platform}")
+done
+[ "${#PRODUCT_ARTIFACTS[@]}" -gt 0 ] || fail "en az bir platform gerekli"
 
 echo "[release] kurulum bundle'ı paketleniyor"
 TAR_IMAGE="$(sed -n 's/^SELF_HOSTED_TAR_IMAGE=//p' "${SELF_HOSTED_DIR}/images.env")"
@@ -66,18 +100,23 @@ docker run --rm \
   "${TAR_IMAGE}" \
   tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
   -cf /out/self-hosted-dist.tar \
+  package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json \
+  apps agents packages services config \
   infra/self-hosted infra/postgres/migrations
 
 echo "[release] release-manifest.json üretiliyor"
 NODE_IMAGE="$(sed -n 's/^SELF_HOSTED_NODE_IMAGE=//p' "${SELF_HOSTED_DIR}/images.env")"
 docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
   -e "RELEASE_VERSION=${RELEASE_VERSION}" \
+  -e "ARTIFACT_NAMES=$(IFS=,; echo "${PRODUCT_ARTIFACTS[*]}"),self-hosted-dist.tar" \
+  -e "RELEASE_PLATFORMS=$(IFS=,; echo "${NORMALIZED_PLATFORMS[*]}")" \
   -e "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" "${NODE_IMAGE}" node -e '
   const { createHash } = require("node:crypto")
-  const { readFileSync, writeFileSync, readdirSync } = require("node:fs")
+  const { readFileSync, writeFileSync } = require("node:fs")
   const sha256 = (path) =>
     createHash("sha256").update(readFileSync(path)).digest("hex")
-  const artifacts = ["product-oci.tar", "self-hosted-dist.tar"].map((name) => ({
+  const names = process.env.ARTIFACT_NAMES.split(",").filter(Boolean)
+  const artifacts = names.map((name) => ({
     name,
     sha256: sha256(`/out/${name}`),
   }))
@@ -87,7 +126,7 @@ docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
     releaseVersion: process.env.RELEASE_VERSION,
     sourceCommit: process.env.SOURCE_COMMIT,
     sourceDateEpoch: Number(process.env.SOURCE_DATE_EPOCH),
-    platforms: ["linux/amd64", "linux/arm64"],
+    platforms: process.env.RELEASE_PLATFORMS.split(",").filter(Boolean),
     artifacts,
   }
   writeFileSync("/out/release-manifest.json", JSON.stringify(manifest, null, 2) + "\n")
@@ -111,7 +150,7 @@ docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
     },
   }
   writeFileSync("/out/provenance.intoto.json", JSON.stringify(provenance, null, 2) + "\n")
-  const validUntil = new Date((Number(process.env.SOURCE_DATE_EPOCH) + 90 * 24 * 3600) * 1000)
+  const validUntil = new Date((Number(process.env.SOURCE_DATE_EPOCH) + 5 * 365 * 24 * 3600) * 1000)
   writeFileSync("/out/trust-policy.json", JSON.stringify({
     repository: "perseverance",
     releaseVersion: process.env.RELEASE_VERSION,
@@ -121,16 +160,21 @@ docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
   }, null, 2) + "\n")
 '
 
-(cd "${OUTPUT}" && sha256sum product-oci.tar self-hosted-dist.tar \
-  release-manifest.json provenance.intoto.json trust-policy.json >SHA256SUMS)
+CHECKSUM_TARGETS=(
+  "${PRODUCT_ARTIFACTS[@]}"
+  self-hosted-dist.tar
+  release-manifest.json
+  provenance.intoto.json
+  trust-policy.json
+)
+(cd "${OUTPUT}" && sha256sum "${CHECKSUM_TARGETS[@]}" >SHA256SUMS)
 
 if [ -n "${COSIGN_KEY_FILE:-}" ]; then
   [ -n "${COSIGN_PUB_FILE:-}" ] || fail "COSIGN_KEY_FILE ile birlikte COSIGN_PUB_FILE gerekli"
   COSIGN_IMAGE="$(sed -n 's/^SELF_HOSTED_COSIGN_IMAGE=//p' "${SELF_HOSTED_DIR}/images.env")"
   cp "${COSIGN_PUB_FILE}" "${OUTPUT}/cosign.pub"
   echo "[release] cosign imzaları üretiliyor"
-  for artifact in product-oci.tar self-hosted-dist.tar release-manifest.json \
-    provenance.intoto.json trust-policy.json; do
+  for artifact in "${CHECKSUM_TARGETS[@]}"; do
     docker run --rm \
       -v "${OUTPUT}:/work" \
       -v "${COSIGN_KEY_FILE}:/keys/cosign.key:ro" \
