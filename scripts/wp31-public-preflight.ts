@@ -226,7 +226,11 @@ step('clean-checkout', () => {
         cwd: checkout,
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
-        env: { ...process.env, WP31_SKIP_CLEAN_CHECKOUT: '1' },
+        env: {
+          ...process.env,
+          CI: process.env.CI ?? 'true',
+          WP31_SKIP_CLEAN_CHECKOUT: '1',
+        },
       })
       if (result.status !== 0)
         throw new Error(

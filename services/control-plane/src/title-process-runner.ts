@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { createInterface } from 'node:readline'
 import type { UsageReport } from '@persistent-codex/provider-platform'
 
@@ -33,7 +34,7 @@ export class CodexTitleProcessRunner {
   ): Promise<{ title: string; usage?: UsageReport }> {
     return await new Promise((resolve, reject) => {
       const child = spawn(input.binary, input.args, {
-        cwd: '/private/tmp',
+        cwd: tmpdir(),
         env: { ...process.env, CODEX_HOME: input.codexHome },
         stdio: ['ignore', 'pipe', 'ignore'],
       })

@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { baseUrl, withBase } from './base-path'
+import { refreshStoredSession } from './self-hosted-auth'
 
-export const serviceWorkerUrl = '/sw.js?v=wp23-v1'
+// WP38 (ADR-0038): SW, scope kuralı gereği base altından kaydedilir ve servis
+// edilir; kökte withBase no-op'tur. Sürüm wp38-v1: sw.js scope-türevli precache
+// listesine geçti.
+export const serviceWorkerUrl = withBase('/sw.js?v=wp38-v1')
 
 function applicationServerKey(value: string) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
@@ -132,7 +137,7 @@ export function useOnlineStatus() {
         return
       }
       try {
-        const response = await fetch('/?connectivity=1', {
+        const response = await fetch(`${baseUrl}?connectivity=1`, {
           method: 'HEAD',
           cache: 'no-store',
         })
@@ -160,6 +165,18 @@ export function PwaRuntime() {
   const [notificationResolutionError, setNotificationResolutionError] =
     useState(false)
   const reloadOnControllerChange = useRef(false)
+  // WP37: PWA yeniden açılışında oturum, refresh token ile parolasız sürer.
+  // Content key kilidi ayrıdır; içerik gerektiğinde sunucu 428 döner ve
+  // kullanıcı /login üzerinden parolasını yeniden girer.
+  useEffect(() => {
+    const apiBaseUrl =
+      (import.meta.env.VITE_CONTROL_PLANE_URL as string | undefined) ??
+      'http://127.0.0.1:3100'
+    const attempt = () => void refreshStoredSession(apiBaseUrl)
+    attempt()
+    const timer = setInterval(attempt, 10 * 60_000)
+    return () => clearInterval(timer)
+  }, [])
   useEffect(() => {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return
     const controllerChanged = () => {
@@ -170,7 +187,7 @@ export function PwaRuntime() {
       controllerChanged,
     )
     void navigator.serviceWorker
-      .register(serviceWorkerUrl, { scope: '/', updateViaCache: 'none' })
+      .register(serviceWorkerUrl, { scope: baseUrl, updateViaCache: 'none' })
       .then((registration) => {
         if (registration.waiting && navigator.serviceWorker.controller)
           setWaitingWorker(registration.waiting)
@@ -229,7 +246,9 @@ export function PwaRuntime() {
         }
       })
       .then((resolution) => {
-        url.pathname = `/sessions/${encodeURIComponent(resolution.sessionId)}`
+        url.pathname = withBase(
+          `/sessions/${encodeURIComponent(resolution.sessionId)}`,
+        )
         url.searchParams.set('organization', resolution.organizationId)
         url.searchParams.set('workspace', resolution.workspaceId)
         window.location.replace(url.href)

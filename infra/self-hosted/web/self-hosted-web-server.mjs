@@ -29,6 +29,20 @@ if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(publicOrigin)) {
   )
   process.exit(1)
 }
+// WP38 (ADR-0038): base-path'li kurulumda statik/SSR servis base altından
+// yapılır ve placeholder ikamesi origin+base ile çalışır (apiBaseUrl base'i
+// içerir). Boş BASE_PATH = kök = bugünkü davranış. Fail-closed doğrulama:
+// imaj build'i ile uyumsuz/geçersiz base yapılandırması sunucuyu başlatmaz.
+const basePath = process.env.BASE_PATH ?? ''
+if (
+  basePath !== '' &&
+  !/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(basePath)
+) {
+  process.stderr.write(
+    `BASE_PATH geçersiz (başta '/', sonda yok, segmentler [A-Za-z0-9._~-]): ${basePath}\n`,
+  )
+  process.exit(1)
+}
 
 const PLACEHOLDER = 'https://public-origin.invalid'
 const SUBSTITUTABLE = new Set(['.js', '.mjs', '.html', '.webmanifest', '.json'])
@@ -39,10 +53,12 @@ const runtimeRoot = mkdtempSync(join(tmpdir(), 'self-hosted-web-'))
 const clientRoot = join(runtimeRoot, 'client')
 cpSync(imageClientRoot, clientRoot, { recursive: true })
 
+// apiBaseUrl base'i içermelidir: https://domain/workspace (kökte https://domain).
+const substitutionTarget = `${publicOrigin}${basePath}`
 const substitute = (path) => {
   const content = readFileSync(path, 'utf8')
   if (!content.includes(PLACEHOLDER)) return
-  writeFileSync(path, content.replaceAll(PLACEHOLDER, publicOrigin))
+  writeFileSync(path, content.replaceAll(PLACEHOLDER, substitutionTarget))
 }
 const walk = (dir) => {
   for (const entry of readdirSync(dir)) {
@@ -56,7 +72,10 @@ walk(clientRoot)
 const serverBundlePath = join(runtimeRoot, 'web-server.mjs')
 writeFileSync(
   serverBundlePath,
-  readFileSync(imageServerBundle, 'utf8').replaceAll(PLACEHOLDER, publicOrigin),
+  readFileSync(imageServerBundle, 'utf8').replaceAll(
+    PLACEHOLDER,
+    substitutionTarget,
+  ),
 )
 
 globalThis.require = createRequire(import.meta.url)
@@ -72,6 +91,9 @@ const types = {
 
 const server = createServer(async (request, response) => {
   try {
+    // Kök health endpoint'leri her durumda korunur (compose healthcheck +
+    // monitoring geriye uyumluluğu); base altındaki /readyz Caddy tarafından
+    // control-plane'e taşınır (ADR-0038 §5).
     if (request.url === '/healthz' || request.url === '/readyz') {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(
@@ -80,7 +102,29 @@ const server = createServer(async (request, response) => {
       return
     }
     const url = new URL(request.url ?? '/', publicOrigin)
-    const relative = normalize(decodeURIComponent(url.pathname)).replace(
+    if (basePath !== '') {
+      if (url.pathname === basePath) {
+        // Tam base isteği kanonik base/'e yönlendirilir (SW scope ve router
+        // basepath eşleşmesi için).
+        response.writeHead(308, { location: `${basePath}/${url.search}` })
+        response.end()
+        return
+      }
+      if (url.pathname === '/') {
+        response.writeHead(308, { location: `${basePath}/${url.search}` })
+        response.end()
+        return
+      }
+      if (!url.pathname.startsWith(`${basePath}/`)) {
+        // Base dışı yollar bu instance'a ait değildir (belgelenmiş davranış).
+        response.writeHead(404, { 'content-type': 'text/plain' })
+        response.end('not found (base path dışında)')
+        return
+      }
+    }
+    const scopedPathname =
+      basePath === '' ? url.pathname : url.pathname.slice(basePath.length)
+    const relative = normalize(decodeURIComponent(scopedPathname)).replace(
       /^[/\\]+/,
       '',
     )

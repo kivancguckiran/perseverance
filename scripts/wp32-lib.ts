@@ -223,6 +223,13 @@ export const wp32StaticScanPolicy: SecretPolicy = {
         /\$\{SELF_HOSTED_[A-Z_]+\}/,
       ],
     },
+    {
+      description:
+        'WP37 login formu: HTML autocomplete belirteçleri (current-password/' +
+        'new-password) tarayıcı parola yöneticisi ipuçlarıdır; secret değeri değildir',
+      paths: [],
+      regexes: [/current-password|new-password/],
+    },
   ],
 }
 
@@ -279,6 +286,17 @@ export const WP32_REQUIRED_FILES = [
   'infra/self-hosted/postgres/init-runtime-role.sql',
   'infra/self-hosted/bootstrap/self-hosted-bootstrap.ts',
   'infra/self-hosted/release/build-release.sh',
+  // WP37 — kullanıcı hesapları ve parola-türevli mahremiyet (ADR-0037):
+  // yeni auth/kripto kaynakları da statik credential taramasına dahildir.
+  'docs/architecture/adr-0037-user-accounts-passphrase-privacy.md',
+  'infra/postgres/migrations/0038_wp37_user_accounts.sql',
+  'services/control-plane/src/self-hosted-auth.ts',
+  'services/control-plane/src/self-hosted-auth-api.ts',
+  'services/control-plane/src/self-hosted-auth-composition.ts',
+  'services/control-plane/src/self-hosted-provisioning.ts',
+  'services/control-plane/src/user-content-crypto.ts',
+  'apps/web/src/self-hosted-auth.ts',
+  'apps/web/src/login-page.tsx',
 ] as const
 
 export const WP32_GATES = [

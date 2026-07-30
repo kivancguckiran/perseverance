@@ -24,6 +24,10 @@
       {
         "name": "persistent-codex:deterministic",
         "value": "true"
+      },
+      {
+        "name": "persistent-codex:platform-specific-variants-excluded",
+        "value": "true"
       }
     ]
   },
@@ -430,26 +434,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40esbuild/darwin-arm64@0.28.1",
-      "name": "@esbuild/darwin-arm64",
-      "version": "0.28.1",
-      "purl": "pkg:npm/%40esbuild/darwin-arm64@0.28.1",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "properties": [
-        {
-          "name": "persistent-codex:direct",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/%40fastify/ajv-compiler@4.0.5",
       "name": "@fastify/ajv-compiler",
       "version": "4.0.5",
@@ -810,26 +794,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40openai/codex@0.144.2-darwin-arm64",
-      "name": "@openai/codex",
-      "version": "0.144.2-darwin-arm64",
-      "purl": "pkg:npm/%40openai/codex@0.144.2-darwin-arm64",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "properties": [
-        {
-          "name": "persistent-codex:direct",
-          "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/%40oxc-project/types@0.139.0",
       "name": "@oxc-project/types",
       "version": "0.139.0",
@@ -854,26 +818,6 @@
       "name": "@pinojs/redact",
       "version": "0.4.0",
       "purl": "pkg:npm/%40pinojs/redact@0.4.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "properties": [
-        {
-          "name": "persistent-codex:direct",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40rolldown/binding-darwin-arm64@1.1.5",
-      "name": "@rolldown/binding-darwin-arm64",
-      "version": "1.1.5",
-      "purl": "pkg:npm/%40rolldown/binding-darwin-arm64@1.1.5",
       "licenses": [
         {
           "license": {
@@ -1678,26 +1622,6 @@
         {
           "license": {
             "id": "MIT"
-          }
-        }
-      ],
-      "properties": [
-        {
-          "name": "persistent-codex:direct",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40typescript/typescript-darwin-arm64@7.0.2",
-      "name": "@typescript/typescript-darwin-arm64",
-      "version": "7.0.2",
-      "purl": "pkg:npm/%40typescript/typescript-darwin-arm64@7.0.2",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
           }
         }
       ],
@@ -3070,26 +2994,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fsevents@2.3.3",
-      "name": "fsevents",
-      "version": "2.3.3",
-      "purl": "pkg:npm/fsevents@2.3.3",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "properties": [
-        {
-          "name": "persistent-codex:direct",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/gensync@1.0.0-beta.2",
       "name": "gensync",
       "version": "1.0.0-beta.2",
@@ -3114,6 +3018,26 @@
       "name": "h3",
       "version": "2.0.1-rc.20",
       "purl": "pkg:npm/h3@2.0.1-rc.20",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "persistent-codex:direct",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/hash-wasm@4.12.0",
+      "name": "hash-wasm",
+      "version": "4.12.0",
+      "purl": "pkg:npm/hash-wasm@4.12.0",
       "licenses": [
         {
           "license": {
@@ -3534,26 +3458,6 @@
       "name": "lightningcss",
       "version": "1.32.0",
       "purl": "pkg:npm/lightningcss@1.32.0",
-      "licenses": [
-        {
-          "license": {
-            "id": "MPL-2.0"
-          }
-        }
-      ],
-      "properties": [
-        {
-          "name": "persistent-codex:direct",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/lightningcss-darwin-arm64@1.32.0",
-      "name": "lightningcss-darwin-arm64",
-      "version": "1.32.0",
-      "purl": "pkg:npm/lightningcss-darwin-arm64@1.32.0",
       "licenses": [
         {
           "license": {

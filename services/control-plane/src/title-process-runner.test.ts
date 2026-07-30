@@ -1,3 +1,5 @@
+import { existsSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { CodexTitleProcessRunner } from './title-process-runner'
@@ -20,6 +22,16 @@ describe('CodexTitleProcessRunner', () => {
       title: 'Güvenli başlık',
       usage: { counters: { inputTokens: 4, outputTokens: 2 } },
     })
+  })
+  it('spawns in the platform temp directory without /private/tmp', async () => {
+    const { title } = await new CodexTitleProcessRunner().run(input('cwd'))
+    expect(title).toBe(realpathSync(tmpdir()))
+    // Regression guard for WP36: on Linux hosts without a
+    // /private/tmp -> /tmp symlink the runner must still work; the child
+    // process above proves the spawn cwd is the platform tmpdir, not a
+    // macOS-only hardcoded path.
+    if (process.platform === 'linux' && !existsSync('/private/tmp'))
+      expect(realpathSync(tmpdir()).startsWith('/private/')).toBe(false)
   })
   it('times out and kills a stuck process', async () => {
     await expect(

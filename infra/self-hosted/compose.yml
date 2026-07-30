@@ -91,6 +91,10 @@ services:
       - broker-data:/var/lib/rabbitmq
     healthcheck:
       test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_running']
+      # The image entrypoint creates/chowns the Erlang cookie before dropping
+      # privileges. An eager healthcheck can race that step and create the
+      # cookie as root, forcing one avoidable broker restart.
+      start_period: 30s
       interval: 3s
       timeout: 5s
       retries: 90
@@ -213,6 +217,12 @@ services:
       WORKSPACE_CWD: /workspace
       CODEX_HOME: /codex-home
       WP26_CODEX_BIN: /app/codex/bin/codex.js
+      # WP37: envelope-şifreli prompt'lar için content key lease'i iç
+      # listener'dan alınır; anahtar diske yazılmaz.
+      CONTENT_KEY_SERVICE_URL: http://control-plane:3304
+      INTERNAL_RUNTIME_TOKEN_FILE: /run/secrets/internal_runtime_token
+    secrets:
+      - internal_runtime_token
     volumes:
       - workspace-data:/workspace
       - codex-home:/codex-home
@@ -250,6 +260,18 @@ services:
       OIDC_ISSUER: ${SELF_HOSTED_OIDC_ISSUER:-http://identity:3303}
       OIDC_AUDIENCE: ${SELF_HOSTED_OIDC_AUDIENCE}
       WEB_ALLOWED_ORIGIN: ${SELF_HOSTED_PUBLIC_ORIGIN}
+      # WP37: kullanıcı hesapları — imzalama anahtarı identity ile paylaşılır
+      # (JWKS yayını identity'de kalır); allowlist env'den okunur; iç content
+      # key listener'ı yalnız iç ağda dinler ve Caddy tarafından yayınlanmaz.
+      SELF_HOSTED_ALLOWED_USERS: ${SELF_HOSTED_ALLOWED_USERS:-}
+      OIDC_SIGNING_KEY_FILE: /run/self-hosted/oidc-private.pem
+      OIDC_SIGNING_KEY_ID: self-hosted
+      INTERNAL_RUNTIME_TOKEN_FILE: /run/secrets/internal_runtime_token
+      CONTENT_KEY_SERVICE_PORT: '3304'
+    secrets:
+      - internal_runtime_token
+    volumes:
+      - ${SELF_HOSTED_SECRETS_DIR}/oidc-private.pem:/run/self-hosted/oidc-private.pem:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -274,6 +296,9 @@ services:
       HOST: 0.0.0.0
       PORT: '3301'
       PUBLIC_ORIGIN: ${SELF_HOSTED_PUBLIC_ORIGIN}
+      # WP38 (ADR-0038): base-path'li kurulumda SSR/statik servis base altından
+      # yapılır; kök health endpoint'leri (healthcheck) korunur.
+      BASE_PATH: ${SELF_HOSTED_BASE_PATH:-}
     depends_on:
       control-plane:
         condition: service_healthy
@@ -309,3 +334,5 @@ secrets:
     file: ${SELF_HOSTED_SECRETS_DIR}/postgres-password
   postgres_runtime_password:
     file: ${SELF_HOSTED_SECRETS_DIR}/postgres-runtime-password
+  internal_runtime_token:
+    file: ${SELF_HOSTED_SECRETS_DIR}/internal-runtime-token

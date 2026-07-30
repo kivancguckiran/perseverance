@@ -48,6 +48,17 @@ import {
   type ProviderAuthEvidence,
   type ProviderAuthFeatureFlags,
 } from '@persistent-codex/provider-auth'
+import { type SelfHostedAuthService } from './self-hosted-auth'
+import {
+  SELF_HOSTED_AUTH_PUBLIC_PATHS,
+  registerSelfHostedAuthRoutes,
+} from './self-hosted-auth-api'
+import { createSelfHostedAuthFromEnv } from './self-hosted-auth-composition'
+import {
+  decryptUserContent,
+  encryptUserContent,
+  parseUserContentEnvelope,
+} from './user-content-crypto'
 
 export interface ProductionControlPlaneOptions {
   instanceId: string
@@ -66,6 +77,7 @@ export interface ProductionControlPlaneOptions {
   authentication?: AuthenticationAdapter
   allowedWebOrigin?: string
   managedCloud?: ReturnType<typeof createManagedCloudProductionComposition>
+  selfHostedAuth?: SelfHostedAuthService
 }
 
 function header(value: string | string[] | undefined) {
@@ -172,7 +184,13 @@ export async function buildProductionControlPlane(
       request.url === '/healthz' ||
       request.url === '/readyz' ||
       request.url === '/v1/meta' ||
-      request.url.startsWith('/v1/realtime')
+      request.url.startsWith('/v1/realtime') ||
+      // WP37: kayıt/giriş uçları pre-auth'tur; kendi doğrulama, rate-limit
+      // ve audit denetimlerini self-hosted-auth-api içinde uygular.
+      (options.selfHostedAuth &&
+        (SELF_HOSTED_AUTH_PUBLIC_PATHS as readonly string[]).includes(
+          request.url.split('?')[0] ?? request.url,
+        ))
     )
       return
     try {
@@ -321,6 +339,56 @@ export async function buildProductionControlPlane(
         return { issuer: value.issuer, subject: value.subject }
       },
     })
+
+  if (options.selfHostedAuth) {
+    registerSelfHostedAuthRoutes(app, { service: options.selfHostedAuth })
+    // Oturum durumu: bearer + scope doğrulamasından geçer (public listede
+    // değildir); web istemcisi content key kilidini buradan yoklar.
+    app.get('/v1/auth/session', async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const principal = requestPrincipals.get(request)
+      return reply.code(200).send({
+        subject: principal?.subject ?? null,
+        ...requestScope,
+        contentKeyUnlocked:
+          options.selfHostedAuth!.leases.acquire(requestScope.workspaceId) !==
+          null,
+      })
+    })
+
+    // Web istemcisinin kimlik sorgusu (server.ts'teki /v1/me karşılığı):
+    // membership'ler DB'den, kalan alanlar doğrulanmış principal'dan gelir.
+    app.get('/v1/me', async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const principal = requestPrincipals.get(request)
+      if (!principal) return reply.code(401).send({ code: 'AUTH_REQUIRED' })
+      const memberships = await options.repository.pool.query(
+        `SELECT m.organization_id, m.role, m.status
+         FROM persistent_codex.organization_memberships m
+         WHERE m.issuer=$1 AND m.subject=$2 AND m.status='active'`,
+        [principal.issuer, principal.subject],
+      )
+      return reply.code(200).send({
+        ...principal,
+        memberships: memberships.rows.map(
+          (row: { organization_id: string; role: string; status: string }) => ({
+            version: 1,
+            subject: principal.subject,
+            issuer: principal.issuer,
+            organizationId: row.organization_id,
+            role: row.role,
+            status: row.status,
+            workspaceIds: [],
+            updatedAt: now().toISOString(),
+          }),
+        ),
+        activeOrganizationId: requestScope.organizationId,
+        activeWorkspaceId: requestScope.workspaceId,
+      })
+    })
+  }
 
   app.get<{ Params: { workspaceId: string } }>(
     '/v1/workspaces/:workspaceId',
@@ -519,6 +587,22 @@ export async function buildProductionControlPlane(
     )
     if (!storedSession)
       return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+    // WP37: kullanıcı workspace'lerinde prompt düz metin yazılmaz. Content
+    // key lease'i yoksa (login yok / süresi doldu) fail-closed 428 döner.
+    let contentKeyLease: {
+      contentKey: Buffer
+      keyVersion: string
+    } | null = null
+    if (
+      options.selfHostedAuth &&
+      (await options.selfHostedAuth.isUserWorkspace(requestScope.workspaceId))
+    ) {
+      contentKeyLease = options.selfHostedAuth.leases.acquire(
+        requestScope.workspaceId,
+      )
+      if (!contentKeyLease)
+        return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+    }
     const billingDecision = await options.billing.admit({
       ...requestScope,
       requestKey: idempotencyKey,
@@ -535,8 +619,16 @@ export async function buildProductionControlPlane(
     try {
       await options.objectStore.put(
         objectKey,
-        encoder.encode(request.body.prompt),
-        'text/plain; charset=utf-8',
+        contentKeyLease
+          ? await encryptUserContent(
+              contentKeyLease,
+              { ...requestScope, recordType: 'prompt', recordId: runId },
+              encoder.encode(request.body.prompt),
+            )
+          : encoder.encode(request.body.prompt),
+        contentKeyLease
+          ? 'application/json; charset=utf-8'
+          : 'text/plain; charset=utf-8',
       )
       const approvalContext = request.body.approvalContext
       const accepted = await options.repository.enqueueTurn({
@@ -762,6 +854,42 @@ export async function buildProductionControlPlane(
     }
   })
 
+  // WP37: kullanıcı workspace'lerinde object storage'daki içerik EnvelopeV1
+  // JSON'dur; yalnız geçerli content key lease'i ile çözülür. Lease yoksa
+  // 428 CONTENT_KEY_LOCKED (yeniden login gerekir); crypto-erase sonrası
+  // çözme kalıcı olarak başarısız olur ve 410 döner.
+  const serveRunContent = async (
+    requestScope: ProductionScope,
+    objectKey: string,
+    recordType: 'prompt' | 'model_output',
+    recordId: string,
+    reply: {
+      code(status: number): { send(body: unknown): unknown }
+      type(contentType: string): { send(body: unknown): unknown }
+    },
+  ) => {
+    const bytes = await options.objectStore.get(objectKey)
+    const envelope = parseUserContentEnvelope(bytes)
+    if (!envelope)
+      return reply.type('text/plain; charset=utf-8').send(decoder.decode(bytes))
+    const lease = options.selfHostedAuth?.leases.acquire(
+      requestScope.workspaceId,
+    )
+    if (!lease) return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+    try {
+      const plaintext = await decryptUserContent(
+        lease,
+        { ...requestScope, recordType, recordId },
+        envelope,
+      )
+      return reply
+        .type('text/plain; charset=utf-8')
+        .send(decoder.decode(plaintext))
+    } catch {
+      return reply.code(410).send({ code: 'CONTENT_UNRECOVERABLE' })
+    }
+  }
+
   app.get<{ Params: { runId: string } }>(
     '/v1/runs/:runId/output',
     async (request, reply) => {
@@ -773,8 +901,34 @@ export async function buildProductionControlPlane(
       )
       if (!stored?.outputObjectKey)
         return reply.code(404).send({ code: 'OUTPUT_NOT_FOUND' })
-      const bytes = await options.objectStore.get(stored.outputObjectKey)
-      return reply.type('text/plain; charset=utf-8').send(decoder.decode(bytes))
+      return await serveRunContent(
+        requestScope,
+        stored.outputObjectKey,
+        'model_output',
+        stored.runId,
+        reply,
+      )
+    },
+  )
+
+  app.get<{ Params: { runId: string } }>(
+    '/v1/runs/:runId/input',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const stored = await options.repository.getRun(
+        requestScope,
+        request.params.runId,
+      )
+      if (!stored?.promptObjectKey)
+        return reply.code(404).send({ code: 'INPUT_NOT_FOUND' })
+      return await serveRunContent(
+        requestScope,
+        stored.promptObjectKey,
+        'prompt',
+        stored.runId,
+        reply,
+      )
     },
   )
 
@@ -934,6 +1088,14 @@ export async function buildProductionControlPlaneFromEnv(
     () => new Date(),
     Number(env.TELEMETRY_MAX_RECORDS ?? 2_048),
   )
+  // WP37: OIDC_SIGNING_KEY_FILE tanımlıysa self-hosted kullanıcı hesapları
+  // etkinleşir; content key lease'leri için iç listener da burada başlar.
+  const selfHostedAuth = createSelfHostedAuthFromEnv(
+    env,
+    repository.pool,
+    required('TOPOLOGY_DATABASE_URL'),
+  )
+  if (selfHostedAuth) await selfHostedAuth.startInternalListener()
   const app = await buildProductionControlPlane({
     instanceId: required('PERSISTENT_INSTANCE_ID'),
     repository,
@@ -994,7 +1156,9 @@ export async function buildProductionControlPlaneFromEnv(
     ...(env.WEB_ALLOWED_ORIGIN
       ? { allowedWebOrigin: env.WEB_ALLOWED_ORIGIN }
       : {}),
+    ...(selfHostedAuth ? { selfHostedAuth: selfHostedAuth.service } : {}),
   })
+  if (selfHostedAuth) app.addHook('onClose', async () => selfHostedAuth.close())
   const exporter = env.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OtlpHttpExporter(telemetry, env.OTEL_EXPORTER_OTLP_ENDPOINT)
     : null

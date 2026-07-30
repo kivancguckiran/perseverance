@@ -161,7 +161,11 @@ const psqlCount = (where: string): number => {
     'persistent_codex',
     '-tA',
     '-c',
-    `SELECT count(*) FROM persistent_codex.sessions WHERE ${where}`,
+    // WP36 gerçek-ortam bulgusu: API oturumları production topolojisinde
+    // persistent_codex.ha_sessions tablosunda kalıcılaşır; persistent_codex.
+    // sessions yalnız corpus placeholder kayıtları içerir. Gate ilk gerçek
+    // koşuda yanlış tabloyu saydığı için düzeltildi.
+    `SELECT count(*) FROM persistent_codex.ha_sessions WHERE ${where}`,
   ])
   return Number(result.stdout.trim())
 }
@@ -302,7 +306,7 @@ const lifecycle = () => {
     '-d',
     'persistent_codex',
     '-c',
-    `DELETE FROM persistent_codex.sessions WHERE session_id='${sessionId}'`,
+    `DELETE FROM persistent_codex.ha_sessions WHERE session_id='${sessionId}'`,
   ])
   assert.equal(psqlCount(`session_id='${sessionId}'`), 0)
   selfHosted(['restore', backupPath])

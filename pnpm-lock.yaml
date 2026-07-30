@@ -420,7 +420,11 @@ importers:
         specifier: ^8.16.0
         version: 8.20.0
 
-  packages/workspace-security: {}
+  packages/workspace-security:
+    dependencies:
+      hash-wasm:
+        specifier: 4.12.0
+        version: 4.12.0
 
   services/control-plane:
     dependencies:
@@ -2253,6 +2257,12 @@ packages:
     peerDependenciesMeta:
       crossws:
         optional: true
+
+  hash-wasm@4.12.0:
+    resolution:
+      {
+        integrity: sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ==,
+      }
 
   hast-util-to-jsx-runtime@2.3.6:
     resolution:
@@ -4691,6 +4701,8 @@ snapshots:
     dependencies:
       rou3: 0.8.1
       srvx: 0.11.22
+
+  hash-wasm@4.12.0: {}
 
   hast-util-to-jsx-runtime@2.3.6:
     dependencies:

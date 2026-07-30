@@ -29,6 +29,9 @@ function serviceWorkerHarness(
     headers: new Headers(),
     clone: () => ({ asset: true }),
   },
+  // WP38: sw.js scope'unu servis edildiği URL'den türetir; base-path'li
+  // kurulum 'https://workspace.test/workspace/sw.js' ile simüle edilir.
+  serviceWorkerLocation = 'https://workspace.test/sw.js',
 ) {
   const listeners = new Map<string, (event: Record<string, unknown>) => void>()
   const put = vi.fn(async () => undefined)
@@ -46,7 +49,7 @@ function serviceWorkerHarness(
   }
   const context = {
     self: {
-      location: { origin: 'https://workspace.test' },
+      location: new URL(serviceWorkerLocation),
       addEventListener: (
         type: string,
         listener: (event: Record<string, unknown>) => void,
@@ -65,7 +68,15 @@ function serviceWorkerHarness(
     Promise,
   }
   runInNewContext(serviceWorkerSource, context)
-  return { listeners, caches, cache, put, skipWaiting, showNotification }
+  return {
+    listeners,
+    caches,
+    cache,
+    put,
+    skipWaiting,
+    showNotification,
+    context,
+  }
 }
 
 describe('production PWA assets and cache boundary', () => {
@@ -81,8 +92,10 @@ describe('production PWA assets and cache boundary', () => {
       icons: Array<{ src: string; sizes: string; purpose: string }>
     }
     expect(manifest).toMatchObject({
-      start_url: '/',
-      scope: '/',
+      // WP38: relative üyeler manifest'in servis edildiği base'e çözülür
+      // (kökte '/', base-path'li kurulumda '/workspace/').
+      start_url: './',
+      scope: './',
       display: 'standalone',
       theme_color: '#0d1714',
       background_color: '#0a100e',
@@ -103,8 +116,8 @@ describe('production PWA assets and cache boundary', () => {
   })
 
   it('uses one explicit version and waits for user-approved activation', async () => {
-    expect(serviceWorkerUrl).toContain('wp23-v1')
-    expect(serviceWorkerSource).toContain('wp23-v1')
+    expect(serviceWorkerUrl).toContain('wp38-v1')
+    expect(serviceWorkerSource).toContain('wp38-v1')
     const harness = serviceWorkerHarness()
     let installPromise: Promise<unknown> | undefined
     harness.listeners.get('install')?.({
@@ -281,5 +294,104 @@ describe('production PWA assets and cache boundary', () => {
     await safeResponse
     await Promise.resolve()
     expect(safeHarness.put).toHaveBeenCalledOnce()
+  })
+})
+
+describe('WP38: service worker scope under a base path', () => {
+  const baseLocation = 'https://workspace.test/workspace/sw.js'
+  type AnyMock = ReturnType<typeof vi.fn>
+
+  it('derives precache and cache boundary from the served base', async () => {
+    const harness = serviceWorkerHarness(undefined, baseLocation)
+    let installPromise: Promise<unknown> | undefined
+    harness.listeners.get('install')?.({
+      waitUntil: (promise: Promise<unknown>) => {
+        installPromise = promise
+      },
+    })
+    await installPromise
+    expect(harness.put).toHaveBeenCalledTimes(4)
+    const precached = (harness.put as AnyMock).mock.calls.map(
+      (call) => new URL((call as [Request])[0].url).pathname,
+    )
+    expect(precached).toEqual(
+      expect.arrayContaining([
+        '/workspace/manifest.webmanifest',
+        '/workspace/icon-192.png',
+        '/workspace/icon-512.png',
+        '/workspace/icon-maskable-512.png',
+      ]),
+    )
+  })
+
+  it.each([
+    '/workspace/v1/sessions/ses/usage',
+    '/workspace/readyz',
+    '/workspace/events',
+    '/workspace/auth/session',
+  ])('never intercepts base-scoped sensitive path %s', (path) => {
+    const harness = serviceWorkerHarness(undefined, baseLocation)
+    const respondWith = vi.fn()
+    harness.listeners.get('fetch')?.({
+      request: new Request(`https://workspace.test${path}`),
+      respondWith,
+    })
+    expect(respondWith).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the base shell for offline navigations', async () => {
+    const harness = serviceWorkerHarness(undefined, baseLocation)
+    const shellResponse = { shell: true }
+    const match = harness.caches.match as AnyMock
+    match.mockResolvedValueOnce(undefined)
+    match.mockResolvedValueOnce(shellResponse)
+    ;(harness.context as { fetch: unknown }).fetch = vi.fn(async () => {
+      throw new Error('offline')
+    })
+    let navigationResponse: Promise<unknown> | undefined
+    harness.listeners.get('fetch')?.({
+      request: {
+        method: 'GET',
+        url: 'https://workspace.test/workspace/sessions/ses-offline',
+        headers: new Headers(),
+        mode: 'navigate',
+        destination: 'document',
+      },
+      respondWith: (promise: Promise<unknown>) => {
+        navigationResponse = promise
+      },
+    })
+    const resolved = await navigationResponse
+    expect(resolved).toBe(shellResponse)
+    expect(match).toHaveBeenLastCalledWith('/workspace/')
+  })
+
+  it('targets notification clicks under the base path', async () => {
+    const harness = serviceWorkerHarness(undefined, baseLocation)
+    const navigate = vi.fn(async () => undefined)
+    const focus = vi.fn(async () => undefined)
+    ;(harness.context.self.clients as { matchAll?: unknown }).matchAll = vi.fn(
+      async () => [
+        { url: 'https://workspace.test/workspace/', navigate, focus },
+      ],
+    )
+    let clickPromise: Promise<unknown> | undefined
+    harness.listeners.get('notificationclick')?.({
+      notification: {
+        close: vi.fn(),
+        data: {
+          sessionId: 'ses_base',
+          notificationId: 'not_base',
+          approvalId: null,
+        },
+      },
+      waitUntil: (promise: Promise<unknown>) => {
+        clickPromise = promise
+      },
+    })
+    await clickPromise
+    expect(navigate).toHaveBeenCalledWith(
+      expect.stringContaining('/workspace/sessions/ses_base'),
+    )
   })
 })

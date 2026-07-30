@@ -1,3 +1,4 @@
+import { withBase } from './base-path'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import {
   attachmentContextStart,
@@ -70,6 +71,7 @@ import {
   useState,
 } from 'react'
 import { PushNotificationControl, useOnlineStatus } from './pwa-runtime'
+import { readStoredAuth, signOut } from './self-hosted-auth'
 import {
   offlineConversationKey,
   offlineHistoryKey,
@@ -92,8 +94,14 @@ const locationScope =
   typeof window === 'undefined'
     ? undefined
     : new URLSearchParams(window.location.search)
-const tenantId = locationScope?.get('organization') ?? 'ten_local'
-const workspaceId = locationScope?.get('workspace') ?? 'wsp_local'
+// WP37: son kullanıcı akışında scope ve token login yanıtından (storage)
+// gelir; query param ve sessionStorage enjeksiyonu operatör/acil ve yerel
+// geliştirme yolları olarak kalır.
+const storedAuth = readStoredAuth()
+const tenantId =
+  storedAuth?.tenantId ?? locationScope?.get('organization') ?? 'ten_local'
+const workspaceId =
+  storedAuth?.workspaceId ?? locationScope?.get('workspace') ?? 'wsp_local'
 const runtimeAuth =
   typeof window === 'undefined'
     ? undefined
@@ -104,27 +112,21 @@ const runtimeAuth =
       ).__PERSISTENT_AUTH__
 const runtimeAccessToken = () => {
   if (runtimeAuth?.accessToken) return runtimeAuth.accessToken
-  if (typeof window === 'undefined') return undefined
-  try {
-    return (
-      JSON.parse(
-        window.sessionStorage.getItem('persistent.auth') ?? 'null',
-      ) as { accessToken?: string } | null
-    )?.accessToken
-  } catch {
-    return undefined
-  }
+  return readStoredAuth()?.accessToken
 }
-const principalId = runtimeAuth?.subject ?? 'dev-user'
+const principalId = runtimeAuth?.subject ?? storedAuth?.subject ?? 'dev-user'
 const historyDesktopMediaQuery = '(min-width: 1100px)'
-const scopeHeaders = {
+const scopeHeaders: Record<string, string> = {
   'content-type': 'application/json',
   'x-tenant-id': tenantId,
   'x-workspace-id': workspaceId,
-  ...(runtimeAuth?.accessToken
-    ? { authorization: `Bearer ${runtimeAuth.accessToken}` }
-    : {}),
 }
+if (runtimeAuth?.accessToken ?? storedAuth?.accessToken)
+  // Getter, sessiz refresh sonrası her istekte güncel token'ı okur.
+  Object.defineProperty(scopeHeaders, 'authorization', {
+    enumerable: true,
+    get: () => `Bearer ${runtimeAccessToken() ?? ''}`,
+  })
 
 const cacheNamespace = tenantCacheNamespace(principalId, tenantId, workspaceId)
 
@@ -2742,7 +2744,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       })
     const connect = () => {
       if (!active) return
-      const url = new URL('/v1/realtime', apiBaseUrl)
+      // WP38: kök-mutlak path apiBaseUrl'deki base'i düşürür — string birleştir.
+      const url = new URL(`${apiBaseUrl}/v1/realtime`)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(url)
       setRealtimeState('bağlanıyor')
@@ -3571,8 +3574,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       ) : null}
       {identity.isError && online ? (
         <p className="offline-banner" role="alert">
-          Oturum süresi dolmuş veya bu organization için erişim yasaklanmış.
-          Yeniden giriş yapın.
+          Oturum süresi dolmuş veya bu organization için erişim yasaklanmış.{' '}
+          <a href={withBase('/login')}>Yeniden giriş yapın</a>.
         </p>
       ) : null}
       {folderAccessLost ? (
@@ -3652,6 +3655,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           namespace={cacheNamespace}
           online={online && identity.isSuccess}
         />
+        {storedAuth?.username ? (
+          <button
+            type="button"
+            className="signout-button"
+            onClick={() => void signOut(apiBaseUrl)}
+          >
+            Çıkış ({storedAuth.username})
+          </button>
+        ) : null}
         <div className={`status-pill status-${meta.status}`}>
           <span className="status-dot" aria-hidden="true" />
           {!online

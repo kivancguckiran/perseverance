@@ -2912,3 +2912,47 @@ h2 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* WP37 — login/kayıt/kurtarma (ADR-0037) */
+.recovery-key {
+  background: #0d1714;
+  border: 1px solid #274437;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.signin-alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.signin-alternatives button {
+  background: none;
+  border: 1px solid #2c4a3c;
+  border-radius: 999px;
+  color: #9fd6bd;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.9rem;
+}
+
+.signin-alternatives button:hover {
+  border-color: #477a62;
+}
+
+.signout-button {
+  background: none;
+  border: 1px solid #2c4a3c;
+  border-radius: 999px;
+  color: #9fd6bd;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.8rem;
+  white-space: nowrap;
+}

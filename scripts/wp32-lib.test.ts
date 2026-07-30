@@ -60,6 +60,13 @@ describe('wp32 dağıtım dosyaları', () => {
     }
   })
 
+  it('broker healthcheck Erlang cookie hazırlığını bekler', () => {
+    const broker = extractComposeServices(
+      read('infra/self-hosted/compose.yml'),
+    ).find((service) => service.name === 'broker')
+    expect(broker?.body).toContain('start_period: 30s')
+  })
+
   it('kabuk scriptleri fail-closed hijyenine uyar', () => {
     for (const script of [
       'infra/self-hosted/self-hosted.sh',

@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs'
 import pg from 'pg'
 import { createBillingPostgresRepository } from '../../../packages/billing-platform/src/index'
+import { selfHostedBillingSeed } from '../../../services/control-plane/src/self-hosted-provisioning'
 import { S3CompatibleObjectStore } from '../../../packages/production-topology/src/durable-dependencies'
 
 const required = (name: string): string => {
@@ -105,82 +106,9 @@ try {
   await pool.end()
 }
 
-const billingSeed = {
-  initialPromotionalCreditsMicros: 0,
-  plan: {
-    schemaVersion: 1 as const,
-    planId: 'self-hosted',
-    planVersion: 32,
-    displayName: 'Self-hosted',
-    currency: 'USD' as const,
-    effectiveAt: '2026-01-01T00:00:00.000Z',
-    retiredAt: null,
-    billingMode: 'byok' as const,
-    taxBehavior: 'unknown' as const,
-  },
-  entitlements: ['turn.start', 'workspace.concurrency'].map((key, index) => ({
-    schemaVersion: 1 as const,
-    entitlementId: `self-hosted-entitlement-${index}`,
-    planId: 'self-hosted',
-    planVersion: 32,
-    key: key as 'turn.start' | 'workspace.concurrency',
-    enabled: true,
-    effectiveAt: '2026-01-01T00:00:00.000Z',
-    expiresAt: null,
-    sourceWebhookEventId: null,
-  })),
-  budgets: [
-    {
-      schemaVersion: 1 as const,
-      budgetId: 'self-hosted-monthly',
-      period: 'month' as const,
-      currency: 'USD' as const,
-      softLimitMicros: 8_000_000_000,
-      hardLimitMicros: 10_000_000_000,
-      effectiveAt: '2026-01-01T00:00:00.000Z',
-      expiresAt: null,
-    },
-  ],
-  quotas: [
-    {
-      schemaVersion: 1 as const,
-      quotaId: 'self-hosted-concurrency',
-      policyVersion: 32,
-      meter: 'tenant_concurrent_turn' as const,
-      softLimit: 3,
-      hardLimit: 4,
-      inFlightPolicy: 'continue' as const,
-      effectiveAt: '2026-01-01T00:00:00.000Z',
-      expiresAt: null,
-    },
-  ],
-  retailPriceCatalog: {
-    schemaVersion: 1 as const,
-    catalogId: 'self-hosted-retail',
-    catalogVersion: 'self-hosted-retail-v1',
-    currency: 'USD' as const,
-    rates: [
-      { meter: 'provider_input_token' as const, creditsMicrosPerUnit: 1 },
-      { meter: 'provider_output_token' as const, creditsMicrosPerUnit: 2 },
-      { meter: 'compute_millisecond' as const, creditsMicrosPerUnit: 1 },
-    ],
-    operationMaximums: [
-      { operation: 'turn.start' as const, maximumCreditsMicros: 100_000 },
-      {
-        operation: 'workspace.concurrency' as const,
-        maximumCreditsMicros: 100_000,
-      },
-    ],
-    idempotencyKey: 'self-hosted-retail-v1',
-    paymentReference: null,
-    usageDedupeKey: null,
-    runId: null,
-    operationReference: null,
-    occurredAt: '2026-01-01T00:00:00.000Z',
-    effectiveAt: '2026-01-01T00:00:00.000Z',
-    retiredAt: null,
-  },
-}
+// WP37: billing seed tanımı kayıt akışıyla paylaşılan modüle taşındı
+// (services/control-plane/src/self-hosted-provisioning.ts).
+const billingSeed = selfHostedBillingSeed()
 
 const databaseUrl = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}`
 const billing = createBillingPostgresRepository(databaseUrl, {

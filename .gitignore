@@ -23,3 +23,5 @@ artifacts/
 
 # Local review scratch
 _to_delete/
+.wp37/
+.wp38/

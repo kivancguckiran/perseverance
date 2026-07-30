@@ -317,6 +317,12 @@ export interface DevelopmentCommercialSeed {
   initialPromotionalCreditsMicros?: number
 }
 
+export function requiresPrepaidCredits(
+  billingMode: CommercialPlan['billingMode'],
+): boolean {
+  return billingMode !== 'byok'
+}
+
 export interface DurableAdmissionInput extends BillingScope {
   operation: AdmissionRequest['operation']
   requestKey: string
@@ -2022,7 +2028,11 @@ export class BillingPostgresRepository {
       )
       return decision
     })
-    if (decision.outcome === 'deny') return decision
+    if (
+      decision.outcome === 'deny' ||
+      !requiresPrepaidCredits(snapshot.plan.billingMode)
+    )
+      return decision
     try {
       await this.reserveCredits({
         ...scope,

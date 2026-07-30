@@ -1,20 +1,25 @@
+// WP38 (ADR-0038): SW tek statik dosya kalır ve scope'unu servis edildiği
+// yerden türetir — kökte BASE '/', base-path'li kurulumda '/workspace/' gibi.
+// Tüm precache/never-cache yolları bu base ile kurulur; kök davranışı bire bir
+// korunur.
+const BASE = new URL('./', self.location).pathname
 const CACHE_PREFIX = 'persistent-workspace-shell-'
-const CACHE_VERSION = `${CACHE_PREFIX}wp23-v1`
+const CACHE_VERSION = `${CACHE_PREFIX}wp38-v1`
 const SHELL = [
-  '/manifest.webmanifest',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon-maskable-512.png',
-]
+  'manifest.webmanifest',
+  'icon-192.png',
+  'icon-512.png',
+  'icon-maskable-512.png',
+].map((name) => `${BASE}${name}`)
 const NEVER_CACHE = [
-  '/v1/',
-  '/readyz',
-  '/healthz',
-  '/events',
-  '/auth',
-  '/attachments/',
-  '/artifacts/',
-]
+  'v1/',
+  'readyz',
+  'healthz',
+  'events',
+  'auth',
+  'attachments/',
+  'artifacts/',
+].map((name) => `${BASE}${name}`)
 
 function cacheableStaticResponse(response) {
   const cacheControl = response.headers.get('cache-control') ?? ''
@@ -101,8 +106,8 @@ self.addEventListener('push', (event) => {
         body: approval
           ? 'Bağlamı görmek ve karar vermek için çalışma alanını açın.'
           : 'Güncel durumu güvenli çalışma alanında görüntüleyin.',
-        icon: '/icon-192.png',
-        badge: '/icon-192.png',
+        icon: `${BASE}icon-192.png`,
+        badge: `${BASE}icon-192.png`,
         tag: `pcw:${payload.notificationId}`,
         renotify: approval,
         requireInteraction: approval,
@@ -117,7 +122,7 @@ self.addEventListener('notificationclick', (event) => {
   const payload = event.notification.data
   if (!payload || typeof payload.sessionId !== 'string') return
   const target = new URL(
-    `/sessions/${encodeURIComponent(payload.sessionId)}`,
+    `${BASE}sessions/${encodeURIComponent(payload.sessionId)}`,
     self.location.origin,
   )
   target.searchParams.set('notification', payload.notificationId)
@@ -176,13 +181,13 @@ self.addEventListener('fetch', (event) => {
               .then((cache) => cache.put(request, response.clone()))
           return response
         })
-        .catch(async () => (await caches.match(request)) ?? caches.match('/')),
+        .catch(async () => (await caches.match(request)) ?? caches.match(BASE)),
     )
     return
   }
 
   if (
-    url.pathname.startsWith('/assets/') &&
+    url.pathname.startsWith(`${BASE}assets/`) &&
     ['script', 'style', 'font', 'image'].includes(request.destination)
   ) {
     event.respondWith(

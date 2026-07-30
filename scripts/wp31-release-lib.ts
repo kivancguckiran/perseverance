@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import {
   existsSync,
   lstatSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   statSync,
@@ -469,7 +470,13 @@ export const collectDependencyInventory = (
     throw new Error(
       'node_modules/.pnpm bulunamadı; önce pnpm install çalıştırın',
     )
-  const seen = new Map<string, DependencyComponent>()
+  const packages = new Map<
+    string,
+    {
+      meta: Record<string, unknown>
+      entryModules: string
+    }
+  >()
   for (const entry of readdirSync(store).sort()) {
     const entryModules = join(store, entry, 'node_modules')
     if (!existsSync(entryModules) || !statSync(entryModules).isDirectory())
@@ -489,17 +496,72 @@ export const collectDependencyInventory = (
         const meta = JSON.parse(readFileSync(manifest, 'utf8'))
         if (!meta.name || !meta.version) continue
         const key = `${meta.name}@${meta.version}`
-        if (seen.has(key)) continue
-        const license = readPackageLicense(meta)
-        seen.set(key, {
-          name: meta.name,
-          version: meta.version,
-          license,
-          normalizedLicense: normalizeLicense(license),
-          direct: directNames.has(meta.name),
-        })
+        if (!packages.has(key)) packages.set(key, { meta, entryModules })
       }
     }
+  }
+
+  // WP36/WP38: os/cpu kısıtlı platform varyantları ve yalnız bu
+  // varyantlardan erişilen bağımlılık kapanışı build host'una göre değişir.
+  // Örneğin @rolldown/binding-wasm32-wasi elendiğinde onun @emnapi/tslib
+  // kapanışı da elenmelidir. Aksi halde temiz macOS ve Linux install'ları
+  // farklı SBOM üretir.
+  const incoming = new Map<string, Set<string>>()
+  for (const key of packages.keys()) incoming.set(key, new Set())
+  for (const [parentKey, value] of packages) {
+    const dependencies = {
+      ...((value.meta.dependencies as Record<string, unknown> | undefined) ??
+        {}),
+      ...((value.meta.optionalDependencies as
+        Record<string, unknown> | undefined) ?? {}),
+    }
+    for (const name of Object.keys(dependencies)) {
+      const dependencyPath = join(value.entryModules, name)
+      if (!existsSync(dependencyPath)) continue
+      const dependencyManifest = join(
+        realpathSync(dependencyPath),
+        'package.json',
+      )
+      if (!existsSync(dependencyManifest)) continue
+      const dependencyMeta = JSON.parse(
+        readFileSync(dependencyManifest, 'utf8'),
+      )
+      const dependencyKey = `${dependencyMeta.name}@${dependencyMeta.version}`
+      incoming.get(dependencyKey)?.add(parentKey)
+    }
+  }
+  const excluded = new Set(
+    [...packages]
+      .filter(([, value]) => value.meta.os || value.meta.cpu)
+      .map(([key]) => key),
+  )
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const key of packages.keys()) {
+      if (excluded.has(key)) continue
+      const parents = incoming.get(key) ?? new Set()
+      if (
+        parents.size > 0 &&
+        [...parents].every((parent) => excluded.has(parent))
+      ) {
+        excluded.add(key)
+        changed = true
+      }
+    }
+  }
+
+  const seen = new Map<string, DependencyComponent>()
+  for (const [key, value] of packages) {
+    if (excluded.has(key)) continue
+    const license = readPackageLicense(value.meta)
+    seen.set(key, {
+      name: value.meta.name,
+      version: value.meta.version,
+      license,
+      normalizedLicense: normalizeLicense(license),
+      direct: directNames.has(String(value.meta.name)),
+    })
   }
   return [...seen.values()].sort(
     (a, b) =>
@@ -606,6 +668,10 @@ export const buildDependencySbom = (
     properties: [
       { name: 'persistent-codex:generator', value: 'wp31-release-lib' },
       { name: 'persistent-codex:deterministic', value: 'true' },
+      {
+        name: 'persistent-codex:platform-specific-variants-excluded',
+        value: 'true',
+      },
     ],
   },
   components: components.map((component) => ({

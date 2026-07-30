@@ -196,6 +196,20 @@ describe('wp31 lisans gate ve SBOM', () => {
     expect(sbomText).not.toMatch(/timestamp|serialNumber/)
   })
 
+  it('platform varyantlarının transitif bağımlılıklarını envanterden eler', () => {
+    const names = new Set(
+      collectDependencyInventory(root).map((component) => component.name),
+    )
+    for (const platformOnly of [
+      '@emnapi/core',
+      '@emnapi/runtime',
+      '@emnapi/wasi-threads',
+      '@napi-rs/wasm-runtime',
+      '@tybys/wasm-util',
+    ])
+      expect(names).not.toContain(platformOnly)
+  })
+
   it('commit edilmiş SBOM ve lisans raporu günceldir (drift yok)', () => {
     const components = collectDependencyInventory(root)
     const meta = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
@@ -227,6 +241,14 @@ describe('wp31 lisans gate ve SBOM', () => {
 })
 
 describe('wp31 hijyen dosyaları', () => {
+  it('temiz checkout install adımını non-interactive çalıştırır', () => {
+    const preflight = readFileSync(
+      join(root, 'scripts/wp31-public-preflight.ts'),
+      'utf8',
+    )
+    expect(preflight).toContain("CI: process.env.CI ?? 'true'")
+  })
+
   it('zorunlu public dosyaların tümü mevcut ve doludur', () => {
     expect(checkHygieneFiles(root)).toEqual([])
   })
