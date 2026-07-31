@@ -14,8 +14,10 @@ import {
   createSharedFolderRequestSchema,
   folderListResponseSchema,
   folderMembershipSchema,
+  sessionResponseSchema,
   sharedFolderSchema,
   type AuthPrincipal,
+  type SessionResponse,
 } from '@perseverance/control-plane-contracts'
 import {
   ProductionTelemetry,
@@ -30,6 +32,7 @@ import {
 } from '@perseverance/billing-platform'
 import {
   createProductionPostgresRepository,
+  type ProductionSession,
   type ProductionPostgresRepository,
   type ProductionScope,
 } from '@perseverance/production-topology/production-postgres'
@@ -111,6 +114,47 @@ function opaquePrincipalId(principal: AuthPrincipal) {
   return `sha256:${createHash('sha256')
     .update(`${principal.issuer}\0${principal.subject}`)
     .digest('hex')}`
+}
+
+export function productionSessionResponse(
+  stored: ProductionSession,
+): SessionResponse {
+  const archived = stored.status === 'archived'
+  const recoveryRequired = stored.status === 'recovery_required'
+  const provider = ['codex', 'claude', 'gemini', 'cursor'].includes(
+    stored.providerId,
+  )
+    ? (stored.providerId as SessionResponse['provider'])
+    : 'codex'
+
+  return sessionResponseSchema.parse({
+    tenantId: stored.tenantId,
+    workspaceId: stored.workspaceId,
+    sessionId: stored.sessionId,
+    folderId: null,
+    title: 'Yeni konuşma',
+    provider,
+    requestedPolicy: { alias: 'sol', reasoningEffort: 'medium' },
+    resolvedModel: null,
+    reasoningEffort: 'medium',
+    capabilitySnapshot: null,
+    codexThreadId: stored.codexThreadId,
+    status: archived ? 'failed' : stored.status,
+    archivedAt: archived ? stored.updatedAt : null,
+    recoveryErrorCode: recoveryRequired ? 'RECOVERY_OUTCOME_UNKNOWN' : null,
+    lastResumedAt: null,
+    runtimeGeneration: null,
+    runtimeConnected: false,
+    activeRun: null,
+    latestRun: null,
+    replay: {
+      afterSequence: stored.highWaterSequence,
+      highWaterSequence: stored.highWaterSequence,
+    },
+    recoveryOptions: recoveryRequired
+      ? ['retry_resume', 'start_new_session', 'view_read_only']
+      : [],
+  })
 }
 
 async function bounded<T>(timeoutMs: number, operation: () => Promise<T>) {
@@ -624,10 +668,7 @@ export async function buildProductionControlPlane(
         readiness: unavailable,
       })
     const created = await options.repository.createSession(requestScope)
-    return reply.code(201).send({
-      ...created,
-      replay: { events: [], highWaterSequence: 0 },
-    })
+    return reply.code(201).send(productionSessionResponse(created))
   })
 
   app.get<{ Params: { sessionId: string } }>(
@@ -640,11 +681,7 @@ export async function buildProductionControlPlane(
         request.params.sessionId,
       )
       if (!stored) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
-      const replay = await options.repository.replay(
-        requestScope,
-        request.params.sessionId,
-      )
-      return { ...stored, replay }
+      return productionSessionResponse(stored)
     },
   )
 
