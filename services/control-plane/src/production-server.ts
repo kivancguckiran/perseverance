@@ -8,6 +8,7 @@ import {
   type AuthenticationAdapter,
 } from '@perseverance/authz'
 import {
+  apiErrorResponseSchema,
   conversationFolderListResponseSchema,
   conversationFolderSchema,
   createConversationFolderRequestSchema,
@@ -777,10 +778,15 @@ export async function buildProductionControlPlane(
       sessionId: request.params.sessionId,
     })
     if (billingDecision.outcome === 'deny')
-      return reply.code(429).send({
-        code: 'COMMERCIAL_ADMISSION_DENIED',
-        reason: billingDecision.reason,
-      })
+      return reply.code(429).send(
+        apiErrorResponseSchema.parse({
+          code: 'COMMERCIAL_ADMISSION_DENIED',
+          message: billingDecision.reason,
+          reasonCode: billingDecision.reason,
+          policyVersion: billingDecision.policyVersion,
+          measurementWatermark: billingDecision.measurementWatermark,
+        }),
+      )
     const runId = `run_${randomUUID()}`
     const objectKey = `${requestScope.tenantId}/${requestScope.organizationId}/${requestScope.workspaceId}/runs/${runId}/input`
     try {

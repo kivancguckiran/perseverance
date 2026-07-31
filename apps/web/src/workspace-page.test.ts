@@ -151,6 +151,19 @@ describe('API error presentation', () => {
       'Reauthenticate with your password',
     )
   })
+
+  it('explains concurrent-turn admission denials', () => {
+    expect(
+      userFacingApiError(
+        {
+          code: 'COMMERCIAL_ADMISSION_DENIED',
+          message: 'HARD_LIMIT_TENANT_CONCURRENT_TURN',
+          reasonCode: 'HARD_LIMIT_TENANT_CONCURRENT_TURN',
+        },
+        429,
+      ),
+    ).toContain('concurrent turn limit')
+  })
 })
 
 const base = {

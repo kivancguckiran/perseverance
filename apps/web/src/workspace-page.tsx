@@ -466,6 +466,14 @@ export function userFacingApiError(
       'The workspace usage limit has been reached. Check plan and quota settings.',
       'Workspace kullanım limiti doldu. Plan ve kota ayarlarını kontrol edin.',
     )
+  if (
+    body?.reasonCode === 'HARD_LIMIT_TENANT_CONCURRENT_TURN' ||
+    body?.message === 'HARD_LIMIT_TENANT_CONCURRENT_TURN'
+  )
+    return localize(
+      'The concurrent turn limit has been reached. Wait for active work to finish or recover terminal runs before trying again.',
+      'Eşzamanlı turn sınırına ulaşıldı. Yeniden denemeden önce aktif işlerin bitmesini bekleyin veya terminal run’ları kurtarın.',
+    )
   if (body?.code === 'COMMERCIAL_DEPENDENCY_UNAVAILABLE')
     return localize(
       'The usage verification service is unavailable. Try again shortly.',
@@ -3825,8 +3833,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
   }
 
-  async function submitTurn(event: React.FormEvent) {
-    event.preventDefault()
+  async function submitTurn() {
     const trimmed = prompt.trim()
     if (contentKeyLocked) return
     if (
@@ -5212,7 +5219,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           ) : null}
           <form
             className="composer"
-            onSubmit={(event) => void submitTurn(event)}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitTurn()
+            }}
           >
             <label htmlFor="prompt">
               {t('Give Codex a task', 'Codex’e görev ver')}
@@ -5287,7 +5297,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     return
                   event.preventDefault()
                   if (turnActive) void steerOrInterrupt('steer')
-                  else event.currentTarget.form?.requestSubmit()
+                  else void submitTurn()
                 }}
                 placeholder={t(
                   `Give ${session?.provider ?? selectedProvider} a task…`,

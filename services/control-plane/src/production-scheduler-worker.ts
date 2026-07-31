@@ -104,6 +104,27 @@ export interface ProductionSchedulerWorkerOptions {
   contentKeys?: ContentKeyResolver
 }
 
+export async function settleTerminalRunBilling(
+  billing: Pick<
+    BillingPostgresRepository,
+    'settleOperation' | 'completeOperation'
+  >,
+  scope: ProductionScope,
+  runId: string,
+  outcome: 'completed' | 'failed',
+) {
+  await billing.settleOperation(scope, runId, {
+    idempotencyKey: `wp26:${runId}:${outcome}`,
+    usageDedupeKey: `wp26:${runId}:${outcome}`,
+    measuredCreditsMicros: 0,
+    usageStatus: 'measured',
+    outcome,
+    terminal: true,
+    runId,
+  })
+  await billing.completeOperation(scope, runId)
+}
+
 export class ProductionSchedulerWorker {
   readonly options: ProductionSchedulerWorkerOptions
   #running = false
@@ -453,16 +474,12 @@ export class ProductionSchedulerWorker {
           'completed',
         )
         runtimeSpan.end('ok')
-        await this.options.billing.settleOperation(scope, stored.runId, {
-          idempotencyKey: `wp26:${stored.runId}:complete`,
-          usageDedupeKey: `wp26:${stored.runId}:complete`,
-          measuredCreditsMicros: 0,
-          usageStatus: 'measured',
-          outcome: 'completed',
-          terminal: true,
-          runId: stored.runId,
-        })
-        await this.options.billing.completeOperation(scope, stored.runId)
+        await settleTerminalRunBilling(
+          this.options.billing,
+          scope,
+          stored.runId,
+          'completed',
+        )
         const completed = await this.options.repository.completeRun({
           ...scope,
           runId: stored.runId,
@@ -499,7 +516,7 @@ export class ProductionSchedulerWorker {
             ? error.message
             : 'RUNTIME_FAILED'
         if (upstreamStartIntent) {
-          await this.options.repository
+          const terminal = await this.options.repository
             .completeRun({
               ...scope,
               runId: claimed.item.runId,
@@ -507,6 +524,13 @@ export class ProductionSchedulerWorker {
               outcome: 'outcome_unknown',
             })
             .catch(() => false)
+          if (terminal)
+            await settleTerminalRunBilling(
+              this.options.billing,
+              scope,
+              claimed.item.runId,
+              'failed',
+            ).catch(() => undefined)
           await this.options.topology
             .releaseLease({
               ...scope,
