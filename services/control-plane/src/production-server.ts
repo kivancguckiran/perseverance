@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import websocket from '@fastify/websocket'
 import Fastify from 'fastify'
 import { ZodError } from 'zod'
@@ -7,7 +7,16 @@ import {
   OidcAuthenticationAdapter,
   type AuthenticationAdapter,
 } from '@perseverance/authz'
-import type { AuthPrincipal } from '@perseverance/control-plane-contracts'
+import {
+  conversationFolderListResponseSchema,
+  conversationFolderSchema,
+  createConversationFolderRequestSchema,
+  createSharedFolderRequestSchema,
+  folderListResponseSchema,
+  folderMembershipSchema,
+  sharedFolderSchema,
+  type AuthPrincipal,
+} from '@perseverance/control-plane-contracts'
 import {
   ProductionTelemetry,
   OtlpHttpExporter,
@@ -59,6 +68,11 @@ import {
   encryptUserContent,
   parseUserContentEnvelope,
 } from './user-content-crypto'
+import {
+  type FolderIdentity,
+  type SharedFolderRepository,
+} from '@perseverance/shared-folders'
+import { PostgresSharedFolderRepository } from '@perseverance/shared-folders/postgres'
 
 export interface ProductionControlPlaneOptions {
   instanceId: string
@@ -78,6 +92,7 @@ export interface ProductionControlPlaneOptions {
   allowedWebOrigin?: string
   managedCloud?: ReturnType<typeof createManagedCloudProductionComposition>
   selfHostedAuth?: SelfHostedAuthService
+  sharedFolders?: SharedFolderRepository
 }
 
 function header(value: string | string[] | undefined) {
@@ -90,6 +105,12 @@ function scope(headers: Record<string, string | string[] | undefined>) {
   const workspaceId = header(headers['x-workspace-id'])
   if (!tenantId || !organizationId || !workspaceId) return null
   return { tenantId, organizationId, workspaceId } satisfies ProductionScope
+}
+
+function opaquePrincipalId(principal: AuthPrincipal) {
+  return `sha256:${createHash('sha256')
+    .update(`${principal.issuer}\0${principal.subject}`)
+    .digest('hex')}`
 }
 
 async function bounded<T>(timeoutMs: number, operation: () => Promise<T>) {
@@ -387,6 +408,85 @@ export async function buildProductionControlPlane(
         activeOrganizationId: requestScope.organizationId,
         activeWorkspaceId: requestScope.workspaceId,
       })
+    })
+  }
+
+  if (options.sharedFolders) {
+    const folderIdentity = (request: {
+      headers: Record<string, string | string[] | undefined>
+    }): FolderIdentity | null => {
+      const requestScope = scope(request.headers)
+      const principal = requestPrincipals.get(request as object)
+      if (!requestScope || !principal) return null
+      return {
+        ...requestScope,
+        principalId: opaquePrincipalId(principal),
+      }
+    }
+    const legacyFolder = (folder: {
+      tenantId: string
+      workspaceId: string
+      folderId: string
+      name: string
+      createdAt: string
+      updatedAt: string
+      archivedAt: string | null
+    }) =>
+      conversationFolderSchema.parse({
+        tenantId: folder.tenantId,
+        workspaceId: folder.workspaceId,
+        folderId: folder.folderId,
+        name: folder.name,
+        createdAt: folder.createdAt,
+        updatedAt: folder.updatedAt,
+        archivedAt: folder.archivedAt,
+      })
+
+    app.get('/v1/folders', async (request, reply) => {
+      const identity = folderIdentity(request)
+      if (!identity) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      return folderListResponseSchema.parse({
+        folders: await options.sharedFolders!.listFolders(identity),
+      })
+    })
+
+    app.post('/v1/folders', async (request, reply) => {
+      const identity = folderIdentity(request)
+      const body = createSharedFolderRequestSchema.safeParse(request.body)
+      if (!identity || !body.success)
+        return reply.code(400).send({ code: 'VALIDATION_ERROR' })
+      const created = await options.sharedFolders!.createFolder({
+        ...identity,
+        name: body.data.name,
+      })
+      return reply.code(201).send({
+        folder: sharedFolderSchema.parse(created.folder),
+        membership: folderMembershipSchema.parse(created.membership),
+      })
+    })
+
+    // The current conversation sidebar still consumes the pre-WP25 endpoint.
+    // Back it with the same durable shared-folder aggregate so self-hosted
+    // production does not fall back to the alpha-only SQLite event store.
+    app.get('/v1/conversation-folders', async (request, reply) => {
+      const identity = folderIdentity(request)
+      if (!identity) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const folders = await options.sharedFolders!.listFolders(identity)
+      return conversationFolderListResponseSchema.parse({
+        folders: folders.map((entry) => legacyFolder(entry.folder)),
+      })
+    })
+
+    app.post('/v1/conversation-folders', async (request, reply) => {
+      const identity = folderIdentity(request)
+      const body = createConversationFolderRequestSchema.safeParse(request.body)
+      if (!identity || !body.success)
+        return reply.code(400).send({ code: 'VALIDATION_ERROR' })
+      const created = await options.sharedFolders!.createFolder({
+        ...identity,
+        name: body.data.name,
+      })
+      return reply.code(201).send(legacyFolder(created.folder))
     })
   }
 
@@ -1096,6 +1196,7 @@ export async function buildProductionControlPlaneFromEnv(
     required('TOPOLOGY_DATABASE_URL'),
   )
   if (selfHostedAuth) await selfHostedAuth.startInternalListener()
+  const sharedFolders = new PostgresSharedFolderRepository(repository.pool)
   const app = await buildProductionControlPlane({
     instanceId: required('PERSISTENT_INSTANCE_ID'),
     repository,
@@ -1157,7 +1258,9 @@ export async function buildProductionControlPlaneFromEnv(
       ? { allowedWebOrigin: env.WEB_ALLOWED_ORIGIN }
       : {}),
     ...(selfHostedAuth ? { selfHostedAuth: selfHostedAuth.service } : {}),
+    sharedFolders,
   })
+  app.addHook('onClose', async () => sharedFolders.close())
   if (selfHostedAuth) app.addHook('onClose', async () => selfHostedAuth.close())
   const exporter = env.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OtlpHttpExporter(telemetry, env.OTEL_EXPORTER_OTLP_ENDPOINT)
