@@ -145,6 +145,12 @@ describe('API error presentation', () => {
       userFacingApiError({ code: 'UNKNOWN', message: 'Tekrar deneyin' }, 500),
     ).toBe('Tekrar deneyin')
   })
+
+  it('explains that a password is required when the content key lease is lost', () => {
+    expect(userFacingApiError(null, 428)).toContain(
+      'parolanızla yeniden doğrulayın',
+    )
+  })
 })
 
 const base = {

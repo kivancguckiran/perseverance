@@ -613,6 +613,95 @@ export class SelfHostedAuthService {
     }
   }
 
+  async unlock(input: {
+    username: string
+    password: string
+    expectedSubject: string
+    expectedScope: SelfHostedAuthScope
+  }): Promise<{ contentKeyUnlocked: true }> {
+    const username = String(input.username ?? '')
+      .trim()
+      .toLowerCase()
+    if (
+      this.subjectFor(username) !== input.expectedSubject ||
+      input.expectedScope.tenantId !== input.expectedScope.organizationId
+    )
+      throw new SelfHostedAuthError('AUTHORIZATION_DENIED', 403)
+    if (!this.#limiter.allowed(username))
+      throw new SelfHostedAuthError('AUTH_RATE_LIMITED', 429)
+    const found = await this.#withAuthFlow(async (client) => {
+      const user = await this.#getUser(client, username)
+      const wrap = user
+        ? await this.#getWrap(client, user.userId, 'password')
+        : null
+      return { user, wrap }
+    })
+    const passwordOk = await verifyUserPassword(
+      String(input.password ?? ''),
+      found.user?.passwordHash ?? null,
+    )
+    if (!found.user || !passwordOk)
+      await this.#denied(
+        username,
+        'user.unlock_denied',
+        'INVALID_CREDENTIALS',
+        401,
+      )
+    const user = found.user as StoredUser
+    if (
+      user.status !== 'approved' ||
+      user.organizationId !== input.expectedScope.organizationId ||
+      user.workspaceId !== input.expectedScope.workspaceId
+    )
+      await this.#denied(
+        username,
+        'user.unlock_denied',
+        'AUTHORIZATION_DENIED',
+        403,
+      )
+    if (!found.wrap)
+      await this.#denied(
+        username,
+        'user.unlock_denied',
+        'CONTENT_KEY_MISSING',
+        409,
+      )
+    const wrap = found.wrap as StoredContentKeyWrap
+    const kek = await deriveUserKek(String(input.password), wrap.kdfParams)
+    let contentKey: Buffer
+    try {
+      contentKey = unwrapContentKey(wrap.wrappedKey, kek, {
+        ...this.#scopeOf(user),
+        userId: user.userId,
+        wrapType: 'password',
+      })
+    } catch {
+      await this.#denied(
+        username,
+        'user.unlock_denied',
+        'CONTENT_KEY_UNWRAP_FAILED',
+        401,
+      )
+      throw new Error('unreachable')
+    } finally {
+      kek.fill(0)
+    }
+    await this.#withAuthFlow(async (client) => {
+      await this.#audit(client, {
+        username,
+        action: 'user.content_key_unlocked',
+        outcome: 'allow',
+        reasonCode: 'PASSWORD_VERIFIED',
+        tenantId: user.organizationId,
+      })
+    })
+    this.#userWorkspaces.add(user.workspaceId)
+    this.#issueLease(user, wrap.keyVersion, contentKey)
+    contentKey.fill(0)
+    this.#limiter.reset(username)
+    return { contentKeyUnlocked: true }
+  }
+
   async refresh(input: { refreshToken: string }): Promise<{
     username: string
     scope: SelfHostedAuthScope

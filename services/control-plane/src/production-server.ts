@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import websocket from '@fastify/websocket'
 import Fastify from 'fastify'
-import { ZodError } from 'zod'
+import { z, ZodError } from 'zod'
 import {
   AuthenticationError,
   OidcAuthenticationAdapter,
@@ -60,7 +60,10 @@ import {
   type ProviderAuthEvidence,
   type ProviderAuthFeatureFlags,
 } from '@perseverance/provider-auth'
-import { type SelfHostedAuthService } from './self-hosted-auth'
+import {
+  SelfHostedAuthError,
+  type SelfHostedAuthService,
+} from './self-hosted-auth'
 import {
   SELF_HOSTED_AUTH_PUBLIC_PATHS,
   registerSelfHostedAuthRoutes,
@@ -407,6 +410,33 @@ export async function buildProductionControlPlane(
 
   if (options.selfHostedAuth) {
     registerSelfHostedAuthRoutes(app, { service: options.selfHostedAuth })
+    app.post('/v1/auth/unlock', async (request, reply) => {
+      const requestScope = scope(request.headers)
+      const principal = requestPrincipals.get(request)
+      if (!requestScope || !principal)
+        return reply.code(401).send({ code: 'AUTH_REQUIRED' })
+      try {
+        const body = z
+          .object({
+            username: z.string().trim().min(3).max(32),
+            password: z.string().min(8).max(1024),
+          })
+          .parse(request.body)
+        return reply.code(200).send(
+          await options.selfHostedAuth!.unlock({
+            ...body,
+            expectedSubject: principal.subject,
+            expectedScope: requestScope,
+          }),
+        )
+      } catch (error) {
+        if (error instanceof ZodError)
+          return reply.code(400).send({ code: 'INVALID_AUTH_REQUEST' })
+        if (error instanceof SelfHostedAuthError)
+          return reply.code(error.statusCode).send({ code: error.message })
+        throw error
+      }
+    })
     // Oturum durumu: bearer + scope doğrulamasından geçer (public listede
     // değildir); web istemcisi content key kilidini buradan yoklar.
     app.get('/v1/auth/session', async (request, reply) => {

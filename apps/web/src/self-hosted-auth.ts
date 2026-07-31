@@ -111,6 +111,67 @@ export async function refreshStoredSession(
   }
 }
 
+export interface ContentKeySessionStatus {
+  subject: string | null
+  tenantId: string
+  organizationId: string
+  workspaceId: string
+  contentKeyUnlocked: boolean
+}
+
+export async function readContentKeySession(
+  apiBaseUrl: string,
+  headers: Record<string, string>,
+): Promise<ContentKeySessionStatus> {
+  const response = await fetch(`${apiBaseUrl}/v1/auth/session`, { headers })
+  if (!response.ok)
+    throw new Error(`İçerik anahtarı durumu okunamadı (${response.status}).`)
+  const body = (await response.json()) as Partial<ContentKeySessionStatus>
+  if (
+    typeof body.contentKeyUnlocked !== 'boolean' ||
+    typeof body.tenantId !== 'string' ||
+    typeof body.organizationId !== 'string' ||
+    typeof body.workspaceId !== 'string'
+  )
+    throw new Error('İçerik anahtarı durumu geçersiz.')
+  return body as ContentKeySessionStatus
+}
+
+const UNLOCK_ERROR_MESSAGES: Record<string, string> = {
+  INVALID_CREDENTIALS: 'Parola hatalı.',
+  CONTENT_KEY_UNWRAP_FAILED:
+    'İçerik anahtarı açılamadı. Parolanızı kontrol edin.',
+  AUTH_RATE_LIMITED:
+    'Çok fazla deneme yapıldı. Bir süre bekleyip yeniden deneyin.',
+  AUTHORIZATION_DENIED: 'Bu workspace için yeniden doğrulama reddedildi.',
+  INVALID_AUTH_REQUEST: 'Parola en az 8 karakter olmalı.',
+}
+
+export async function unlockStoredContentKey(
+  apiBaseUrl: string,
+  headers: Record<string, string>,
+  password: string,
+): Promise<void> {
+  const username = readStoredAuth()?.username
+  if (!username) throw new Error('Oturum kullanıcı adı bulunamadı.')
+  const response = await fetch(`${apiBaseUrl}/v1/auth/unlock`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ username, password }),
+  })
+  const body = (await response.json().catch(() => ({}))) as {
+    code?: string
+    contentKeyUnlocked?: boolean
+  }
+  if (!response.ok)
+    throw new Error(
+      UNLOCK_ERROR_MESSAGES[body.code ?? ''] ??
+        `Yeniden doğrulama başarısız (${response.status}).`,
+    )
+  if (body.contentKeyUnlocked !== true)
+    throw new Error('İçerik anahtarı açılamadı.')
+}
+
 export async function signOut(apiBaseUrl: string): Promise<void> {
   const auth = readStoredAuth()
   try {

@@ -71,7 +71,13 @@ import {
   useState,
 } from 'react'
 import { PushNotificationControl, useOnlineStatus } from './pwa-runtime'
-import { readStoredAuth, signOut } from './self-hosted-auth'
+import './content-key-unlock.css'
+import {
+  readContentKeySession,
+  readStoredAuth,
+  signOut,
+  unlockStoredContentKey,
+} from './self-hosted-auth'
 import {
   offlineConversationKey,
   offlineHistoryKey,
@@ -440,6 +446,8 @@ export function userFacingApiError(
     return 'Workspace kullanım limiti doldu. Plan ve kota ayarlarını kontrol edin.'
   if (body?.code === 'COMMERCIAL_DEPENDENCY_UNAVAILABLE')
     return 'Kullanım doğrulama servisine şu anda ulaşılamıyor. Lütfen kısa bir süre sonra yeniden deneyin.'
+  if (body?.code === 'CONTENT_KEY_LOCKED' || status === 428)
+    return 'Güvenli içerik anahtarı kilitli. Devam etmek için parolanızla yeniden doğrulayın.'
   return body?.message ?? `İstek başarısız (${status})`
 }
 
@@ -2464,6 +2472,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       query.state.data?.status === 'ready' ? false : 5_000,
   })
   const authReady = readiness.data?.status === 'ready'
+  const contentKeySession = useQuery({
+    queryKey: ['content-key-session', cacheNamespace],
+    queryFn: () => readContentKeySession(apiBaseUrl, scopeHeaders),
+    enabled: online && identity.isSuccess && Boolean(storedAuth?.username),
+    retry: false,
+  })
+  const contentKeyLocked = contentKeySession.data?.contentKeyUnlocked === false
   const providerCatalogs = useQuery({
     queryKey: ['provider-catalogs', cacheNamespace],
     queryFn: readProviderCatalogs,
@@ -2554,6 +2569,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [gitError, setGitError] = useState<string>()
   const [error, setError] = useState<string>()
   const [prompt, setPrompt] = useState('')
+  const [unlockPassword, setUnlockPassword] = useState('')
+  const [unlockPending, setUnlockPending] = useState(false)
+  const [unlockError, setUnlockError] = useState<string>()
   const [realtimeState, setRealtimeState] = useState('kapalı')
   const [inviteTokenFromLocation, setInviteTokenFromLocation] = useState<
     string | null
@@ -3496,6 +3514,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   async function submitTurn(event: React.FormEvent) {
     event.preventDefault()
     const trimmed = prompt.trim()
+    if (contentKeyLocked) return
     if (
       turnSubmitBlocked({
         session,
@@ -3545,8 +3564,31 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       setAttachments([])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
+      if (
+        cause instanceof Error &&
+        cause.message.includes('Güvenli içerik anahtarı kilitli')
+      )
+        void contentKeySession.refetch()
     } finally {
       setTurnPending(false)
+    }
+  }
+
+  async function unlockContentKey(event: React.FormEvent) {
+    event.preventDefault()
+    setUnlockPending(true)
+    setUnlockError(undefined)
+    try {
+      await unlockStoredContentKey(apiBaseUrl, scopeHeaders, unlockPassword)
+      const refreshed = await contentKeySession.refetch()
+      if (refreshed.data?.contentKeyUnlocked !== true)
+        throw new Error('İçerik anahtarı durumu doğrulanamadı.')
+      setUnlockPassword('')
+      setError(undefined)
+    } catch (cause) {
+      setUnlockError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setUnlockPending(false)
     }
   }
 
@@ -4637,6 +4679,38 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               <p>{error}</p>
             </section>
           ) : null}
+          {contentKeyLocked ? (
+            <form
+              className="content-key-unlock"
+              role="alert"
+              onSubmit={(event) => void unlockContentKey(event)}
+            >
+              <div>
+                <strong>Güvenli oturum yeniden doğrulanmalı</strong>
+                <p>
+                  Sunucu yeniden başlatıldı. Mesajınız korunuyor; göndermek için
+                  parolanızı bir kez girin.
+                </p>
+              </div>
+              <label>
+                <span>Parola</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={unlockPassword}
+                  disabled={unlockPending}
+                  onChange={(event) => setUnlockPassword(event.target.value)}
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={unlockPending || unlockPassword.length < 8}
+              >
+                {unlockPending ? 'Doğrulanıyor…' : 'Kilidi aç'}
+              </button>
+              {unlockError ? <p className="form-error">{unlockError}</p> : null}
+            </form>
+          ) : null}
           {session?.recoveryOptions.length ? (
             <section className="recovery-panel" aria-live="polite">
               <h3>
@@ -4741,7 +4815,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     turnPending ||
                     turnActive ||
                     readOnly ||
-                    attachmentPending
+                    attachmentPending ||
+                    contentKeyLocked
                   }
                   onChange={(event) => {
                     void uploadAttachments(event.target.files)
@@ -4775,6 +4850,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   !online ||
                   turnPending ||
                   readOnly ||
+                  contentKeyLocked ||
                   (!authReady &&
                     (session?.provider ?? selectedProvider) === 'codex')
                 }
@@ -4789,6 +4865,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   attachmentPending ||
                   turnActive ||
                   readOnly ||
+                  contentKeyLocked ||
                   (!authReady &&
                     (session?.provider ?? selectedProvider) === 'codex')
                 }

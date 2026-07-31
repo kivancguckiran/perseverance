@@ -33,6 +33,11 @@ describe('wp37 auth API sözleşmesi', () => {
         '/v1/auth/session',
       ),
     ).toBe(false)
+    expect(
+      (SELF_HOSTED_AUTH_PUBLIC_PATHS as readonly string[]).includes(
+        '/v1/auth/unlock',
+      ),
+    ).toBe(false)
   })
 
   it('register yanıtında recovery key bir kez döner; hatalar koda eşlenir', async () => {
