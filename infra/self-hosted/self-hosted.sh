@@ -446,6 +446,8 @@ cmd_install() {
     update_env_value SELF_HOSTED_BASE_PATH "${base_path}"
     update_env_value SELF_HOSTED_SOURCE_COMMIT "${source_commit}"
     update_env_value SELF_HOSTED_PRODUCT_IMAGE "${product_image}"
+    update_env_value SELF_HOSTED_DIST_DIR "${SELF_HOSTED_SCRIPT_DIR}"
+    update_env_value SELF_HOSTED_MIGRATIONS_DIR "${SELF_HOSTED_REPO_ROOT}/infra/postgres/migrations"
   fi
   render_caddyfile "$(read_env SELF_HOSTED_DOMAIN)" "$(read_env SELF_HOSTED_TLS_MODE)" \
     "${SELF_HOSTED_ACME_EMAIL:-}" "${base_path}"
@@ -862,6 +864,10 @@ cmd_upgrade() {
 
   update_env_value SELF_HOSTED_SOURCE_COMMIT "${new_commit}"
   update_env_value SELF_HOSTED_PRODUCT_IMAGE "${product_image}"
+  # Host bind mount'ları kurulum anındaki checkout'a sabitleme. Her upgrade
+  # migration runner ve compose tanımını doğrulanmış yeni release'ten okumalı.
+  update_env_value SELF_HOSTED_DIST_DIR "${SELF_HOSTED_SCRIPT_DIR}"
+  update_env_value SELF_HOSTED_MIGRATIONS_DIR "${SELF_HOSTED_REPO_ROOT}/infra/postgres/migrations"
 
   log "migration'lar uygulanıyor"
   compose run --rm migrate
