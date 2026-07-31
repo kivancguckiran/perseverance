@@ -5,6 +5,7 @@
 import { withBase } from './base-path'
 import { useState } from 'react'
 import { storeAuthResponse, type AuthSessionResponse } from './self-hosted-auth'
+import { useTranslations } from './i18n'
 
 const apiBaseUrl =
   (import.meta.env.VITE_CONTROL_PLANE_URL as string | undefined) ??
@@ -18,26 +19,53 @@ interface AuthScope {
   workspaceId: string
 }
 
-const ERROR_MESSAGES: Record<string, string> = {
-  INVALID_CREDENTIALS: 'Kullanıcı adı veya parola hatalı.',
-  REGISTRATION_NOT_ALLOWED:
+const ERROR_MESSAGES: Record<string, [string, string]> = {
+  INVALID_CREDENTIALS: [
+    'Incorrect username or password.',
+    'Kullanıcı adı veya parola hatalı.',
+  ],
+  REGISTRATION_NOT_ALLOWED: [
+    'This username is not on the allowlist. Ask your operator to add it.',
     'Bu kullanıcı adı izin listesinde değil. Operatörünüzden allowlist kaydı isteyin.',
-  USERNAME_TAKEN: 'Bu kullanıcı adı zaten kayıtlı.',
-  AUTH_RATE_LIMITED:
+  ],
+  USERNAME_TAKEN: [
+    'This username is already registered.',
+    'Bu kullanıcı adı zaten kayıtlı.',
+  ],
+  AUTH_RATE_LIMITED: [
+    'Too many attempts. Wait a while and try again.',
     'Çok fazla deneme yapıldı. Bir süre bekleyip yeniden deneyin.',
-  PASSWORD_TOO_SHORT: 'Parola en az 8 karakter olmalı.',
-  INVALID_USERNAME:
+  ],
+  PASSWORD_TOO_SHORT: [
+    'The password must be at least 8 characters.',
+    'Parola en az 8 karakter olmalı.',
+  ],
+  INVALID_USERNAME: [
+    'The username must be 3–32 characters using lowercase letters, numbers, hyphens, or underscores.',
     'Kullanıcı adı 3-32 karakter olmalı; yalnız küçük harf, rakam, tire ve alt çizgi.',
-  INVALID_RECOVERY_KEY: 'Kurtarma kodu doğrulanamadı.',
-  USER_DISABLED: 'Bu hesap devre dışı bırakılmış. Operatörünüzle görüşün.',
-  CONTENT_KEY_UNWRAP_FAILED:
+  ],
+  INVALID_RECOVERY_KEY: [
+    'The recovery code could not be verified.',
+    'Kurtarma kodu doğrulanamadı.',
+  ],
+  USER_DISABLED: [
+    'This account is disabled. Contact your operator.',
+    'Bu hesap devre dışı bırakılmış. Operatörünüzle görüşün.',
+  ],
+  CONTENT_KEY_UNWRAP_FAILED: [
+    'The content key could not be unlocked. Check your password.',
     'İçerik anahtarı çözülemedi. Parolanızı kontrol edin.',
-  INVALID_AUTH_REQUEST: 'İstek doğrulanamadı. Alanları kontrol edin.',
+  ],
+  INVALID_AUTH_REQUEST: [
+    'The request could not be verified. Check the fields.',
+    'İstek doğrulanamadı. Alanları kontrol edin.',
+  ],
 }
 
 async function authPost(
   path: string,
   body: Record<string, string>,
+  t: (english: string, turkish: string) => string,
 ): Promise<Record<string, unknown>> {
   let response: Response
   try {
@@ -47,15 +75,25 @@ async function authPost(
       body: JSON.stringify(body),
     })
   } catch {
-    throw new Error('Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.')
+    throw new Error(
+      t(
+        'Could not reach the server. Check your connection.',
+        'Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.',
+      ),
+    )
   }
   const payload = (await response.json().catch(() => ({}))) as {
     code?: string
   }
+  const localizedError = ERROR_MESSAGES[payload.code ?? '']
   if (!response.ok)
     throw new Error(
-      ERROR_MESSAGES[payload.code ?? ''] ??
-        `İşlem başarısız (${payload.code ?? response.status}).`,
+      localizedError
+        ? t(localizedError[0], localizedError[1])
+        : t(
+            `Operation failed (${payload.code ?? response.status}).`,
+            `İşlem başarısız (${payload.code ?? response.status}).`,
+          ),
     )
   return payload as Record<string, unknown>
 }
@@ -68,6 +106,7 @@ const passwordAutocompleteFor = (mode: Mode) =>
     : ['new', 'password'].join('-')
 
 export function LoginPage() {
+  const t = useTranslations()
   const [mode, setMode] = useState<Mode>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -86,10 +125,14 @@ export function LoginPage() {
     setError(null)
     try {
       if (mode === 'register') {
-        const result = await authPost('/v1/auth/register', {
-          username,
-          password,
-        })
+        const result = await authPost(
+          '/v1/auth/register',
+          {
+            username,
+            password,
+          },
+          t,
+        )
         storeAuthResponse({
           session: result.session as AuthSessionResponse,
           username: String(result.username ?? username),
@@ -97,7 +140,11 @@ export function LoginPage() {
         })
         setIssuedRecoveryKey(String(result.recoveryKey))
       } else if (mode === 'login') {
-        const result = await authPost('/v1/auth/login', { username, password })
+        const result = await authPost(
+          '/v1/auth/login',
+          { username, password },
+          t,
+        )
         storeAuthResponse({
           session: result.session as AuthSessionResponse,
           username: String(result.username ?? username),
@@ -105,11 +152,15 @@ export function LoginPage() {
         })
         window.location.href = withBase('/')
       } else {
-        const result = await authPost('/v1/auth/recover', {
-          username,
-          recoveryKey: recoveryInput,
-          newPassword: password,
-        })
+        const result = await authPost(
+          '/v1/auth/recover',
+          {
+            username,
+            recoveryKey: recoveryInput,
+            newPassword: password,
+          },
+          t,
+        )
         storeAuthResponse({
           session: result.session as AuthSessionResponse,
           username: String(result.username ?? username),
@@ -118,7 +169,11 @@ export function LoginPage() {
         setIssuedRecoveryKey(String(result.recoveryKey))
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Bilinmeyen hata.')
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : t('Unknown error.', 'Bilinmeyen hata.'),
+      )
     } finally {
       setPending(false)
     }
@@ -128,13 +183,15 @@ export function LoginPage() {
     return (
       <main className="recovery-poster">
         <section className="recovery-poster-content" aria-live="polite">
-          <p className="eyebrow">KURTARMA KODUNUZ</p>
-          <h1>Bu kodu şimdi kaydedin</h1>
+          <p className="eyebrow">
+            {t('YOUR RECOVERY CODE', 'KURTARMA KODUNUZ')}
+          </p>
+          <h1>{t('Save this code now', 'Bu kodu şimdi kaydedin')}</h1>
           <p>
-            Bu kod YALNIZ ŞİMDİ gösteriliyor ve sunucuda saklanmıyor. Parolanızı
-            unutursanız hesabınıza erişmenin tek yolu budur. Parola ve kod
-            birlikte kaybolursa konuşmalarınız kalıcı olarak çözülemez; operatör
-            dahil kimse kurtaramaz.
+            {t(
+              'This code is shown ONLY NOW and is not stored on the server. It is the only way to regain access if you forget your password. If both are lost, your conversations cannot be decrypted—not even by the operator.',
+              'Bu kod YALNIZ ŞİMDİ gösteriliyor ve sunucuda saklanmıyor. Parolanızı unutursanız hesabınıza erişmenin tek yolu budur. Parola ve kod birlikte kaybolursa konuşmalarınız kalıcı olarak çözülemez; operatör dahil kimse kurtaramaz.',
+            )}
           </p>
           <pre className="recovery-key" data-testid="recovery-key">
             {issuedRecoveryKey}
@@ -148,7 +205,9 @@ export function LoginPage() {
                 window.setTimeout(() => setRecoveryCopied(false), 2_000)
               }}
             >
-              {recoveryCopied ? 'Kopyalandı ✓' : 'Kopyala'}
+              {recoveryCopied
+                ? t('Copied ✓', 'Kopyalandı ✓')
+                : t('Copy', 'Kopyala')}
             </button>
             <button
               type="button"
@@ -160,12 +219,12 @@ export function LoginPage() {
                 )
                 const link = document.createElement('a')
                 link.href = url
-                link.download = 'perseverance-kurtarma-kodu.txt'
+                link.download = 'perseverance-recovery-code.txt'
                 link.click()
                 URL.revokeObjectURL(url)
               }}
             >
-              İndir (.txt)
+              {t('Download (.txt)', 'İndir (.txt)')}
             </button>
           </div>
           <label className="recovery-acknowledgement">
@@ -176,7 +235,10 @@ export function LoginPage() {
                 setRecoveryAcknowledged(event.target.checked)
               }
             />{' '}
-            Kurtarma kodumu güvenli bir yere kaydettim.
+            {t(
+              'I saved my recovery code somewhere safe.',
+              'Kurtarma kodumu güvenli bir yere kaydettim.',
+            )}
           </label>
           <button
             className="recovery-continue"
@@ -186,7 +248,7 @@ export function LoginPage() {
               window.location.href = withBase('/')
             }}
           >
-            WORKSPACE'E DEVAM ET →
+            {t('CONTINUE TO WORKSPACE →', "WORKSPACE'E DEVAM ET →")}
           </button>
         </section>
       </main>
@@ -204,15 +266,16 @@ export function LoginPage() {
         <p className="auth-subbrand">SELF-HOSTED AGENT WORKSPACE</p>
         <h1>
           {mode === 'login'
-            ? 'Güvenli giriş'
+            ? t('Secure sign in', 'Güvenli giriş')
             : mode === 'register'
-              ? 'Hesap oluştur'
-              : 'Parola kurtarma'}
+              ? t('Create account', 'Hesap oluştur')
+              : t('Password recovery', 'Parola kurtarma')}
         </h1>
         <p>
-          Konuşmalarınız parolanızdan türetilen ve sunucu diskine asla
-          yazılmayan bir anahtarla şifrelenir. Parolanız olmadan operatör dahil
-          kimse içeriğinizi okuyamaz.
+          {t(
+            'Your conversations are encrypted with a key derived from your password and never written to the server disk. Without your password, no one—including the operator—can read your content.',
+            'Konuşmalarınız parolanızdan türetilen ve sunucu diskine asla yazılmayan bir anahtarla şifrelenir. Parolanız olmadan operatör dahil kimse içeriğinizi okuyamaz.',
+          )}
         </p>
         <form
           className="auth-form"
@@ -222,7 +285,7 @@ export function LoginPage() {
           }}
         >
           <label>
-            Kullanıcı adı
+            {t('Username', 'Kullanıcı adı')}
             <input
               name="username"
               autoComplete="username"
@@ -235,7 +298,7 @@ export function LoginPage() {
           </label>
           {mode === 'recover' ? (
             <label>
-              Kurtarma kodu
+              {t('Recovery code', 'Kurtarma kodu')}
               <input
                 name="recoveryKey"
                 autoComplete="off"
@@ -247,7 +310,9 @@ export function LoginPage() {
             </label>
           ) : null}
           <label>
-            {mode === 'recover' ? 'Yeni parola' : 'Parola'}
+            {mode === 'recover'
+              ? t('New password', 'Yeni parola')
+              : t('Password', 'Parola')}
             <input
               name="password"
               type="password"
@@ -265,28 +330,31 @@ export function LoginPage() {
           ) : null}
           <button className="auth-submit" type="submit" disabled={pending}>
             {pending
-              ? 'İşleniyor…'
+              ? t('Processing…', 'İşleniyor…')
               : mode === 'login'
-                ? 'Giriş yap →'
+                ? t('Sign in →', 'Giriş yap →')
                 : mode === 'register'
-                  ? 'Hesap oluştur →'
-                  : 'Parolayı sıfırla →'}
+                  ? t('Create account →', 'Hesap oluştur →')
+                  : t('Reset password →', 'Parolayı sıfırla →')}
           </button>
         </form>
-        <nav className="signin-alternatives" aria-label="Diğer işlemler">
+        <nav
+          className="signin-alternatives"
+          aria-label={t('Other actions', 'Diğer işlemler')}
+        >
           {mode !== 'login' ? (
             <button type="button" onClick={() => setMode('login')}>
-              Girişe dön
+              {t('Back to sign in', 'Girişe dön')}
             </button>
           ) : null}
           {mode !== 'register' ? (
             <button type="button" onClick={() => setMode('register')}>
-              Hesap oluştur
+              {t('Create account', 'Hesap oluştur')}
             </button>
           ) : null}
           {mode !== 'recover' ? (
             <button type="button" onClick={() => setMode('recover')}>
-              Parolamı unuttum
+              {t('Forgot password', 'Parolamı unuttum')}
             </button>
           ) : null}
         </nav>

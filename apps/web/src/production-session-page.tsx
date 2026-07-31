@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslations } from './i18n'
 
 type ProductionSession = {
   sessionId: string
@@ -32,6 +33,7 @@ function accessToken() {
 }
 
 export function ProductionSessionPage({ sessionId }: { sessionId: string }) {
+  const t = useTranslations()
   const query =
     typeof window === 'undefined'
       ? new URLSearchParams()
@@ -163,7 +165,9 @@ export function ProductionSessionPage({ sessionId }: { sessionId: string }) {
       `}</style>
       <header>
         <p>Production HA session</p>
-        <h1>{session?.sessionId ?? 'Session yükleniyor'}</h1>
+        <h1>
+          {session?.sessionId ?? t('Loading session', 'Session yükleniyor')}
+        </h1>
         <div className="production-status">
           <span data-session-state>{session?.status ?? 'loading'}</span>
           <span data-realtime>{realtime}</span>
@@ -183,12 +187,12 @@ export function ProductionSessionPage({ sessionId }: { sessionId: string }) {
             data-approval-state={approval.state}
             key={approval.approvalId}
           >
-            <strong>Komut onayı</strong>
+            <strong>{t('Command approval', 'Komut onayı')}</strong>
             <pre>{String(approval.context.command ?? 'opaque-command')}</pre>
             <p>{approval.state}</p>
             {approval.state === 'pending' ? (
               <button type="button" onClick={() => void decide(approval)}>
-                Onayla
+                {t('Approve', 'Onayla')}
               </button>
             ) : null}
           </article>

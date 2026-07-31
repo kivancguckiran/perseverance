@@ -1,4 +1,5 @@
 import { withBase } from './base-path'
+import { localize } from './i18n'
 // WP37 — self-hosted oturum saklama ve yenileme yardımcıları (ADR-0037).
 // Access/refresh token ve scope tarayıcı storage'ında tutulur; parola ve
 // content key HİÇBİR ZAMAN saklanmaz. sessionStorage 'persistent.auth'
@@ -125,7 +126,12 @@ export async function readContentKeySession(
 ): Promise<ContentKeySessionStatus> {
   const response = await fetch(`${apiBaseUrl}/v1/auth/session`, { headers })
   if (!response.ok)
-    throw new Error(`İçerik anahtarı durumu okunamadı (${response.status}).`)
+    throw new Error(
+      localize(
+        `Could not read content-key status (${response.status}).`,
+        `İçerik anahtarı durumu okunamadı (${response.status}).`,
+      ),
+    )
   const body = (await response.json()) as Partial<ContentKeySessionStatus>
   if (
     typeof body.contentKeyUnlocked !== 'boolean' ||
@@ -133,18 +139,33 @@ export async function readContentKeySession(
     typeof body.organizationId !== 'string' ||
     typeof body.workspaceId !== 'string'
   )
-    throw new Error('İçerik anahtarı durumu geçersiz.')
+    throw new Error(
+      localize(
+        'Invalid content-key status.',
+        'İçerik anahtarı durumu geçersiz.',
+      ),
+    )
   return body as ContentKeySessionStatus
 }
 
-const UNLOCK_ERROR_MESSAGES: Record<string, string> = {
-  INVALID_CREDENTIALS: 'Parola hatalı.',
-  CONTENT_KEY_UNWRAP_FAILED:
+const UNLOCK_ERROR_MESSAGES: Record<string, [string, string]> = {
+  INVALID_CREDENTIALS: ['Incorrect password.', 'Parola hatalı.'],
+  CONTENT_KEY_UNWRAP_FAILED: [
+    'The content key could not be unlocked. Check your password.',
     'İçerik anahtarı açılamadı. Parolanızı kontrol edin.',
-  AUTH_RATE_LIMITED:
+  ],
+  AUTH_RATE_LIMITED: [
+    'Too many attempts. Wait a while and try again.',
     'Çok fazla deneme yapıldı. Bir süre bekleyip yeniden deneyin.',
-  AUTHORIZATION_DENIED: 'Bu workspace için yeniden doğrulama reddedildi.',
-  INVALID_AUTH_REQUEST: 'Parola en az 8 karakter olmalı.',
+  ],
+  AUTHORIZATION_DENIED: [
+    'Reauthentication was denied for this workspace.',
+    'Bu workspace için yeniden doğrulama reddedildi.',
+  ],
+  INVALID_AUTH_REQUEST: [
+    'The password must be at least 8 characters.',
+    'Parola en az 8 karakter olmalı.',
+  ],
 }
 
 export async function unlockStoredContentKey(
@@ -153,7 +174,13 @@ export async function unlockStoredContentKey(
   password: string,
 ): Promise<void> {
   const username = readStoredAuth()?.username
-  if (!username) throw new Error('Oturum kullanıcı adı bulunamadı.')
+  if (!username)
+    throw new Error(
+      localize(
+        'Session username not found.',
+        'Oturum kullanıcı adı bulunamadı.',
+      ),
+    )
   const response = await fetch(`${apiBaseUrl}/v1/auth/unlock`, {
     method: 'POST',
     headers,
@@ -163,13 +190,23 @@ export async function unlockStoredContentKey(
     code?: string
     contentKeyUnlocked?: boolean
   }
+  const localizedError = UNLOCK_ERROR_MESSAGES[body.code ?? '']
   if (!response.ok)
     throw new Error(
-      UNLOCK_ERROR_MESSAGES[body.code ?? ''] ??
-        `Yeniden doğrulama başarısız (${response.status}).`,
+      localizedError
+        ? localize(localizedError[0], localizedError[1])
+        : localize(
+            `Reauthentication failed (${response.status}).`,
+            `Yeniden doğrulama başarısız (${response.status}).`,
+          ),
     )
   if (body.contentKeyUnlocked !== true)
-    throw new Error('İçerik anahtarı açılamadı.')
+    throw new Error(
+      localize(
+        'The content key could not be unlocked.',
+        'İçerik anahtarı açılamadı.',
+      ),
+    )
 }
 
 export async function signOut(apiBaseUrl: string): Promise<void> {

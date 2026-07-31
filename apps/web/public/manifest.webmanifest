@@ -1,7 +1,7 @@
 {
   "name": "Perseverance",
   "short_name": "Perseverance",
-  "description": "Kalıcı çok sağlayıcılı ajan çalışma alanı",
+  "description": "Persistent multi-provider agent workspace",
   "start_url": "./",
   "id": "./",
   "scope": "./",

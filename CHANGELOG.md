@@ -1,43 +1,36 @@
 # Changelog
 
-Bu proje [Semantic Versioning](https://semver.org/) kullanır.
+This project follows [Semantic Versioning](https://semver.org/).
 
 ## [1.0.0] — 2026-07-30
 
-Perseverance'ın ilk public ve desteklenen self-hosted sürümü.
+The first public, supported self-hosted Perseverance release.
 
-### Ürün
+### Product
 
-- Gerçek ve pinli `codex app-server` üzerinde durable thread/turn, replay,
-  reconnect, approval, steer/interrupt ve büyük çıktı/artifact akışları.
-- Codex, Claude, Gemini ve Cursor için provider-neutral conversation,
-  kullanım ledger'ı, PWA, mobil approval/push ve çoklu cihaz sürekliliği.
-- Tenant/RLS izolasyonu, envelope encryption, audit/metrics, corpus ingestion,
-  hybrid retrieval ve workspace-local MCP.
-- Kullanıcı kayıt/giriş allowlist'i ile parola-türevli at-rest konuşma
-  mahremiyeti ve tek kullanımlık recovery key akışı.
+- Durable threads and turns, replay, reconnect, approvals, steer/interrupt, and
+  bounded artifact flows on the real, pinned `codex app-server`.
+- Provider-neutral conversations for Codex, Claude, Gemini, and Cursor, with a usage
+  ledger, PWA, mobile approvals and push, and multi-device continuity.
+- Tenant/RLS isolation, envelope encryption, audit and metrics, corpus ingestion,
+  hybrid retrieval, and workspace-local MCP.
+- Allowlisted registration and sign-in with passphrase-derived at-rest conversation
+  privacy and a one-time recovery code.
 
-### Self-hosted dağıtım
+### Self-hosted distribution
 
-- Digest-pinli Docker Compose topolojisi, TLS reverse proxy, migration,
-  admin bootstrap, şifreli backup/restore, upgrade/rollback ve export'lu
-  uninstall.
-- Linux/amd64 ve Linux/arm64 release artifact'leri; checksum, cosign imzası,
-  CycloneDX SBOM ve SLSA/in-toto provenance doğrulaması.
-- Reverse proxy altında configurable base path; PWA/service worker, API,
-  realtime ve offline replay subpath-aware çalışır.
-- ARM64 Linux gerçek ortamında kurulum, lifecycle, credential scan, privacy
-  ve base-path kabul gate'leri tamamlandı.
+- Digest-pinned Docker Compose topology, TLS reverse proxy, migrations, admin
+  bootstrap, encrypted backup/restore, upgrade/rollback, and export-aware uninstall.
+- Linux AMD64 and ARM64 release artifacts with checksums, cosign signatures,
+  CycloneDX SBOM, and SLSA/in-toto provenance.
+- Configurable reverse-proxy base path across the PWA, service worker, API, realtime,
+  and offline replay.
 
-### Güvenlik ve yönetişim
+### Security and governance
 
-- AGPL-3.0-only lisans, DCO katkı modeli, özel vulnerability bildirim kanalı,
-  deterministik public preflight ve tam Git history secret taraması.
-- `fast-uri` ve `find-my-way` transitive bağımlılıkları, release günündeki
-  yüksek önem dereceli advisory'lerin patched sürümlerine sabitlendi.
-- Önceki çalışma adı kaldırıldı; ürün, paketler, imajlar ve UI
-  **Perseverance** adı altında birleştirildi.
-- Destek sınırı self-hosted community dağıtımıdır. `cloud` profili kod
-  tabanında korunur ancak işletilen veya desteklenen bir hizmet değildir.
+- AGPL-3.0-only license, DCO contribution model, private vulnerability reporting,
+  deterministic public preflight, and full Git-history secret scanning.
+- The supported boundary is the self-hosted community distribution. Historical cloud
+  contracts remain in code, but no hosted service is operated or supported.
 
 [1.0.0]: https://github.com/kivancguckiran/perseverance/releases/tag/v1.0.0

@@ -101,11 +101,11 @@ self.addEventListener('push', (event) => {
   const approval = payload.status === 'approval_required'
   event.waitUntil(
     self.registration.showNotification(
-      approval ? 'Güvenli onay gerekiyor' : 'Görev durumu güncellendi',
+      approval ? 'Secure approval required' : 'Task status updated',
       {
         body: approval
-          ? 'Bağlamı görmek ve karar vermek için çalışma alanını açın.'
-          : 'Güncel durumu güvenli çalışma alanında görüntüleyin.',
+          ? 'Open the workspace to review context and decide.'
+          : 'View the latest status in your secure workspace.',
         icon: `${BASE}icon-192.png`,
         badge: `${BASE}icon-192.png`,
         tag: `pcw:${payload.notificationId}`,

@@ -1,15 +1,15 @@
-## Değişiklik
+## Change
 
-Değişikliğin ne yaptığını ve neden gerekli olduğunu açıklayın.
+Explain what this change does and why it is needed.
 
-## Doğrulama
+## Verification
 
 - [ ] `pnpm verify`
-- [ ] Davranış değişikliği ilgili testlerle kapsandı.
-- [ ] Secret, token veya kişisel veri eklenmedi.
-- [ ] Commit'ler DCO sign-off içeriyor (`git commit -s`).
+- [ ] Behavior changes are covered by relevant tests.
+- [ ] No secrets, tokens, or personal data were added.
+- [ ] Commits include DCO sign-off (`git commit -s`).
 
-## Kapsam
+## Scope
 
-- [ ] Self-hosted destek sınırı korunuyor.
-- [ ] Mimari karar gerekiyorsa ADR eklendi veya güncellendi.
+- [ ] The supported self-hosted boundary is preserved.
+- [ ] An ADR was added or updated if the architecture changed.

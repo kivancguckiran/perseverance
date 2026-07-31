@@ -152,7 +152,7 @@ describe('production PWA assets and cache boundary', () => {
     })
     await pushPromise
     expect(harness.showNotification).toHaveBeenCalledWith(
-      'Güvenli onay gerekiyor',
+      'Secure approval required',
       expect.objectContaining({
         tag: 'pcw:not_opaque',
         requireInteraction: true,

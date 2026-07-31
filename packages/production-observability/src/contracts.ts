@@ -43,7 +43,7 @@ export const sloTargetSchema = z.object({
   comparison: z.enum(['gte', 'lte']),
   window: z.enum(['rolling_28d', 'per_operation']),
   owner: opaqueId,
-  runbook: z.string().startsWith('docs/runbooks/'),
+  runbook: z.string().startsWith('OPERATIONS.md'),
 })
 
 export const backupComponentSchema = z.object({

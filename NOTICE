@@ -7,10 +7,9 @@ version 3 only (AGPL-3.0-only). See the LICENSE file for the full text.
 This repository does not bundle or redistribute any provider CLI or SDK
 binaries (OpenAI Codex, Anthropic Claude, Google Gemini, Cursor). Users
 install those tools themselves under the providers' own licenses and terms.
-See docs/security/provider-binary-and-sdk-distribution-boundaries.md.
+Provider tools remain subject to their vendors' licenses and terms.
 
 "Codex" is a trademark of OpenAI. "Claude" is a trademark of Anthropic.
 "Gemini" is a trademark of Google. "Cursor" is a trademark of Anysphere.
 This project is an independent community project and is not affiliated
-with, sponsored by, or endorsed by any of these companies. See
-docs/policies/brand-and-endorsement-policy.md.
+with, sponsored by, or endorsed by any of these companies.

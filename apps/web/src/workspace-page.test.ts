@@ -117,10 +117,10 @@ describe('readiness response compatibility', () => {
 
 describe('WP20 support access presentation', () => {
   it('distinguishes pending, active, revoked and expired states', () => {
-    expect(supportGrantStatusLabel('pending_approval')).toContain('bekliyor')
-    expect(supportGrantStatusLabel('active')).toBe('Aktif')
-    expect(supportGrantStatusLabel('revoked')).toContain('iptal')
-    expect(supportGrantStatusLabel('expired')).toContain('doldu')
+    expect(supportGrantStatusLabel('pending_approval')).toContain('Awaiting')
+    expect(supportGrantStatusLabel('active')).toBe('Active')
+    expect(supportGrantStatusLabel('revoked')).toContain('Revoked')
+    expect(supportGrantStatusLabel('expired')).toContain('Expired')
   })
 })
 
@@ -137,7 +137,7 @@ describe('API error presentation', () => {
         },
         429,
       ),
-    ).toContain('Kullanım kredisi tükendi')
+    ).toContain('Usage credits are depleted')
   })
 
   it('keeps safe server messages for unknown errors', () => {
@@ -148,7 +148,7 @@ describe('API error presentation', () => {
 
   it('explains that a password is required when the content key lease is lost', () => {
     expect(userFacingApiError(null, 428)).toContain(
-      'parolanızla yeniden doğrulayın',
+      'Reauthenticate with your password',
     )
   })
 })
@@ -232,7 +232,7 @@ describe('bounded browser timeline state', () => {
       priceCatalogVersions: ['v1'],
     }
     expect(formatUsageCost(baseUsage)).toMatchObject({
-      detail: 'API liste fiyatı tahmini · complete',
+      detail: 'API list-price estimate · complete',
     })
     expect(
       formatUsageCost({
@@ -247,8 +247,8 @@ describe('bounded browser timeline state', () => {
         estimatedCostMicros: null,
       }),
     ).toMatchObject({
-      amount: 'Henüz ölçülmüş kullanım yok',
-      detail: 'İlk token kaydından sonra hesaplanır',
+      amount: 'No measured usage yet',
+      detail: 'Calculated after the first token record',
     })
     expect(
       formatUsageCost({
@@ -257,8 +257,8 @@ describe('bounded browser timeline state', () => {
         estimatedCostMicros: null,
       }),
     ).toMatchObject({
-      amount: 'Fiyatlandırılamadı',
-      detail: 'Bu model için fiyat yok · partial',
+      amount: 'Unavailable',
+      detail: 'No price for this model · partial',
     })
     expect(
       formatUsageCost({
@@ -266,7 +266,7 @@ describe('bounded browser timeline state', () => {
         reconciliationStatus: 'reconciled',
         officialCostMicros: 1000,
       }),
-    ).toMatchObject({ detail: 'Gerçekleşen provider maliyeti · complete' })
+    ).toMatchObject({ detail: 'Actual provider cost · complete' })
   })
 
   it('keeps only versioned minimized offline history metadata', () => {
@@ -471,7 +471,7 @@ describe('Codex-style timeline presentation', () => {
         completed: false,
       }),
     ).toMatchObject({
-      title: 'Codex task’ı başlatıldı',
+      title: 'Codex task started',
       summary: 'inProgress',
       tone: 'activity',
       expanded: false,
@@ -498,7 +498,7 @@ describe('Codex-style timeline presentation', () => {
         event,
         completed: false,
       }).title,
-    ).toBe('Codex olayı')
+    ).toBe('Codex event')
   })
 })
 
@@ -601,7 +601,7 @@ describe('conversation projection', () => {
     expect(feed[1]).toMatchObject({ role: 'work', running: false })
     expect(feed[1] && 'cards' in feed[1] ? feed[1].cards : []).toHaveLength(2)
     if (feed[1]?.role === 'work')
-      expect(describeConversationWork(feed[1])).toBe('Çalışma alanını inceledi')
+      expect(describeConversationWork(feed[1])).toBe('Inspected the workspace')
     expect(feed.at(-1)).toMatchObject({
       role: 'work',
       running: true,
@@ -711,7 +711,7 @@ describe('conversation projection', () => {
     expect(activeWork?.key).toBe(completedWork?.key)
     expect(activeWork).toMatchObject({ running: true })
     if (activeWork?.role === 'work')
-      expect(describeConversationWork(activeWork)).toBe('Testleri çalıştırıyor')
+      expect(describeConversationWork(activeWork)).toBe('Running tests')
     expect(
       conversationFeed([started, command, assistant, terminal]).filter(
         (item) => item.role === 'work',
@@ -762,9 +762,7 @@ describe('conversation projection', () => {
     const currentWork = activeFeed.at(-1)
     expect(currentWork).toMatchObject({ role: 'work', running: true })
     if (currentWork?.role === 'work')
-      expect(describeConversationWork(currentWork)).toBe(
-        'Kaynakları araştırıyor',
-      )
+      expect(describeConversationWork(currentWork)).toBe('Researching sources')
   })
 
   it('shows a generic thinking state while an active turn has no visible work', () => {
@@ -792,7 +790,7 @@ describe('conversation projection', () => {
     const pending = feed.at(-1)
     expect(pending).toMatchObject({ role: 'work', cards: [], running: true })
     if (pending?.role === 'work')
-      expect(describeConversationWork(pending)).toBe('Düşünüyor')
+      expect(describeConversationWork(pending)).toBe('Thinking')
   })
 
   it('places initial turn loading after the user message', () => {
@@ -986,12 +984,12 @@ describe('corpus source selection', () => {
 describe('durable background run status', () => {
   it('distinguishes server-owned work from realtime connectivity', () => {
     expect(serverOwnedRunLabel('running', 'yeniden bağlanıyor')).toBe(
-      'Arka planda çalışıyor · bağlantı yeniden kuruluyor',
+      'Running in the background · reconnecting',
     )
     expect(serverOwnedRunLabel('running', 'canlı')).toBe(
-      'Server üzerinde çalışıyor',
+      'Running on the server',
     )
-    expect(serverOwnedRunLabel('interrupting', 'canlı')).toBe('Durduruluyor…')
+    expect(serverOwnedRunLabel('interrupting', 'canlı')).toBe('Stopping…')
   })
 })
 
@@ -1108,9 +1106,9 @@ describe('conversation archiving history surface', () => {
       ),
     )
     expect(markup).toContain('Aktif sohbet')
-    expect(markup).toContain('Sohbeti arşivle')
-    expect(markup).toContain('Aktif sohbet sohbetini arşivle')
-    expect(markup).not.toContain('Arşivlenen sohbetler')
+    expect(markup).toContain('Archive conversation')
+    expect(markup).toContain('Archive Aktif sohbet conversation')
+    expect(markup).not.toContain('Archived conversations')
   })
 
   it('groups archived conversations behind a restore surface', () => {
@@ -1134,9 +1132,9 @@ describe('conversation archiving history surface', () => {
         }),
       ),
     )
-    expect(markup).toContain('Arşivlenen sohbetler · 2')
+    expect(markup).toContain('Archived conversations · 2')
     expect(markup).toContain('Eski sohbet')
     expect(markup).toContain('Daha eski sohbet')
-    expect(markup).toContain('Geri al')
+    expect(markup).toContain('Restore')
   })
 })

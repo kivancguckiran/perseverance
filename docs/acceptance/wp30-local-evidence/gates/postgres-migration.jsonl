@@ -1,5 +1,0 @@
-
-> persistent-codex-workspace@0.0.0 wp30:postgres-migration /private/tmp/persistent-agent-wp30-repro-final
-> node --import tsx scripts/wp30-postgres-migration.ts
-
-{"gate":"wp30:postgres-migration","accepted":true,"status":"passed","postgres":"17.5","image":"postgres:17.5-alpine","migration":"0034","forcedRlsTables":5,"immutableHistory":true}

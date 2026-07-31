@@ -1,62 +1,63 @@
 # Perseverance Agent Guide
 
-Bu repository, `codex app-server` tabanlı kalıcı ve çok kiracılı Codex çalışma alanı ürünüdür. Kullanıcıyla varsayılan iletişim dili Türkçedir; kod, protokol alanları ve teknik terimler doğal İngilizce adlarıyla kalabilir.
+This repository is a persistent, multi-tenant Codex workspace product built on
+`codex app-server`. Communicate with users in their chosen language; keep code,
+protocol fields, and technical terms in natural English.
 
-## Doğruluk kaynakları
+## Sources of truth
 
-1. Ürün ve mimari için `docs/architecture/perseverance-tasarim-spesifikasyonu.md`.
-2. Kabul edilmiş teknik kararlar için `docs/architecture/adr-*.md`.
-3. Aktif uygulama sırası için `docs/planning/poc-roadmap.md`.
-4. Çalışılan alt dizinde daha yakın bir `AGENTS.md` varsa o dosya önce gelir.
+1. Product entry point: `README.md`.
+2. Architecture and security boundaries: `ARCHITECTURE.md`.
+3. Accepted behavior: shared contracts, schemas, and their tests.
+4. A closer `AGENTS.md` takes precedence within its directory.
 
-Spesifikasyon ile kod arasında uyuşmazlık görürsen sessizce yeni mimari icat etme. Dar ve geri alınabilir bir değişiklik yap; karar ürünün güvenlik sınırını, protokolünü veya veri modelini etkiliyorsa önce ADR ekle ya da mevcut ADR'yi güncelle.
+If code and specification disagree, do not invent a new architecture silently.
+Make a narrow, reversible change. Add or update an ADR before changing a security
+boundary, protocol, or data model.
 
-## Mimari sınırlar
+## Architecture boundaries
 
-- Codex orkestrasyonunu yeniden yazma; gerçek, pinli `codex app-server` kullan.
-- MVP'de Workspace Agent ile app-server arasında `stdio`/JSONL kullan. Deneysel WebSocket taşımasını çekirdek bağımlılık yapma.
-- Workspace Agent bir adapter/supervisor'dır; model ajanı değildir.
-- Upstream Codex mesajını önce raw envelope olarak koru, ardından versioned normalize event'e dönüştür.
-- Bilinmeyen item, enum veya event decode crash üretmemeli; `codex.unknown` olarak korunmalıdır.
-- UI delta'ları geçici kabul etmeli; completed item/snapshot geldiğinde reconcile etmelidir.
-- Control plane ile workspace data plane'i süreç ve güvenlik sınırı olarak ayrı tut.
-- Bir workspace içinde varsayılan olarak tek aktif turn varsayımını koru.
+- Do not reimplement Codex orchestration; use the real, pinned `codex app-server`.
+- The MVP Workspace Agent communicates with app-server over `stdio`/JSONL.
+- Workspace Agent is an adapter and supervisor, not a model agent.
+- Preserve upstream messages as raw envelopes before normalization.
+- Unknown items, enums, and events must survive as `codex.unknown` without a crash.
+- Treat UI deltas as provisional and reconcile them with completed items/snapshots.
+- Keep control plane and workspace data plane separate process/security boundaries.
+- Preserve the default assumption of one active turn per workspace.
 
-## Güvenlik değişmezleri
+## Security invariants
 
-- Tenant kapsamı her domain kaydında ve storage key'inde açık olmalıdır.
-- Secret, API key, bearer token veya hassas environment değeri event, log, trace, fixture ya da snapshot'a yazılmamalıdır.
-- Dosya yollarını canonicalize et; `..`, symlink escape ve `/proc`/`/sys` erişimini reddet.
-- App-server internete doğrudan açılmaz.
-- Ağ ve dış yazma eylemlerinde default-deny ve kapsamı açık approval uygula.
-- Approval çözümleme idempotent ve optimistic locking tabanlı olmalıdır; aynı istek iki kez uygulanmamalıdır.
-- Gizli chain-of-thought'u isteme, saklama veya ürün özelliği gibi sunma. Yalnız protokolün açıkça sağladığı reasoning summary kullanılabilir.
+- Tenant scope is explicit on every domain record and storage key.
+- Never write secrets, API keys, bearer tokens, or sensitive environment values to
+  events, logs, traces, fixtures, or snapshots.
+- Canonicalize file paths and reject `..`, symlink escape, `/proc`, and `/sys`.
+- Never expose app-server directly to the internet.
+- Network and external-write actions are default-deny and require scoped approval.
+- Approval resolution is idempotent and protected by optimistic locking.
+- Never request, store, or expose hidden chain of thought. Only use explicit protocol
+  reasoning summaries.
 
-## Uygulama yaklaşımı
+## Implementation and verification
 
-- Önce Faz 0 dikey dilimi: process supervision → initialize → thread/turn → event adapter → replay → minimal timeline → approval.
-- İlk aşamada control plane modüler monolith olabilir. Workspace Agent ve realtime/event adapter erken süreç sınırı olarak ayrı kalmalıdır.
-- Codex protocol tiplerini elle kopyalamak yerine pinli binary'den `generate-ts`/`generate-json-schema` ile üret.
-- Generated dosyaları elle düzenleme; üretim komutunu ve source version/schema hash bilgisini repository'de tut.
-- Yeni normalize event eklerken type/schema, adapter mapping, unknown fallback ve contract fixture/test birlikte eklenmelidir.
-- Büyük command output'u bellekte veya tek DB satırında sınırsız biriktirme; backpressure ve artifact spill tasarımını koru.
+- Generate Codex protocol types from the pinned binary; never hand-edit generated files.
+- A normalized event requires type/schema, adapter mapping, unknown fallback, and a
+  contract fixture/test together.
+- Keep command output bounded and preserve backpressure/artifact spill behavior.
+- Domain/adapter work: unit test, golden replay, and type check.
+- App-server bridge: handshake/contract test against the real pinned binary.
+- Approval: state-machine, concurrent-decision, and crash/recovery tests.
+- Realtime: reconnect, sequence gap, duplicate-event, and reconciliation tests.
+- Files/Git: traversal, symlink escape, and dirty-state fixtures.
+- UI: responsive timeline, reconnect, locale behavior, and mobile approval context.
 
-## Doğrulama
+Do not claim a network-, account-, secret-, or container-dependent check passed when
+it could not run. State skipped verification explicitly.
 
-Değişiklik kapsamına göre en dar anlamlı kontrolleri çalıştır:
+## Git and scope discipline
 
-- Domain/adapter: unit test + golden fixture replay + typecheck.
-- App-server köprüsü: gerçek pinli binary ile handshake/contract testi.
-- Approval: durum makinesi, concurrent decision ve crash/recovery testi.
-- Realtime: reconnect, sequence gap, duplicate event ve completed reconciliation testi.
-- Dosya/Git: traversal, symlink escape ve dirty-state fixture testleri.
-- UI: responsive timeline, reconnect ve küçük ekranda approval bağlamı.
-
-Network, OpenAI hesabı, secret veya container runtime gerektiren testleri otomatik olarak uydurma veriyle geçmiş sayma; çalışmayan doğrulamayı finalde açıkça belirt.
-
-## Git ve kapsam disiplini
-
-- Kullanıcı istemedikçe commit, push, rebase veya destructive Git işlemi yapma.
-- Mevcut kullanıcı değişikliklerini koru.
-- Faz 0 için gerekmeyen billing, native mobile, corpus veya production infra'yı erken scaffold etme.
-- Belgelenmiş açık ürün kararlarından birini keyfi biçimde kesinleştirme; gerekiyorsa ADR taslağı aç ve varsayımı görünür kıl.
+- Do not commit, push, rebase, or run destructive Git operations unless requested.
+- Preserve existing user changes.
+- Do not scaffold unrelated billing, mobile, corpus, or production infrastructure.
+- Keep unresolved product decisions visible; use an ADR draft instead of deciding
+  them arbitrarily.

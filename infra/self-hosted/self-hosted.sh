@@ -12,7 +12,7 @@
 #           list-users | disable-user | reset-user --crypto-erase |
 #           set-allowed-users (WP37 kullanıcı yönetimi)
 # Tüm komutlar non-interactive'dir ve her eksikte actionable hata ile fail-closed
-# davranır. Ayrıntılar: docs/operations/self-hosted-install-runbook.md
+# behavior with actionable errors. See infra/self-hosted/README.md.
 
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"

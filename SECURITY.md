@@ -1,46 +1,24 @@
-# Güvenlik Politikası / Security Policy
+# Security Policy
 
-## Reporting a vulnerability (English)
+## Reporting a vulnerability
 
-Please report suspected vulnerabilities privately to
-**kivancguckiran@gmail.com** with the subject prefix `[SECURITY]`. Do not open
-a public issue for security reports. We aim to acknowledge reports within
-7 days and to coordinate a fix and disclosure within 90 days.
+Report suspected vulnerabilities privately to **kivancguckiran@gmail.com**
+with the subject prefix `[SECURITY]`. Do not open a public issue. Include the
+affected component and version or commit, reproduction steps, impact, and any
+suggested remediation.
 
-## Bildirim süreci
+We aim to acknowledge reports within 7 days and coordinate a fix and disclosure
+within 90 days. Active exploitation may shorten that timeline. Please keep
+details private until a fix is released. There is currently no paid bug bounty.
 
-Güvenlik açığı şüphelerini public issue açmadan, `[SECURITY]` konu önekiyle
-**kivancguckiran@gmail.com** adresine iletin. Bildirimde şunlar yardımcı olur:
-etkilenen bileşen/sürüm (commit hash'i), yeniden üretim adımları, etki
-değerlendirmesi ve varsa öneri.
+## Scope
 
-Süreç hedefleri:
+In scope: source code in this repository, build and release scripts, and
+published release artifacts.
 
-- 7 gün içinde alındı onayı.
-- Doğrulanan bulgular için koordineli düzeltme ve en geç 90 gün içinde
-  açıklama (coordinated disclosure). Aktif istismar varsa süre kısalır.
-- Düzeltme yayımlanmadan bulgu detayının paylaşılmaması rica edilir.
+Out of scope: third-party provider CLIs and SDKs, configuration mistakes in a
+user-operated self-hosted installation, and any separate managed infrastructure.
 
-Şu an için ödüllü bug bounty programı yoktur.
-
-## Kapsam
-
-- **Kapsamda:** Bu repository'deki kaynak kod, build/release script'leri ve
-  yayımlanan release artifact'leri.
-- **Kapsam dışında:** Üçüncü taraf provider CLI/SDK'ları (Codex, Claude,
-  Gemini, Cursor — bulguları ilgili sağlayıcıya bildirin), kullanıcıların
-  kendi self-hosted kurulumlarının yapılandırma hataları ve Managed Cloud
-  hizmetinin altyapısı (ayrı kanaldan yönetilir).
-
-## Desteklenen sürümler
-
-Güvenlik düzeltmeleri yalnız `main` branch'ine ve en son release'e uygulanır.
-Eski release'lere backport garantisi verilmez.
-
-## Güvenlik mimarisi
-
-Tehdit modeli ve güvenlik sınırları için `docs/security/` altındaki belgeler ve
-`docs/architecture/` altındaki ADR kayıtları doğruluk kaynağıdır. Secret
-politikası `infra/release/wp31-gitleaks.toml` ile zorlanır ve
-`pnpm release:public-preflight` her koşuda working tree + tam Git history
-taraması yapar (ADR-0031).
+Security fixes target `main` and the latest release; older releases are not
+guaranteed backports. Secret policy is enforced by the public-release preflight,
+which scans the working tree and Git history.

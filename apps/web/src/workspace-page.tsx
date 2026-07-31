@@ -83,6 +83,7 @@ import {
   offlineHistoryKey,
   tenantCacheNamespace,
 } from './tenant-cache'
+import { localize, useTranslations } from './i18n'
 
 interface PlatformMeta {
   service: string
@@ -151,10 +152,13 @@ export function serverOwnedRunLabel(
   status: DurableRun['status'],
   realtimeState: string,
 ) {
-  if (status === 'interrupting') return 'Durduruluyor…'
+  if (status === 'interrupting') return localize('Stopping…', 'Durduruluyor…')
   return realtimeState === 'canlı'
-    ? 'Server üzerinde çalışıyor'
-    : 'Arka planda çalışıyor · bağlantı yeniden kuruluyor'
+    ? localize('Running on the server', 'Server üzerinde çalışıyor')
+    : localize(
+        'Running in the background · reconnecting',
+        'Arka planda çalışıyor · bağlantı yeniden kuruluyor',
+      )
 }
 
 export function attachmentMediaType(file: Pick<File, 'name' | 'type'>) {
@@ -199,7 +203,13 @@ export function sourceMediaType(file: Pick<File, 'name' | 'type'>) {
 
 async function readPlatformMeta(): Promise<PlatformMeta> {
   const response = await fetch(`${apiBaseUrl}/v1/meta`)
-  if (!response.ok) throw new Error('Control plane yanıt vermedi')
+  if (!response.ok)
+    throw new Error(
+      localize(
+        'The control plane did not respond',
+        'Control plane yanıt vermedi',
+      ),
+    )
   return response.json() as Promise<PlatformMeta>
 }
 
@@ -300,13 +310,19 @@ async function readBillingFinancial(): Promise<BillingFinancialOverview> {
 export function formatUsageCost(summary: UsageCostSummary | undefined) {
   if (!summary)
     return {
-      amount: 'Henüz kullanım yok',
-      detail: 'İlk yanıttan sonra hesaplanır',
+      amount: localize('No usage yet', 'Henüz kullanım yok'),
+      detail: localize(
+        'Calculated after the first response',
+        'İlk yanıttan sonra hesaplanır',
+      ),
     }
   if (Object.values(summary.counters).every((value) => value === 0))
     return {
-      amount: 'Henüz ölçülmüş kullanım yok',
-      detail: 'İlk token kaydından sonra hesaplanır',
+      amount: localize('No measured usage yet', 'Henüz ölçülmüş kullanım yok'),
+      detail: localize(
+        'Calculated after the first token record',
+        'İlk token kaydından sonra hesaplanır',
+      ),
     }
   const micros =
     summary.reconciliationStatus === 'reconciled'
@@ -314,7 +330,7 @@ export function formatUsageCost(summary: UsageCostSummary | undefined) {
       : summary.estimatedCostMicros
   const amount =
     micros === null
-      ? 'Fiyatlandırılamadı'
+      ? localize('Unavailable', 'Fiyatlandırılamadı')
       : new Intl.NumberFormat('en-US', {
           style: 'currency',
           currency: summary.currency,
@@ -325,8 +341,8 @@ export function formatUsageCost(summary: UsageCostSummary | undefined) {
     amount,
     detail:
       summary.reconciliationStatus === 'reconciled'
-        ? `Gerçekleşen provider maliyeti · ${summary.completeness}`
-        : `${micros === null ? 'Bu model için fiyat yok' : 'API liste fiyatı tahmini'} · ${summary.completeness}`,
+        ? `${localize('Actual provider cost', 'Gerçekleşen provider maliyeti')} · ${summary.completeness}`
+        : `${micros === null ? localize('No price for this model', 'Bu model için fiyat yok') : localize('API list-price estimate', 'API liste fiyatı tahmini')} · ${summary.completeness}`,
   }
 }
 
@@ -441,14 +457,29 @@ export function userFacingApiError(
     body?.reasonCode === 'HARD_LIMIT_PREPAID_CREDIT' ||
     body?.message === 'HARD_LIMIT_PREPAID_CREDIT'
   )
-    return 'Kullanım kredisi tükendi. Bu workspace’te yeni bir işlem başlatmak için yeterli prepaid kredi bulunmuyor.'
+    return localize(
+      'Usage credits are depleted. This workspace does not have enough prepaid credit to start a new operation.',
+      'Kullanım kredisi tükendi. Bu workspace’te yeni bir işlem başlatmak için yeterli prepaid kredi bulunmuyor.',
+    )
   if (body?.code === 'USAGE_LIMIT_REACHED')
-    return 'Workspace kullanım limiti doldu. Plan ve kota ayarlarını kontrol edin.'
+    return localize(
+      'The workspace usage limit has been reached. Check plan and quota settings.',
+      'Workspace kullanım limiti doldu. Plan ve kota ayarlarını kontrol edin.',
+    )
   if (body?.code === 'COMMERCIAL_DEPENDENCY_UNAVAILABLE')
-    return 'Kullanım doğrulama servisine şu anda ulaşılamıyor. Lütfen kısa bir süre sonra yeniden deneyin.'
+    return localize(
+      'The usage verification service is unavailable. Try again shortly.',
+      'Kullanım doğrulama servisine şu anda ulaşılamıyor. Lütfen kısa bir süre sonra yeniden deneyin.',
+    )
   if (body?.code === 'CONTENT_KEY_LOCKED' || status === 428)
-    return 'Güvenli içerik anahtarı kilitli. Devam etmek için parolanızla yeniden doğrulayın.'
-  return body?.message ?? `İstek başarısız (${status})`
+    return localize(
+      'The secure content key is locked. Reauthenticate with your password to continue.',
+      'Güvenli içerik anahtarı kilitli. Devam etmek için parolanızla yeniden doğrulayın.',
+    )
+  return (
+    body?.message ??
+    localize(`Request failed (${status})`, `İstek başarısız (${status})`)
+  )
 }
 
 async function apiError(response: Response): Promise<Error> {
@@ -565,12 +596,18 @@ async function readSupportAudit(sessionId: string) {
 
 export function supportGrantStatusLabel(status: SupportGrant['status']) {
   return {
-    pending_verification: 'MFA doğrulaması bekliyor',
-    pending_approval: 'Yetkili onayı bekliyor',
-    active: 'Aktif',
-    revoked: 'Erken iptal edildi',
-    expired: 'Süresi doldu',
-    denied: 'Reddedildi',
+    pending_verification: localize(
+      'Awaiting MFA verification',
+      'MFA doğrulaması bekliyor',
+    ),
+    pending_approval: localize(
+      'Awaiting authorized approval',
+      'Yetkili onayı bekliyor',
+    ),
+    active: localize('Active', 'Aktif'),
+    revoked: localize('Revoked early', 'Erken iptal edildi'),
+    expired: localize('Expired', 'Süresi doldu'),
+    denied: localize('Denied', 'Reddedildi'),
   }[status]
 }
 
@@ -591,6 +628,7 @@ function SupportAccessPanel({
   onChanged(): void
   onClose(): void
 }) {
+  const t = useTranslations()
   const [reason, setReason] = useState('')
   const [supportPrincipalId, setSupportPrincipalId] = useState('')
   const [durationMinutes, setDurationMinutes] = useState(15)
@@ -668,21 +706,30 @@ function SupportAccessPanel({
     >
       <div className="support-access-heading">
         <div>
-          <p className="section-label">Kullanıcı kontrollü erişim</p>
-          <h2 id="support-access-title">Support erişimi</h2>
+          <p className="section-label">
+            {t('User-controlled access', 'Kullanıcı kontrollü erişim')}
+          </p>
+          <h2 id="support-access-title">
+            {t('Support access', 'Support erişimi')}
+          </h2>
         </div>
         <button
           type="button"
           className="drawer-close"
-          aria-label="Support erişimi panelini kapat"
+          aria-label={t(
+            'Close support access panel',
+            'Support erişimi panelini kapat',
+          )}
           onClick={onClose}
         >
           ×
         </button>
       </div>
       <p className="support-access-note">
-        Yalnız bu sohbet ve seçtiğiniz eylemler paylaşılır. Tüm hesaba erişim
-        verilmez.
+        {t(
+          'Only this conversation and the actions you select are shared. Access to the whole account is never granted.',
+          'Yalnız bu sohbet ve seçtiğiniz eylemler paylaşılır. Tüm hesaba erişim verilmez.',
+        )}
       </p>
       {panelError ? (
         <p className="form-error" role="alert">
@@ -694,16 +741,38 @@ function SupportAccessPanel({
         onSubmit={(event) => void createGrant(event)}
       >
         <p>
-          <strong>Paylaşılan nesne:</strong> session <code>{sessionId}</code>
+          <strong>{t('Shared object', 'Paylaşılan nesne')}:</strong> session{' '}
+          <code>{sessionId}</code>
         </p>
         <fieldset>
-          <legend>İzin verilen eylemler</legend>
+          <legend>{t('Allowed actions', 'İzin verilen eylemler')}</legend>
           {(
             [
-              ['content.view', 'Prompt ve output görüntüleme'],
-              ['artifact.download', 'Artifact indirme (çift onay)'],
-              ['attachment.download', 'Attachment indirme (çift onay)'],
-              ['content.decrypt', 'İçerik decrypt (KMS rolü + çift onay)'],
+              [
+                'content.view',
+                t('View prompts and output', 'Prompt ve output görüntüleme'),
+              ],
+              [
+                'artifact.download',
+                t(
+                  'Download artifacts (dual approval)',
+                  'Artifact indirme (çift onay)',
+                ),
+              ],
+              [
+                'attachment.download',
+                t(
+                  'Download attachments (dual approval)',
+                  'Attachment indirme (çift onay)',
+                ),
+              ],
+              [
+                'content.decrypt',
+                t(
+                  'Decrypt content (KMS role + dual approval)',
+                  'İçerik decrypt (KMS rolü + çift onay)',
+                ),
+              ],
             ] as const
           ).map(([action, label]) => (
             <label key={action}>
@@ -726,7 +795,7 @@ function SupportAccessPanel({
           />
         </label>
         <label>
-          <span>Kullanıcı gerekçesi</span>
+          <span>{t('User justification', 'Kullanıcı gerekçesi')}</span>
           <textarea
             value={reason}
             required
@@ -736,7 +805,7 @@ function SupportAccessPanel({
           />
         </label>
         <label>
-          <span>Süre</span>
+          <span>{t('Duration', 'Süre')}</span>
           <select
             value={durationMinutes}
             onChange={(event) => setDurationMinutes(Number(event.target.value))}
@@ -756,10 +825,12 @@ function SupportAccessPanel({
             !supportPrincipalId.trim()
           }
         >
-          {submitting ? 'Oluşturuluyor…' : 'Dar kapsamlı grant oluştur'}
+          {submitting
+            ? t('Creating…', 'Oluşturuluyor…')
+            : t('Create scoped grant', 'Dar kapsamlı grant oluştur')}
         </button>
       </form>
-      {pending ? <p>Grant’ler yükleniyor…</p> : null}
+      {pending ? <p>{t('Loading grants…', 'Grant’ler yükleniyor…')}</p> : null}
       <ul className="support-grant-list">
         {grants.map((grant) => (
           <li key={grant.grantId} data-status={grant.status}>
@@ -767,8 +838,10 @@ function SupportAccessPanel({
               <strong>{supportGrantStatusLabel(grant.status)}</strong>
               <span>{grant.actions.join(' · ')}</span>
               <small>
-                Son kullanım:{' '}
-                {new Date(grant.expiresAt).toLocaleString('tr-TR')}
+                {t('Expires', 'Son kullanım')}:{' '}
+                {new Date(grant.expiresAt).toLocaleString(
+                  localize('en-US', 'tr-TR'),
+                )}
               </small>
             </div>
             {['pending_verification', 'pending_approval', 'active'].includes(
@@ -788,8 +861,10 @@ function SupportAccessPanel({
       {audit.length ? (
         <details className="support-audit-list">
           <summary>
-            Immutable support audit · {audit.length} kayıt ·{' '}
-            {auditChainValid ? 'zincir doğrulandı' : 'zincir hatası'}
+            Immutable support audit · {audit.length} {t('records', 'kayıt')} ·{' '}
+            {auditChainValid
+              ? t('chain verified', 'zincir doğrulandı')
+              : t('chain error', 'zincir hatası')}
           </summary>
           <ol>
             {audit
@@ -800,7 +875,9 @@ function SupportAccessPanel({
                   <strong>{record.action}</strong>
                   <span>{record.outcome}</span>
                   <time dateTime={record.occurredAt}>
-                    {new Date(record.occurredAt).toLocaleString('tr-TR')}
+                    {new Date(record.occurredAt).toLocaleString(
+                      localize('en-US', 'tr-TR'),
+                    )}
                   </time>
                 </li>
               ))}
@@ -826,6 +903,7 @@ function SourcesDrawer({
   onUpload(file: File): void
   onClose(): void
 }) {
+  const t = useTranslations()
   return (
     <aside
       className="workspace-drawer sources-drawer"
@@ -833,21 +911,32 @@ function SourcesDrawer({
     >
       <div className="drawer-heading">
         <div>
-          <p className="section-label">Workspace bilgisi</p>
+          <p className="section-label">
+            {t('Workspace knowledge', 'Workspace bilgisi')}
+          </p>
           <h2 id="sources-title">Sources</h2>
-          <p>Bu workspace’in cevaplarda başvurabildiği dosya ve dokümanlar.</p>
+          <p>
+            {t(
+              'Files and documents this workspace can reference in answers.',
+              'Bu workspace’in cevaplarda başvurabildiği dosya ve dokümanlar.',
+            )}
+          </p>
         </div>
         <button
           className="drawer-close"
           type="button"
           onClick={onClose}
-          aria-label="Sources panelini kapat"
+          aria-label={t('Close sources panel', 'Sources panelini kapat')}
         >
           ×
         </button>
       </div>
       <label className="source-upload drawer-upload">
-        <span>{pending ? 'Yükleniyor…' : 'Source ekle'}</span>
+        <span>
+          {pending
+            ? t('Loading…', 'Yükleniyor…')
+            : t('Add source', 'Source ekle')}
+        </span>
         <input
           type="file"
           disabled={!online || pending}
@@ -861,11 +950,14 @@ function SourcesDrawer({
       </label>
       {error ? (
         <p className="form-error" role="alert">
-          Source listesi alınamadı.
+          {t('Could not load the source list.', 'Source listesi alınamadı.')}
         </p>
       ) : null}
       {sources.length ? (
-        <ul className="source-list" aria-label="Corpus source durumları">
+        <ul
+          className="source-list"
+          aria-label={t('Corpus source statuses', 'Corpus source durumları')}
+        >
           {sources.map((source) => (
             <li key={source.sourceId}>
               <span title={source.displayName}>{source.displayName}</span>
@@ -876,7 +968,9 @@ function SourcesDrawer({
           ))}
         </ul>
       ) : (
-        <p className="drawer-empty">Henüz source eklenmedi.</p>
+        <p className="drawer-empty">
+          {t('No sources have been added yet.', 'Henüz source eklenmedi.')}
+        </p>
       )}
     </aside>
   )
@@ -899,6 +993,7 @@ function AuditPanel({
   error?: string
   onMore(): void
 }) {
+  const t = useTranslations()
   return (
     <section
       className="audit-panel"
@@ -908,18 +1003,26 @@ function AuditPanel({
       <div className="audit-heading">
         <div>
           <p className="section-label">Durable audit</p>
-          <h2 id="audit-title">Session eylem zinciri</h2>
+          <h2 id="audit-title">
+            {t('Session action chain', 'Session eylem zinciri')}
+          </h2>
         </div>
         {stale ? <span className="audit-stale">stale</span> : null}
       </div>
-      {pending ? <p className="audit-state">Audit yükleniyor…</p> : null}
+      {pending ? (
+        <p className="audit-state">
+          {t('Loading audit…', 'Audit yükleniyor…')}
+        </p>
+      ) : null}
       {error ? (
         <p className="form-error" role="alert">
-          Audit alınamadı: {error}
+          {t('Could not load audit', 'Audit alınamadı')}: {error}
         </p>
       ) : null}
       {!pending && !error && !records.length ? (
-        <p className="audit-state">Henüz audit kaydı yok.</p>
+        <p className="audit-state">
+          {t('No audit records yet.', 'Henüz audit kaydı yok.')}
+        </p>
       ) : null}
       {records.length ? (
         <ol className="audit-list">
@@ -931,16 +1034,22 @@ function AuditPanel({
               <strong>{record.action}</strong>
               <span>{record.actor}</span>
               <time dateTime={record.occurredAt}>
-                {new Date(record.occurredAt).toLocaleString('tr-TR')}
+                {new Date(record.occurredAt).toLocaleString(
+                  localize('en-US', 'tr-TR'),
+                )}
               </time>
-              <code>{record.correlationId ?? 'correlation yok'}</code>
+              <code>
+                {record.correlationId ?? t('no correlation', 'correlation yok')}
+              </code>
             </li>
           ))}
         </ol>
       ) : null}
       {hasMore ? (
         <button type="button" disabled={fetchingMore} onClick={onMore}>
-          {fetchingMore ? 'Yükleniyor…' : 'Daha eski audit kayıtları'}
+          {fetchingMore
+            ? t('Loading…', 'Yükleniyor…')
+            : t('Older audit records', 'Daha eski audit kayıtları')}
         </button>
       ) : null}
     </section>
@@ -970,6 +1079,7 @@ function GitPanel({
   error?: string
   onRefresh(): void
 }) {
+  const t = useTranslations()
   return (
     <section
       className="git-panel"
@@ -978,11 +1088,13 @@ function GitPanel({
     >
       <div className="git-panel-heading">
         <div>
-          <p className="section-label">Git doğruluk kaynağı</p>
+          <p className="section-label">
+            {t('Git source of truth', 'Git doğruluk kaynağı')}
+          </p>
           <h2 id="git-title">Status · diff · log</h2>
         </div>
         <button type="button" disabled={pending} onClick={onRefresh}>
-          {pending ? 'Yenileniyor…' : 'Yenile'}
+          {pending ? t('Refreshing…', 'Yenileniyor…') : t('Refresh', 'Yenile')}
         </button>
       </div>
       {error ? (
@@ -991,7 +1103,9 @@ function GitPanel({
         </p>
       ) : null}
       {!snapshot && !pending ? (
-        <p className="git-empty">Henüz Git snapshot yok.</p>
+        <p className="git-empty">
+          {t('No Git snapshot yet.', 'Henüz Git snapshot yok.')}
+        </p>
       ) : null}
       {snapshot ? (
         <>
@@ -999,13 +1113,17 @@ function GitPanel({
             <span>{snapshot.repositoryKind}</span>
             <span>
               {snapshot.branch ??
-                (snapshot.detached ? 'detached HEAD' : 'branch yok')}
+                (snapshot.detached
+                  ? 'detached HEAD'
+                  : t('no branch', 'branch yok'))}
             </span>
-            <code>{snapshot.headOid?.slice(0, 10) ?? 'HEAD yok'}</code>
+            <code>
+              {snapshot.headOid?.slice(0, 10) ?? t('no HEAD', 'HEAD yok')}
+            </code>
             <span>
               {snapshot.clean
                 ? 'clean'
-                : `${snapshot.changes.length} değişiklik`}
+                : `${snapshot.changes.length} ${t('changes', 'değişiklik')}`}
             </span>
             {snapshot.stale ? <strong>stale</strong> : null}
           </div>
@@ -1013,14 +1131,20 @@ function GitPanel({
             className={`git-relationship relationship-${snapshot.relationship}`}
           >
             {snapshot.relationship === 'authoritative'
-              ? 'Git snapshot authoritative; normalize event değişiklik sayısı yok.'
+              ? t(
+                  'The Git snapshot is authoritative; there is no normalized event change count.',
+                  'Git snapshot authoritative; normalize event değişiklik sayısı yok.',
+                )
               : snapshot.relationship === 'matches_events'
                 ? `Git snapshot, ${snapshot.eventChangeCount} normalize file-change eventiyle uyumlu.`
-                : 'Normalize event özeti ile Git snapshot farklı; Git sonucu authoritative.'}
+                : t(
+                    'The normalized event summary differs from the Git snapshot; Git is authoritative.',
+                    'Normalize event özeti ile Git snapshot farklı; Git sonucu authoritative.',
+                  )}
           </p>
           <div className="git-columns">
             <div>
-              <h3>Değişiklikler</h3>
+              <h3>{t('Changes', 'Değişiklikler')}</h3>
               <ul className="git-change-list">
                 {snapshot.changes.map((change) => (
                   <li key={`${change.previousPath ?? ''}:${change.path}`}>
@@ -1033,11 +1157,13 @@ function GitPanel({
                     {change.submodule ? <b>submodule</b> : null}
                   </li>
                 ))}
-                {!snapshot.changes.length ? <li>Workspace temiz.</li> : null}
+                {!snapshot.changes.length ? (
+                  <li>{t('Workspace clean.', 'Workspace temiz.')}</li>
+                ) : null}
               </ul>
             </div>
             <div>
-              <h3>Son commit’ler</h3>
+              <h3>{t('Recent commits', 'Son commit’ler')}</h3>
               <ul className="git-log-list">
                 {snapshot.log.slice(0, 6).map((entry) => (
                   <li key={entry.oid}>
@@ -1045,7 +1171,9 @@ function GitPanel({
                     <span>{entry.subject}</span>
                   </li>
                 ))}
-                {!snapshot.log.length ? <li>Commit geçmişi yok.</li> : null}
+                {!snapshot.log.length ? (
+                  <li>{t('No commit history.', 'Commit geçmişi yok.')}</li>
+                ) : null}
               </ul>
             </div>
           </div>
@@ -1054,13 +1182,13 @@ function GitPanel({
               Diff preview · {snapshot.diff.byteLength} byte
               {snapshot.diff.truncated ? ' · bounded' : ''}
             </summary>
-            <pre>{snapshot.diff.preview || 'Diff yok.'}</pre>
+            <pre>{snapshot.diff.preview || t('No diff.', 'Diff yok.')}</pre>
             {snapshot.diff.artifactId ? (
               <button
                 type="button"
                 onClick={() => void downloadArtifact(snapshot.diff.artifactId!)}
               >
-                Tam redakte diff’i indir
+                {t('Download full redacted diff', 'Tam redakte diff’i indir')}
               </button>
             ) : null}
           </details>
@@ -1240,7 +1368,7 @@ function userMessageContent(event: TimelineEvent):
             : ''
       attachments.push({
         kind: 'image',
-        name: source.split(/[\\/]/).pop() || 'Görsel',
+        name: source.split(/[\\/]/).pop() || localize('Image', 'Görsel'),
       })
       continue
     }
@@ -1472,45 +1600,58 @@ function titleOf(event: TimelineEvent): string {
   if (event.type === 'codex.unknown') {
     return unknownEventTitle(event.payload.method)
   }
-  if (event.type === 'cursor.unknown') return 'Cursor olayı'
+  if (event.type === 'cursor.unknown')
+    return localize('Cursor event', 'Cursor olayı')
   const titles: Partial<Record<TimelineEvent['type'], string>> = {
-    'turn.started': 'Turn başladı',
-    'turn.completed': 'Turn tamamlandı',
-    'agent.message.delta': 'Codex yanıtı',
-    'agent.message.completed': 'Codex yanıtı',
-    'reasoning.summary.delta': 'Reasoning özeti',
+    'turn.started': localize('Turn started', 'Turn başladı'),
+    'turn.completed': localize('Turn completed', 'Turn tamamlandı'),
+    'agent.message.delta': localize('Codex response', 'Codex yanıtı'),
+    'agent.message.completed': localize('Codex response', 'Codex yanıtı'),
+    'reasoning.summary.delta': localize('Reasoning summary', 'Reasoning özeti'),
     'plan.delta': 'Plan',
     'plan.completed': 'Plan',
     'command.proposed': 'Komut',
-    'command.output.delta': 'Komut çıktısı',
-    'command.completed': 'Komut tamamlandı',
-    'file.change.proposed': 'Dosya değişikliği',
-    'file.change.completed': 'Dosya değişikliği',
+    'command.output.delta': localize('Command output', 'Komut çıktısı'),
+    'command.completed': localize('Command completed', 'Komut tamamlandı'),
+    'file.change.proposed': localize('File change', 'Dosya değişikliği'),
+    'file.change.completed': localize('File change', 'Dosya değişikliği'),
     'diff.updated': 'Diff',
-    'tool.started': 'Tool çalışıyor',
-    'tool.completed': 'Tool tamamlandı',
-    'token.usage.updated': 'Token kullanımı',
-    'error.reported': 'Hata',
-    'approval.requested': 'Onay bekleniyor',
-    'approval.resolved': 'Onay çözüldü',
-    'context.compacted': 'Context compact edildi',
+    'tool.started': localize('Tool running', 'Tool çalışıyor'),
+    'tool.completed': localize('Tool completed', 'Tool tamamlandı'),
+    'token.usage.updated': localize('Token usage', 'Token kullanımı'),
+    'error.reported': localize('Error', 'Hata'),
+    'approval.requested': localize('Approval pending', 'Onay bekleniyor'),
+    'approval.resolved': localize('Approval resolved', 'Onay çözüldü'),
+    'context.compacted': localize(
+      'Context compacted',
+      'Context compact edildi',
+    ),
   }
   return titles[event.type] ?? event.type
 }
 
-const unknownEventTitles: Record<string, string> = {
-  'thread/started': 'Codex task’ı başlatıldı',
-  'thread/status/changed': 'Task durumu değişti',
-  'turn/started': 'Turn başladı',
-  'turn/completed': 'Turn tamamlandı',
-  'item/started': 'İşlem başladı',
-  'item/completed': 'İşlem tamamlandı',
-  'mcpServer/startupStatus/updated': 'Araç bağlantıları hazırlanıyor',
-  warning: 'Codex uyarısı',
-}
-
 function unknownEventTitle(method: string): string {
-  return unknownEventTitles[method] ?? 'Codex olayı'
+  return (
+    {
+      'thread/started': localize(
+        'Codex task started',
+        'Codex task’ı başlatıldı',
+      ),
+      'thread/status/changed': localize(
+        'Task status changed',
+        'Task durumu değişti',
+      ),
+      'turn/started': localize('Turn started', 'Turn başladı'),
+      'turn/completed': localize('Turn completed', 'Turn tamamlandı'),
+      'item/started': localize('Operation started', 'İşlem başladı'),
+      'item/completed': localize('Operation completed', 'İşlem tamamlandı'),
+      'mcpServer/startupStatus/updated': localize(
+        'Preparing tool connections',
+        'Araç bağlantıları hazırlanıyor',
+      ),
+      warning: localize('Codex warning', 'Codex uyarısı'),
+    }[method] ?? localize('Codex event', 'Codex olayı')
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1663,12 +1804,15 @@ function detailOf(card: TimelineCard): string {
     case 'approval.requested':
       return (
         event.payload.reason ??
-        'Kullanıcı kararı bekleniyor; otomatik yanıt verilmedi.'
+        localize(
+          'Waiting for a user decision; no automatic response was sent.',
+          'Kullanıcı kararı bekleniyor; otomatik yanıt verilmedi.',
+        )
       )
     case 'approval.resolved':
-      return `${event.payload.approvalKind} onayı çözüldü`
+      return `${event.payload.approvalKind} ${localize('approval resolved', 'onayı çözüldü')}`
     case 'token.usage.updated':
-      return `${event.payload.total.totalTokens} toplam token`
+      return `${event.payload.total.totalTokens} ${localize('total tokens', 'toplam token')}`
     case 'error.reported':
       return event.payload.message
     case 'codex.unknown':
@@ -1676,13 +1820,17 @@ function detailOf(card: TimelineCard): string {
     case 'cursor.unknown':
       return event.payload.eventType
     case 'context.compacted':
-      return 'Conversation context compact edildi.'
+      return localize(
+        'Conversation context was compacted.',
+        'Conversation context compact edildi.',
+      )
     default:
       return event.type
   }
 }
 
 function TimelineEntry({ card }: { card: TimelineCard }) {
+  const t = useTranslations()
   const approvalEvent = card.event.type === 'approval.requested'
   const presentation = describeTimelineEvent(card)
   const artifactId =
@@ -1723,7 +1871,7 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
                 {presentation.summary}
               </pre>
               <details className="timeline-technical-details">
-                <summary>Teknik detaylar</summary>
+                <summary>{t('Technical details', 'Teknik detaylar')}</summary>
                 <pre>{technicalDetailOf(card.event)}</pre>
               </details>
             </>
@@ -1735,14 +1883,19 @@ function TimelineEntry({ card }: { card: TimelineCard }) {
       {card.event.type === 'command.completed' && artifactId ? (
         <div className="artifact-actions">
           <span>
-            {card.event.payload.output.truncated ? 'Kısaltıldı · ' : ''}
+            {card.event.payload.output.truncated
+              ? `${t('Truncated', 'Kısaltıldı')} · `
+              : ''}
             {card.event.payload.output.totalBytes.toLocaleString()} byte
           </span>
           <button
             type="button"
             onClick={() => void downloadArtifact(artifactId)}
           >
-            Tam redakte çıktıyı aç/indir
+            {t(
+              'Open/download full redacted output',
+              'Tam redakte çıktıyı aç/indir',
+            )}
           </button>
         </div>
       ) : null}
@@ -1755,24 +1908,66 @@ function compactWorkSummary(card: TimelineCard): string {
   return value.length > 90 ? `${value.slice(0, 87)}…` : value
 }
 
+function activity(
+  running: boolean,
+  runningEnglish: string,
+  runningTurkish: string,
+  completedEnglish: string,
+  completedTurkish: string,
+) {
+  return running
+    ? localize(runningEnglish, runningTurkish)
+    : localize(completedEnglish, completedTurkish)
+}
+
 function commandActivity(command: string, running: boolean): string {
   const value = command.toLocaleLowerCase('en-US')
   if (
     /\b(vitest|jest|pytest|cargo test|go test|pnpm test|npm test)\b/.test(value)
   )
-    return running ? 'Testleri çalıştırıyor' : 'Testleri çalıştırdı'
+    return activity(
+      running,
+      'Running tests',
+      'Testleri çalıştırıyor',
+      'Ran tests',
+      'Testleri çalıştırdı',
+    )
   if (/\b(typecheck|tsc|build|lint|prettier)\b/.test(value))
-    return running ? 'Değişiklikleri doğruluyor' : 'Değişiklikleri doğruladı'
+    return activity(
+      running,
+      'Validating changes',
+      'Değişiklikleri doğruluyor',
+      'Validated changes',
+      'Değişiklikleri doğruladı',
+    )
   if (/\b(install|add)\b/.test(value))
-    return running ? 'Bağımlılıkları hazırlıyor' : 'Bağımlılıkları hazırladı'
+    return activity(
+      running,
+      'Preparing dependencies',
+      'Bağımlılıkları hazırlıyor',
+      'Prepared dependencies',
+      'Bağımlılıkları hazırladı',
+    )
   if (/\b(rg|grep|find|ls|sed|git status|git diff)\b/.test(value))
-    return running ? 'Çalışma alanını inceliyor' : 'Çalışma alanını inceledi'
-  return running ? 'Bir komut çalıştırıyor' : 'Komutları tamamladı'
+    return activity(
+      running,
+      'Inspecting the workspace',
+      'Çalışma alanını inceliyor',
+      'Inspected the workspace',
+      'Çalışma alanını inceledi',
+    )
+  return activity(
+    running,
+    'Running a command',
+    'Bir komut çalıştırıyor',
+    'Completed commands',
+    'Komutları tamamladı',
+  )
 }
 
 export function describeConversationWork(work: ConversationWork): string {
   const { cards, running } = work
-  if (running && cards.length === 0) return 'Düşünüyor'
+  if (running && cards.length === 0) return localize('Thinking', 'Düşünüyor')
   const unknownKinds = cards
     .filter(
       (
@@ -1812,9 +2007,13 @@ export function describeConversationWork(work: ConversationWork): string {
     )
   }
   if (hasFileChange)
-    return running
-      ? 'Kod değişikliklerini uyguluyor'
-      : 'Kod değişikliklerini uyguladı'
+    return activity(
+      running,
+      'Applying code changes',
+      'Kod değişikliklerini uyguluyor',
+      'Applied code changes',
+      'Kod değişikliklerini uyguladı',
+    )
   if (command) {
     const event = command.event
     return commandActivity(
@@ -1831,15 +2030,45 @@ export function describeConversationWork(work: ConversationWork): string {
         ? event.payload.tool.toLocaleLowerCase('en-US')
         : ''
     if (/search|web|browser/.test(toolName))
-      return running ? 'Kaynakları araştırıyor' : 'Kaynakları araştırdı'
+      return activity(
+        running,
+        'Researching sources',
+        'Kaynakları araştırıyor',
+        'Researched sources',
+        'Kaynakları araştırdı',
+      )
     if (/\b(rg|grep|find|read|filesystem)\b/.test(toolName))
-      return running ? 'Çalışma alanını inceliyor' : 'Çalışma alanını inceledi'
-    return running ? 'Araçları kullanıyor' : 'Araç işlemlerini tamamladı'
+      return activity(
+        running,
+        'Inspecting the workspace',
+        'Çalışma alanını inceliyor',
+        'Inspected the workspace',
+        'Çalışma alanını inceledi',
+      )
+    return activity(
+      running,
+      'Using tools',
+      'Araçları kullanıyor',
+      'Completed tool operations',
+      'Araç işlemlerini tamamladı',
+    )
   }
   if (unknownKinds.some((kind) => /websearch|search|browser/.test(kind)))
-    return running ? 'Kaynakları araştırıyor' : 'Kaynakları araştırdı'
+    return activity(
+      running,
+      'Researching sources',
+      'Kaynakları araştırıyor',
+      'Researched sources',
+      'Kaynakları araştırdı',
+    )
   if (unknownKinds.some((kind) => /reasoning|plan/.test(kind)))
-    return running ? 'Yaklaşımı değerlendiriyor' : 'Yaklaşımı değerlendirdi'
+    return activity(
+      running,
+      'Evaluating the approach',
+      'Yaklaşımı değerlendiriyor',
+      'Evaluated the approach',
+      'Yaklaşımı değerlendirdi',
+    )
   if (
     cards.some(
       (card) =>
@@ -1847,9 +2076,13 @@ export function describeConversationWork(work: ConversationWork): string {
         card.event.payload.method === 'mcpServer/startupStatus/updated',
     )
   )
-    return running
-      ? 'Çalışma ortamını hazırlıyor'
-      : 'Çalışma ortamını hazırladı'
+    return activity(
+      running,
+      'Preparing the environment',
+      'Çalışma ortamını hazırlıyor',
+      'Prepared the environment',
+      'Çalışma ortamını hazırladı',
+    )
   if (
     cards.some(
       (card) =>
@@ -1858,11 +2091,24 @@ export function describeConversationWork(work: ConversationWork): string {
         card.event.type === 'reasoning.summary.delta',
     )
   )
-    return running ? 'Yaklaşımı değerlendiriyor' : 'Yaklaşımı değerlendirdi'
-  return running ? 'Yanıtı hazırlıyor' : 'Yanıtı hazırladı'
+    return activity(
+      running,
+      'Evaluating the approach',
+      'Yaklaşımı değerlendiriyor',
+      'Evaluated the approach',
+      'Yaklaşımı değerlendirdi',
+    )
+  return activity(
+    running,
+    'Preparing the response',
+    'Yanıtı hazırlıyor',
+    'Prepared the response',
+    'Yanıtı hazırladı',
+  )
 }
 
 function ConversationWorkBlock({ work }: { work: ConversationWork }) {
+  const t = useTranslations()
   const [expanded, setExpanded] = useState(work.running)
   const visibleCards = work.cards.slice(-8)
   const corpusCitation = [...visibleCards]
@@ -1887,7 +2133,10 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
         <span className="chat-work-label">
           <strong>{describeConversationWork(work)}</strong>
           {work.running ? (
-            <span className="chat-work-loading" aria-label="Devam ediyor">
+            <span
+              className="chat-work-loading"
+              aria-label={t('In progress', 'Devam ediyor')}
+            >
               <i />
               <i />
               <i />
@@ -1896,8 +2145,8 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
         </span>
         <small className="chat-work-meta">
           {work.running
-            ? `canlı · sequence ${String(work.cards.at(-1)?.event.sequence ?? 0).padStart(4, '0')}`
-            : `${work.cards.length} işlem`}
+            ? `${t('live', 'canlı')} · sequence ${String(work.cards.at(-1)?.event.sequence ?? 0).padStart(4, '0')}`
+            : `${work.cards.length} ${t('operations', 'işlem')}`}
         </small>
         <span className="chat-work-chevron" aria-hidden="true" />
       </summary>
@@ -1922,14 +2171,19 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
       </ol>
       {corpusCitation?.event.type === 'tool.completed' ? (
         <details className="corpus-citation-details">
-          <summary>Corpus citation ayrıntıları</summary>
+          <summary>
+            {t('Corpus citation details', 'Corpus citation ayrıntıları')}
+          </summary>
           <pre aria-label="Corpus citation result">
             {JSON.stringify(corpusCitation.event.payload.result, null, 2)}
           </pre>
         </details>
       ) : null}
       {work.cards.length > visibleCards.length ? (
-        <p>{work.cards.length - visibleCards.length} eski işlem gizlendi.</p>
+        <p>
+          {work.cards.length - visibleCards.length}{' '}
+          {t('older operations hidden.', 'eski işlem gizlendi.')}
+        </p>
       ) : null}
     </details>
   )
@@ -1948,6 +2202,7 @@ function ApprovalCard({
   error?: string
   readOnly: boolean
 }) {
+  const t = useTranslations()
   const context = approval.context
   const commandActions = Array.isArray(context.commandActions)
     ? context.commandActions
@@ -1963,14 +2218,14 @@ function ApprovalCard({
       <div className="card-heading">
         <strong>
           {approval.kind === 'command_execution'
-            ? 'Komut onayı'
-            : 'Dosya değişikliği onayı'}
+            ? t('Command approval', 'Komut onayı')
+            : t('File change approval', 'Dosya değişikliği onayı')}
         </strong>
         <span>
           {approval.status === 'pending'
-            ? 'onay bekliyor'
+            ? t('awaiting approval', 'onay bekliyor')
             : approval.status === 'resolved'
-              ? 'çözüldü'
+              ? t('resolved', 'çözüldü')
               : approval.status}
         </span>
       </div>
@@ -1993,10 +2248,10 @@ function ApprovalCard({
             {String(
               context.risk ??
                 (networkContext
-                  ? 'Yüksek · ağ erişimi'
+                  ? t('High · network access', 'Yüksek · ağ erişimi')
                   : approval.kind === 'file_change'
-                    ? 'Orta · dosya yazma'
-                    : 'Komut çalıştırma'),
+                    ? t('Medium · file write', 'Orta · dosya yazma')
+                    : t('Command execution', 'Komut çalıştırma')),
             )}
           </dd>
         </div>
@@ -2007,7 +2262,7 @@ function ApprovalCard({
               context.scope ??
                 context.grantRoot ??
                 context.cwd ??
-                'Yalnız bu istek',
+                t('This request only', 'Yalnız bu istek'),
             )}
           </dd>
         </div>
@@ -2015,8 +2270,13 @@ function ApprovalCard({
           <dt>Expiry</dt>
           <dd>
             {approval.expiresAt
-              ? new Date(approval.expiresAt).toLocaleString('tr-TR')
-              : 'Turn veya runtime değişimine kadar'}
+              ? new Date(approval.expiresAt).toLocaleString(
+                  localize('en-US', 'tr-TR'),
+                )
+              : t(
+                  'Until the turn or runtime changes',
+                  'Turn veya runtime değişimine kadar',
+                )}
           </dd>
         </div>
       </dl>
@@ -2042,30 +2302,32 @@ function ApprovalCard({
           <pre>
             {context.diffAvailable && context.diff
               ? String(context.diff)
-              : 'Diff mevcut değil'}
+              : t('No diff available', 'Diff mevcut değil')}
           </pre>
         </div>
       ) : null}
       {error ? <p className="form-error">{error}</p> : null}
       {approval.status === 'resolving' ? (
-        <p className="approval-progress">Karar gönderiliyor…</p>
+        <p className="approval-progress">
+          {t('Sending decision…', 'Karar gönderiliyor…')}
+        </p>
       ) : null}
       {approval.status === 'pending' && !readOnly ? (
         <div className="approval-actions">
           <button disabled={pending} onClick={() => onDecision('accept')}>
-            Bir kez onayla
+            {t('Approve once', 'Bir kez onayla')}
           </button>
           <button
             disabled={pending}
             onClick={() => onDecision('accept_for_session')}
           >
-            Oturum için onayla
+            {t('Approve for session', 'Oturum için onayla')}
           </button>
           <button disabled={pending} onClick={() => onDecision('decline')}>
-            Reddet
+            {t('Decline', 'Reddet')}
           </button>
           <button disabled={pending} onClick={() => onDecision('cancel')}>
-            İptal
+            {t('Cancel', 'İptal')}
           </button>
         </div>
       ) : null}
@@ -2125,6 +2387,7 @@ export function ConversationHistory({
   tools?: ReactNode
   footer?: ReactNode
 }) {
+  const t = useTranslations()
   const [creatingFolder, setCreatingFolder] = useState(false)
   const activeFolders = folders.filter((folder) => !folder.archivedAt)
   const archivedFolders = folders.filter((folder) => folder.archivedAt)
@@ -2133,7 +2396,7 @@ export function ConversationHistory({
       folderId: folder.folderId as string | null,
       name: folder.name,
     })),
-    { folderId: null, name: 'Diğer konuşmalar' },
+    { folderId: null, name: t('Other conversations', 'Diğer konuşmalar') },
   ]
   return (
     <section className="conversation-history" aria-label="Conversation history">
@@ -2143,7 +2406,7 @@ export function ConversationHistory({
         {onClose ? (
           <button
             type="button"
-            aria-label="Folder drawer'ı kapat"
+            aria-label={t('Close folder drawer', "Folder drawer'ı kapat")}
             onClick={onClose}
           >
             ×
@@ -2157,7 +2420,8 @@ export function ConversationHistory({
           disabled={readOnly}
           onClick={() => onNewConversation(null)}
         >
-          <span aria-hidden="true">＋</span> Yeni sohbet
+          <span aria-hidden="true">＋</span>{' '}
+          {t('New conversation', 'Yeni sohbet')}
         </button>
         <button
           className="new-folder-button"
@@ -2166,7 +2430,7 @@ export function ConversationHistory({
           aria-expanded={creatingFolder}
           onClick={() => setCreatingFolder((open) => !open)}
         >
-          <span aria-hidden="true">▱</span> Yeni folder
+          <span aria-hidden="true">▱</span> {t('New folder', 'Yeni folder')}
         </button>
       </div>
       {tools ? <div className="history-tools">{tools}</div> : null}
@@ -2182,19 +2446,19 @@ export function ConversationHistory({
         >
           <input
             autoFocus
-            aria-label="Yeni folder adı"
+            aria-label={t('New folder name', 'Yeni folder adı')}
             value={folderName}
             onChange={(event) => onFolderNameChange(event.target.value)}
-            placeholder="Folder adı"
+            placeholder={t('Folder name', 'Folder adı')}
             maxLength={80}
             disabled={readOnly}
           />
           <button
             type="submit"
             disabled={readOnly || !folderName.trim() || folderPending}
-            aria-label="Folder oluştur"
+            aria-label={t('Create folder', 'Folder oluştur')}
           >
-            {folderPending ? '…' : 'Ekle'}
+            {folderPending ? '…' : t('Add', 'Ekle')}
           </button>
         </form>
       ) : null}
@@ -2220,8 +2484,11 @@ export function ConversationHistory({
                     <button
                       type="button"
                       disabled={readOnly}
-                      aria-label={`${group.name} içinde yeni sohbet`}
-                      title="Yeni sohbet"
+                      aria-label={t(
+                        `New conversation in ${group.name}`,
+                        `${group.name} içinde yeni sohbet`,
+                      )}
+                      title={t('New conversation', 'Yeni sohbet')}
                       onClick={(event) => {
                         event.preventDefault()
                         onSelectFolder(group.folderId)
@@ -2235,8 +2502,11 @@ export function ConversationHistory({
                       disabled={
                         readOnly || folderActionPending === group.folderId
                       }
-                      aria-label={`${group.name} folder'ını arşivle`}
-                      title="Arşivle"
+                      aria-label={t(
+                        `Archive ${group.name} folder`,
+                        `${group.name} folder'ını arşivle`,
+                      )}
+                      title={t('Archive', 'Arşivle')}
                       onClick={(event) => {
                         event.preventDefault()
                         const folder = activeFolders.find(
@@ -2269,8 +2539,11 @@ export function ConversationHistory({
                       disabled={
                         readOnly || conversationActionPending === item.sessionId
                       }
-                      aria-label={`${item.title} sohbetini arşivle`}
-                      title="Sohbeti arşivle"
+                      aria-label={t(
+                        `Archive ${item.title} conversation`,
+                        `${item.title} sohbetini arşivle`,
+                      )}
+                      title={t('Archive conversation', 'Sohbeti arşivle')}
                       onClick={() => onArchiveConversation(item)}
                     >
                       ↓
@@ -2278,7 +2551,7 @@ export function ConversationHistory({
                   </div>
                 ))}
                 {groupedSessions.length === 0 ? (
-                  <p>Henüz konuşma yok.</p>
+                  <p>{t('No conversations yet.', 'Henüz konuşma yok.')}</p>
                 ) : null}
               </div>
             </details>
@@ -2286,7 +2559,10 @@ export function ConversationHistory({
         })}
         {archivedFolders.length ? (
           <details className="archived-folders">
-            <summary>Arşivlenenler · {archivedFolders.length}</summary>
+            <summary>
+              {t('Archived folders', 'Arşivlenenler')} ·{' '}
+              {archivedFolders.length}
+            </summary>
             {archivedFolders.map((folder) => {
               const groupedSessions = sessions.filter(
                 (item) => item.folderId === folder.folderId,
@@ -2295,7 +2571,9 @@ export function ConversationHistory({
                 <div className="archived-folder" key={folder.folderId}>
                   <div>
                     <strong>{folder.name}</strong>
-                    <small>{groupedSessions.length} sohbet</small>
+                    <small>
+                      {groupedSessions.length} {t('conversations', 'sohbet')}
+                    </small>
                   </div>
                   <button
                     type="button"
@@ -2304,7 +2582,7 @@ export function ConversationHistory({
                     }
                     onClick={() => onRestoreFolder(folder)}
                   >
-                    Geri al
+                    {t('Restore', 'Geri al')}
                   </button>
                   <button
                     className="danger-button"
@@ -2314,7 +2592,7 @@ export function ConversationHistory({
                     }
                     onClick={() => onDeleteFolder(folder)}
                   >
-                    Sil
+                    {t('Delete', 'Sil')}
                   </button>
                 </div>
               )
@@ -2323,7 +2601,10 @@ export function ConversationHistory({
         ) : null}
         {archivedSessions.length ? (
           <details className="archived-conversations">
-            <summary>Arşivlenen sohbetler · {archivedSessions.length}</summary>
+            <summary>
+              {t('Archived conversations', 'Arşivlenen sohbetler')} ·{' '}
+              {archivedSessions.length}
+            </summary>
             {archivedSessions.map((item) => (
               <div className="archived-conversation" key={item.sessionId}>
                 <button
@@ -2340,7 +2621,7 @@ export function ConversationHistory({
                   }
                   onClick={() => onRestoreConversation(item)}
                 >
-                  Geri al
+                  {t('Restore', 'Geri al')}
                 </button>
               </div>
             ))}
@@ -2430,9 +2711,18 @@ export function providerAuthMessage(
     return `${provider} login gerekli. ${instruction ?? ''}`
   if (authStatus === 'unknown')
     return provider === 'gemini'
-      ? 'Gemini auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın; capacity hatasında daha sonra yeniden deneyin.'
-      : `${provider} auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın.`
-  return `${provider} auth hazır.`
+      ? localize(
+          'Gemini authentication cannot be verified with a safe probe. Run a real smoke test; retry capacity errors later.',
+          'Gemini auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın; capacity hatasında daha sonra yeniden deneyin.',
+        )
+      : localize(
+          `${provider} authentication cannot be verified with a safe probe. Run a real smoke test.`,
+          `${provider} auth durumu güvenli bir probe ile doğrulanamıyor. Gerçek smoke çalıştırın.`,
+        )
+  return localize(
+    `${provider} authentication is ready.`,
+    `${provider} auth hazır.`,
+  )
 }
 
 export function conversationFolderPickerState({
@@ -2451,6 +2741,7 @@ export function conversationFolderPickerState({
 }
 
 export function WorkspacePage({ sessionId }: { sessionId?: string }) {
+  const t = useTranslations()
   const navigate = useNavigate()
   const online = useOnlineStatus()
   const meta = useQuery({
@@ -2573,6 +2864,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [unlockPending, setUnlockPending] = useState(false)
   const [unlockError, setUnlockError] = useState<string>()
   const [realtimeState, setRealtimeState] = useState('kapalı')
+  const realtimeLabel =
+    {
+      kapalı: t('off', 'kapalı'),
+      bağlanıyor: t('connecting', 'bağlanıyor'),
+      canlı: t('live', 'canlı'),
+      'yeniden eşitleniyor': t('resynchronizing', 'yeniden eşitleniyor'),
+      'erişim kaldırıldı': t('access revoked', 'erişim kaldırıldı'),
+      'yeniden bağlanıyor': t('reconnecting', 'yeniden bağlanıyor'),
+    }[realtimeState] ?? realtimeState
   const [inviteTokenFromLocation, setInviteTokenFromLocation] = useState<
     string | null
   >(null)
@@ -2859,7 +3159,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         try {
           value = JSON.parse(String(message.data))
         } catch {
-          setError('Realtime geçersiz JSON gönderdi')
+          setError(
+            t('Realtime sent invalid JSON', 'Realtime geçersiz JSON gönderdi'),
+          )
           return
         }
         const parsed = serverMessageSchema.safeParse(value)
@@ -3113,10 +3415,19 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             ? []
             : [
                 capability === 'approvals'
-                  ? 'Native approval akışı yok'
+                  ? localize(
+                      'No native approval flow',
+                      'Native approval akışı yok',
+                    )
                   : capability === 'commandExecution'
-                    ? 'Komut desteği sınırlı'
-                    : 'Dosya değişikliği desteği sınırlı',
+                    ? localize(
+                        'Limited command support',
+                        'Komut desteği sınırlı',
+                      )
+                    : localize(
+                        'Limited file-change support',
+                        'Dosya değişikliği desteği sınırlı',
+                      ),
               ],
       )
     : []
@@ -3390,7 +3701,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   async function deleteFolder(folder: ConversationFolder) {
     if (
       !window.confirm(
-        `“${folder.name}” folder'ı silinsin mi? İçindeki sohbetler korunup “Folder yok” grubuna taşınacak.`,
+        t(
+          `Delete the “${folder.name}” folder? Its conversations will be preserved and moved to “No folder”.`,
+          `“${folder.name}” folder'ı silinsin mi? İçindeki sohbetler korunup “Folder yok” grubuna taşınacak.`,
+        ),
       )
     )
       return
@@ -3566,7 +3880,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       setError(cause instanceof Error ? cause.message : String(cause))
       if (
         cause instanceof Error &&
-        cause.message.includes('Güvenli içerik anahtarı kilitli')
+        (cause.message.includes('secure content key is locked') ||
+          cause.message.includes('Güvenli içerik anahtarı kilitli'))
       )
         void contentKeySession.refetch()
     } finally {
@@ -3582,7 +3897,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       await unlockStoredContentKey(apiBaseUrl, scopeHeaders, unlockPassword)
       const refreshed = await contentKeySession.refetch()
       if (refreshed.data?.contentKeyUnlocked !== true)
-        throw new Error('İçerik anahtarı durumu doğrulanamadı.')
+        throw new Error(
+          t(
+            'Could not verify content-key status.',
+            'İçerik anahtarı durumu doğrulanamadı.',
+          ),
+        )
       setUnlockPassword('')
       setError(undefined)
     } catch (cause) {
@@ -3603,8 +3923,19 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         selected.map(async (file) => {
           const mediaType = attachmentMediaType(file)
           if (!mediaType)
-            throw new Error(`${file.name}: desteklenmeyen dosya türü`)
-          if (file.size < 1) throw new Error(`${file.name}: dosya boş olmamalı`)
+            throw new Error(
+              t(
+                `${file.name}: unsupported file type`,
+                `${file.name}: desteklenmeyen dosya türü`,
+              ),
+            )
+          if (file.size < 1)
+            throw new Error(
+              t(
+                `${file.name}: file must not be empty`,
+                `${file.name}: dosya boş olmamalı`,
+              ),
+            )
           const response = await fetch(
             `${apiBaseUrl}/v1/sessions/${encodeURIComponent(activeSession.sessionId)}/attachments`,
             {
@@ -3675,7 +4006,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       setError(
         uploadError instanceof Error
           ? uploadError.message
-          : 'Source yüklenemedi',
+          : t('Could not upload source', 'Source yüklenemedi'),
       )
     } finally {
       setSourcePending(false)
@@ -3686,28 +4017,44 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     <main className="workspace-shell" data-session-id={sessionId}>
       {identity.isPending && online ? (
         <p className="offline-banner" role="status">
-          Kimlik ve organization üyelikleri doğrulanıyor…
+          {t(
+            'Verifying identity and organization membership…',
+            'Kimlik ve organization üyelikleri doğrulanıyor…',
+          )}
         </p>
       ) : null}
       {identity.isError && online ? (
         <p className="offline-banner" role="alert">
-          Oturum süresi dolmuş veya bu organization için erişim yasaklanmış.{' '}
-          <a href={withBase('/login')}>Yeniden giriş yapın</a>.
+          {t(
+            'Your session has expired or access to this organization was denied.',
+            'Oturum süresi dolmuş veya bu organization için erişim yasaklanmış.',
+          )}{' '}
+          <a href={withBase('/login')}>
+            {t('Sign in again', 'Yeniden giriş yapın')}
+          </a>
+          .
         </p>
       ) : null}
       {folderAccessLost ? (
         <p className="offline-banner access-lost" role="alert">
-          Bu klasöre erişimin kaldırıldı. Yerel görünüm temizlendi; güvenli
-          klasör listesine dönülüyor.
+          {t(
+            'Your access to this folder was removed. The local view was cleared; returning to the secure folder list.',
+            'Bu klasöre erişimin kaldırıldı. Yerel görünüm temizlendi; güvenli klasör listesine dönülüyor.',
+          )}
         </p>
       ) : null}
       {inviteTokenFromLocation ? (
         <div
           className="invite-accept-banner"
           role="region"
-          aria-label="Klasör daveti"
+          aria-label={t('Folder invitation', 'Klasör daveti')}
         >
-          <span>Güvenli klasör davetin var.</span>
+          <span>
+            {t(
+              'You have a secure folder invitation.',
+              'Güvenli klasör davetin var.',
+            )}
+          </span>
           <button
             type="button"
             disabled={!online || sharingPending}
@@ -3719,13 +4066,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       ) : null}
       {!online ? (
         <p className="offline-banner" role="status">
-          Çevrimdışı · Son senkronize conversation history read-only
-          gösteriliyor. Yeni prompt kuyruğa alınmaz.
+          {t(
+            'Offline · Showing the last synchronized conversation history as read-only. New prompts will not be queued.',
+            'Çevrimdışı · Son senkronize conversation history read-only gösteriliyor. Yeni prompt kuyruğa alınmaz.',
+          )}
         </p>
       ) : null}
       <header className="topbar">
         <div>
-          <p className="eyebrow">FAZ 0 · CANLI CODEX AKIŞI</p>
+          <p className="eyebrow">
+            {t('PHASE 0 · LIVE CODEX STREAM', 'FAZ 0 · CANLI CODEX AKIŞI')}
+          </p>
           <h1>Perseverance</h1>
           {identity.data ? (
             <label>
@@ -3777,7 +4128,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           className="signout-button"
           onClick={() => void signOut(apiBaseUrl)}
         >
-          Çıkış{' '}
+          {t('Exit', 'Çıkış')}{' '}
           <span suppressHydrationWarning>
             ({storedAuth?.username ?? 'oturum'})
           </span>
@@ -3785,9 +4136,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         <div className={`status-pill status-${meta.status}`}>
           <span className="status-dot" aria-hidden="true" />
           {!online
-            ? 'Çevrimdışı'
+            ? t('Offline', 'Çevrimdışı')
             : meta.isSuccess
-              ? 'Control plane bağlı'
+              ? t('Control plane connected', 'Control plane bağlı')
               : 'Control plane bekleniyor'}
         </div>
       </header>
@@ -3838,7 +4189,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </span>
                 <div>
                   <strong suppressHydrationWarning>
-                    {storedAuth?.username ?? 'kullanıcı'}
+                    {storedAuth?.username ?? t('user', 'kullanıcı')}
                   </strong>
                   <small suppressHydrationWarning>
                     {workspaceId} · {tenantId}
@@ -3846,7 +4197,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </div>
                 <button
                   type="button"
-                  aria-label="Ayarlar ve kullanım"
+                  aria-label={t('Settings and usage', 'Ayarlar ve kullanım')}
                   onClick={() => {
                     setHistoryOpen(false)
                     setSettingsOpen(true)
@@ -3855,7 +4206,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   ☷
                 </button>
                 <button type="button" onClick={() => void signOut(apiBaseUrl)}>
-                  ÇIKIŞ
+                  {t('SIGN OUT', 'ÇIKIŞ')}
                 </button>
               </div>
             }
@@ -3875,7 +4226,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     type="button"
                     onClick={() => setSupportAccessOpen(true)}
                   >
-                    <span>Support erişimi</span>
+                    <span>{t('Support access', 'Support erişimi')}</span>
                     <small>
                       {supportGrants.data?.filter(
                         (grant) => grant.status === 'active',
@@ -3889,12 +4240,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           />
           <section
             className="shared-folder-panel"
-            aria-label="Paylaşımlı klasörler"
+            aria-label={t('Shared folders', 'Paylaşımlı klasörler')}
           >
             <div className="shared-folder-heading">
               <div>
-                <p className="section-label">Güvenli paylaşım</p>
-                <h2>Paylaşımlı klasörler</h2>
+                <p className="section-label">
+                  {t('Secure sharing', 'Güvenli paylaşım')}
+                </p>
+                <h2>{t('Shared folders', 'Paylaşımlı klasörler')}</h2>
               </div>
               <span>{sharedFolders.data?.folders.length ?? 0}</span>
             </div>
@@ -3906,18 +4259,21 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               }}
             >
               <input
-                aria-label="Yeni paylaşımlı klasör adı"
+                aria-label={t(
+                  'New shared folder name',
+                  'Yeni paylaşımlı klasör adı',
+                )}
                 value={sharedFolderName}
                 maxLength={80}
                 disabled={!online || sharingPending}
                 onChange={(event) => setSharedFolderName(event.target.value)}
-                placeholder="Özel klasör"
+                placeholder={t('Private folder', 'Özel klasör')}
               />
               <button
                 type="submit"
                 disabled={!sharedFolderName.trim() || !online || sharingPending}
               >
-                Oluştur
+                {t('Create', 'Oluştur')}
               </button>
             </form>
             <ul className="shared-folder-list">
@@ -3945,7 +4301,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                       disabled={sharingPending}
                       onClick={() => void createShareInvitation(entry.folder)}
                     >
-                      Paylaş
+                      {t('Share', 'Paylaş')}
                     </button>
                   ) : null}
                 </li>
@@ -3953,7 +4309,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             </ul>
             {invitationToken ? (
               <div className="invite-token" role="status">
-                <strong>Tek kullanımlık davet</strong>
+                <strong>
+                  {t('Single-use invitation', 'Tek kullanımlık davet')}
+                </strong>
                 <code>{invitationToken}</code>
                 <button
                   type="button"
@@ -3963,19 +4321,25 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     )
                   }
                 >
-                  Bağlantıyı kopyala
+                  {t('Copy link', 'Bağlantıyı kopyala')}
                 </button>
               </div>
             ) : null}
             {managedFolder?.membership.role === 'owner' ? (
-              <ul className="shared-member-list" aria-label="Klasör üyeleri">
+              <ul
+                className="shared-member-list"
+                aria-label={t('Folder members', 'Klasör üyeleri')}
+              >
                 {(folderMembers.data?.members ?? []).map((member) => (
                   <li key={member.principalId}>
                     <span title={member.principalId}>
                       {member.principalId.slice(0, 18)}…
                     </span>
                     <select
-                      aria-label={`${member.principalId} rolü`}
+                      aria-label={t(
+                        `${member.principalId} role`,
+                        `${member.principalId} rolü`,
+                      )}
                       value={member.role}
                       onChange={(event) =>
                         void changeSharedFolderRole(
@@ -4007,7 +4371,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                         )
                       }
                     >
-                      Kaldır
+                      {t('Remove', 'Kaldır')}
                     </button>
                   </li>
                 ))}
@@ -4027,7 +4391,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             </div>
             <div>
               <dt>Realtime</dt>
-              <dd>{realtimeState}</dd>
+              <dd>{realtimeLabel}</dd>
             </div>
           </dl>
           {session ? (
@@ -4042,7 +4406,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   disabled={sessionPending}
                   onClick={() => void resumeSession()}
                 >
-                  {sessionPending ? 'Sürdürülüyor…' : 'Sohbeti sürdür'}
+                  {sessionPending
+                    ? t('Resuming…', 'Sürdürülüyor…')
+                    : t('Resume conversation', 'Sohbeti sürdür')}
                 </button>
               ) : null}
               {session.recoveryErrorCode ? (
@@ -4052,9 +4418,16 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           ) : null}
           <nav className="recent-sessions" aria-label="Son sohbetler">
             <p className="section-label">Son sohbetler</p>
-            {recentSessions.isPending ? <span>Yükleniyor…</span> : null}
+            {recentSessions.isPending ? (
+              <span>{t('Loading…', 'Yükleniyor…')}</span>
+            ) : null}
             {recentSessions.isError ? (
-              <span>Sohbet listesi alınamadı.</span>
+              <span>
+                {t(
+                  'Could not load the conversation list.',
+                  'Sohbet listesi alınamadı.',
+                )}
+              </span>
             ) : null}
             {historySessions.map((item) => (
               <button
@@ -4080,14 +4453,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               >
                 <span>
                   {recentSessions.isFetchingNextPage
-                    ? 'Yükleniyor…'
-                    : 'Daha eski sohbetler'}
+                    ? t('Loading…', 'Yükleniyor…')
+                    : t('Older conversations', 'Daha eski sohbetler')}
                 </span>
               </button>
             ) : null}
             {recentSessions.data &&
             !recentSessions.data.pages.some((page) => page.sessions.length) ? (
-              <span>Sohbet yok.</span>
+              <span>{t('No conversations.', 'Sohbet yok.')}</span>
             ) : null}
           </nav>
         </aside>
@@ -4104,7 +4477,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <button
               className="history-toggle"
               type="button"
-              aria-label="Conversation history aç/kapat"
+              aria-label={t(
+                'Toggle conversation history',
+                'Conversation history aç/kapat',
+              )}
               aria-expanded={historyOpen}
               onClick={() => setHistoryOpen((open) => !open)}
             >
@@ -4112,7 +4488,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             </button>
             <div>
               <h1 id="chat-title">
-                {session?.title ?? offlineSelected?.title ?? 'Yeni konuşma'}
+                {session?.title ??
+                  offlineSelected?.title ??
+                  t('New conversation', 'Yeni konuşma')}
               </h1>
               <p className="chat-context">
                 {(conversationFolders.data?.folders ?? []).find(
@@ -4124,7 +4502,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <button
               className={`provider-chip ${turnActive ? 'is-running' : ''}`}
               type="button"
-              aria-label="Provider ve model seç"
+              aria-label={t(
+                'Choose provider and model',
+                'Provider ve model seç',
+              )}
               onClick={() => setProviderSheetOpen(true)}
             >
               <span aria-hidden="true" />
@@ -4147,15 +4528,20 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   ) : null}
                 </summary>
                 <div className="usage-breakdown">
-                  <h2>Conversation kullanımı</h2>
+                  <h2>{t('Conversation usage', 'Conversation kullanımı')}</h2>
                   <p>
-                    Toplam; conversation turn’leri ile otomatik başlık işini
-                    birlikte içerir. Eksik usage sıfır maliyet sayılmaz.
+                    {t(
+                      'The total includes conversation turns and automatic title generation. Missing usage is not treated as zero cost.',
+                      'Toplam; conversation turn’leri ile otomatik başlık işini birlikte içerir. Eksik usage sıfır maliyet sayılmaz.',
+                    )}
                   </p>
                   {billing.data ? (
                     <section
                       className="billing-status"
-                      aria-label="Plan ve bütçe durumu"
+                      aria-label={t(
+                        'Plan and budget status',
+                        'Plan ve bütçe durumu',
+                      )}
                     >
                       <div>
                         <strong>{billing.data.plan.displayName}</strong>
@@ -4197,7 +4583,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                           {billing.data.credits.balance.ledgerWatermark}
                         </small>
                       </div>
-                      <details aria-label="Kredi geçmişi">
+                      <details
+                        aria-label={t('Credit history', 'Kredi geçmişi')}
+                      >
                         <summary>Credit history</summary>
                         <ul>
                           {billing.data.credits.ledger
@@ -4238,7 +4626,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                           ? new Date(
                               billing.data.lastReconciledAt,
                             ).toLocaleString()
-                          : 'yok'}
+                          : t('none', 'yok')}
                       </small>
                       {billing.data.budgets.map((budget) => (
                         <small key={budget.budgetId}>
@@ -4246,8 +4634,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                           {billing.data.usage.estimatedCostMicros === null
                             ? 'incomplete'
                             : `${billing.data.usage.estimatedCostMicros} µ${budget.currency}`}{' '}
-                          · soft {budget.softLimitMicros ?? 'yok'} · hard{' '}
-                          {budget.hardLimitMicros ?? 'yok'}
+                          · soft {budget.softLimitMicros ?? t('none', 'yok')} ·
+                          hard {budget.hardLimitMicros ?? t('none', 'yok')}
                         </small>
                       ))}
                       {billing.data.latestDecision ? (
@@ -4260,17 +4648,20 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                           }
                         >
                           {billing.data.latestDecision.outcome === 'warn'
-                            ? 'Soft limit uyarısı'
+                            ? t('Soft limit warning', 'Soft limit uyarısı')
                             : billing.data.latestDecision.outcome === 'deny'
                               ? 'Hard limit'
-                              : 'Kota uygun'}
+                              : t('Quota available', 'Kota uygun')}
                           : {billing.data.latestDecision.reason} · policy v
                           {billing.data.latestDecision.policyVersion}
                         </p>
                       ) : null}
                       {!billing.data.productionBillingVerified ? (
                         <small>
-                          Billing emulator · production tahsilat doğrulanmadı
+                          {t(
+                            'Billing emulator · production collection not verified',
+                            'Billing emulator · production tahsilat doğrulanmadı',
+                          )}
                         </small>
                       ) : null}
                       {billingFinancial.data ? (
@@ -4337,7 +4728,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                             <div>
                               <strong>
                                 {item.purpose === 'conversation_title'
-                                  ? 'Otomatik başlık'
+                                  ? t('Automatic title', 'Otomatik başlık')
                                   : `Turn ${item.turnId}`}
                               </strong>
                               <span>{display.amount}</span>
@@ -4355,14 +4746,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                             </small>
                             <small>
                               {item.currency} · price catalog:{' '}
-                              {item.priceCatalogVersions.join(', ') || 'yok'}
+                              {item.priceCatalogVersions.join(', ') ||
+                                t('none', 'yok')}
                             </small>
                           </li>
                         )
                       })}
                     </ul>
                   ) : (
-                    <p>Henüz ölçülmüş usage yok.</p>
+                    <p>
+                      {t('No measured usage yet.', 'Henüz ölçülmüş usage yok.')}
+                    </p>
                   )}
                 </div>
               </details>
@@ -4378,14 +4772,16 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   else setSelectedFolderId(folderId)
                 }}
               >
-                <option value="">Folder yok</option>
+                <option value="">{t('No folder', 'Folder yok')}</option>
                 {(conversationFolders.data?.folders ?? []).map((folder) => (
                   <option
                     key={folder.folderId}
                     value={folder.folderId}
                     disabled={Boolean(folder.archivedAt)}
                   >
-                    {folder.archivedAt ? `[Arşiv] ${folder.name}` : folder.name}
+                    {folder.archivedAt
+                      ? `[${t('Archived', 'Arşiv')}] ${folder.name}`
+                      : folder.name}
                   </option>
                 ))}
                 {(sharedFolders.data?.folders ?? []).map((entry) => (
@@ -4425,7 +4821,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </p>
               ) : session?.latestRun?.terminalOutcome ? (
                 <p className="background-run-banner is-terminal" role="status">
-                  Son çalışma: {session.latestRun.terminalOutcome}
+                  {t('Last run', 'Son çalışma')}:{' '}
+                  {session.latestRun.terminalOutcome}
                 </p>
               ) : null}
               {[...approvals.values()]
@@ -4459,7 +4856,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                         </span>
                         <div>
                           <strong>
-                            {item.role === 'assistant' ? 'Codex' : 'Sen'}
+                            {item.role === 'assistant'
+                              ? 'Codex'
+                              : t('You', 'Sen')}
                           </strong>
                           <Suspense fallback={<p>{item.text}</p>}>
                             {item.text ? (
@@ -4486,8 +4885,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               ) : (
                 <div className="chat-welcome">
                   <span aria-hidden="true">&gt;_</span>
-                  <h2>İLK TURN İÇİN HAZIR</h2>
-                  <p>Yeni bir konuşma başlatmak için aşağıya görevini yaz.</p>
+                  <h2>
+                    {t('READY FOR THE FIRST TURN', 'İLK TURN İÇİN HAZIR')}
+                  </h2>
+                  <p>
+                    {t(
+                      'Enter a task below to start a new conversation.',
+                      'Yeni bir konuşma başlatmak için aşağıya görevini yaz.',
+                    )}
+                  </p>
                 </div>
               )}
             </div>
@@ -4501,15 +4907,21 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 {readiness.isPending
                   ? 'Codex auth kontrol ediliyor…'
                   : readiness.data?.status === 'ready'
-                    ? 'Codex auth hazır'
+                    ? t('Codex authentication ready', 'Codex auth hazır')
                     : readiness.data?.status === 'setup_required'
                       ? 'Codex login gerekli'
-                      : 'Codex readiness bozulmuş'}
+                      : t(
+                          'Codex readiness degraded',
+                          'Codex readiness bozulmuş',
+                        )}
               </strong>
               {readiness.data?.status === 'setup_required' ? (
                 <p>
-                  Terminalde <code>codex login</code> çalıştırın. API key
-                  girmeyin; ardından yeniden deneyin.
+                  {t('Run', 'Terminalde')} <code>codex login</code>{' '}
+                  {t(
+                    'in a terminal. Do not enter an API key; then try again.',
+                    'çalıştırın. API key girmeyin; ardından yeniden deneyin.',
+                  )}
                 </p>
               ) : null}
             </div>
@@ -4556,7 +4968,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           ) : null}
           <div className="timeline-heading">
             <div>
-              <p className="section-label">Canlı görev</p>
+              <p className="section-label">{t('Live task', 'Canlı görev')}</p>
               <h2 id="timeline-title">Codex timeline</h2>
             </div>
             <span className="sequence-label">
@@ -4586,7 +4998,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           <div
             className={`timeline-stream ${masterExpanded ? '' : 'is-collapsed'}`}
             aria-live="polite"
-            aria-label="Timeline olayları"
+            aria-label={t('Timeline events', 'Timeline olayları')}
             tabIndex={0}
             ref={timelineRef}
           >
@@ -4607,7 +5019,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 />
               ))}
             {cards.length > 0 ? (
-              <section className="timeline-master" aria-label="Codex çalışması">
+              <section
+                className="timeline-master"
+                aria-label={t('Codex activity', 'Codex çalışması')}
+              >
                 <button
                   className="timeline-master-toggle"
                   type="button"
@@ -4619,10 +5034,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     <span />
                   </span>
                   <span className="timeline-master-label">
-                    <strong>Codex çalışması</strong>
+                    <strong>{t('Codex activity', 'Codex çalışması')}</strong>
                     <span>
-                      {cards.length} işlem ·{' '}
-                      {turnActive ? 'çalışıyor' : 'hazır'}
+                      {cards.length} {t('operations', 'işlem')} ·{' '}
+                      {turnActive
+                        ? t('running', 'çalışıyor')
+                        : t('ready', 'hazır')}
                     </span>
                   </span>
                   <span
@@ -4663,11 +5080,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   &gt;_
                 </div>
                 <h3>
-                  {session ? 'İlk turn için hazır' : 'Önce sohbet oluştur'}
+                  {session
+                    ? t('Ready for the first turn', 'İlk turn için hazır')
+                    : t('Create a conversation first', 'Önce sohbet oluştur')}
                 </h3>
                 <p>
-                  Normalize event’ler durable store commit’inden sonra burada
-                  canlı görünür.
+                  {t(
+                    'Normalized events appear here live after the durable store commit.',
+                    'Normalize event’ler durable store commit’inden sonra burada canlı görünür.',
+                  )}
                 </p>
               </div>
             )}
@@ -4675,7 +5096,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
 
           {error ? (
             <section className="request-error" role="alert">
-              <strong>İşlem tamamlanamadı</strong>
+              <strong>
+                {t('Operation could not be completed', 'İşlem tamamlanamadı')}
+              </strong>
               <p>{error}</p>
             </section>
           ) : null}
@@ -4686,10 +5109,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               onSubmit={(event) => void unlockContentKey(event)}
             >
               <div>
-                <strong>Güvenli oturum yeniden doğrulanmalı</strong>
+                <strong>
+                  {t(
+                    'Secure session must be reauthenticated',
+                    'Güvenli oturum yeniden doğrulanmalı',
+                  )}
+                </strong>
                 <p>
-                  Sunucu yeniden başlatıldı. Mesajınız korunuyor; göndermek için
-                  parolanızı bir kez girin.
+                  {t(
+                    'The server restarted. Your message is preserved; enter your password once to send it.',
+                    'Sunucu yeniden başlatıldı. Mesajınız korunuyor; göndermek için parolanızı bir kez girin.',
+                  )}
                 </p>
               </div>
               <label>
@@ -4706,7 +5136,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 type="submit"
                 disabled={unlockPending || unlockPassword.length < 8}
               >
-                {unlockPending ? 'Doğrulanıyor…' : 'Kilidi aç'}
+                {unlockPending
+                  ? t('Verifying…', 'Doğrulanıyor…')
+                  : t('Unlock', 'Kilidi aç')}
               </button>
               {unlockError ? <p className="form-error">{unlockError}</p> : null}
             </form>
@@ -4715,12 +5147,18 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <section className="recovery-panel" aria-live="polite">
               <h3>
                 {session.recoveryErrorCode === 'THREAD_NOT_RESUMABLE'
-                  ? 'Thread sürdürülemiyor'
-                  : 'Sohbet geçici olarak kurtarılamadı'}
+                  ? t('Thread cannot be resumed', 'Thread sürdürülemiyor')
+                  : t(
+                      'Conversation could not be recovered temporarily',
+                      'Sohbet geçici olarak kurtarılamadı',
+                    )}
               </h3>
               <p>
                 {session.recoveryErrorCode === 'THREAD_NOT_RESUMABLE'
-                  ? 'Mevcut thread binding’i korunuyor; otomatik yeni thread açılmadı.'
+                  ? t(
+                      'The existing thread binding is preserved; no new thread was opened automatically.',
+                      'Mevcut thread binding’i korunuyor; otomatik yeni thread açılmadı.',
+                    )
                   : 'Runtime, timeout veya authentication sorunu giderildikten sonra yeniden deneyebilirsiniz.'}
               </p>
               <div className="approval-actions">
@@ -4739,12 +5177,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     disabled={sessionPending || readOnly}
                     onClick={() => beginConversationDraft()}
                   >
-                    Yeni sohbet başlat
+                    {t('Start new conversation', 'Yeni sohbet başlat')}
                   </button>
                 ) : null}
                 {session.recoveryOptions.includes('view_read_only') ? (
                   <button type="button" onClick={() => setReadOnly(true)}>
-                    Timeline’ı read-only görüntüle
+                    {t(
+                      'View timeline as read-only',
+                      'Timeline’ı read-only görüntüle',
+                    )}
                   </button>
                 ) : null}
               </div>
@@ -4757,8 +5198,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <div className="running-status" role="status">
               <span aria-hidden="true" />
               <small>
-                Server üzerinde çalışıyor · sequence{' '}
-                {String(lastSequence.current).padStart(4, '0')}
+                {t('Running on the server', 'Server üzerinde çalışıyor')} ·
+                sequence {String(lastSequence.current).padStart(4, '0')}
               </small>
               <button
                 type="button"
@@ -4773,7 +5214,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             className="composer"
             onSubmit={(event) => void submitTurn(event)}
           >
-            <label htmlFor="prompt">Codex’e görev ver</label>
+            <label htmlFor="prompt">
+              {t('Give Codex a task', 'Codex’e görev ver')}
+            </label>
             {attachments.length > 0 ? (
               <div className="composer-attachments" aria-label="Attachment’lar">
                 {attachments.map((attachment) => (
@@ -4790,7 +5233,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     </small>
                     <button
                       type="button"
-                      aria-label={`${attachment.name} attachment’ını kaldır`}
+                      aria-label={t(
+                        `Remove ${attachment.name} attachment`,
+                        `${attachment.name} attachment’ını kaldır`,
+                      )}
                       onClick={() => void removeAttachment(attachment)}
                     >
                       ×
@@ -4843,7 +5289,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   if (turnActive) void steerOrInterrupt('steer')
                   else event.currentTarget.form?.requestSubmit()
                 }}
-                placeholder={`${session?.provider ?? selectedProvider}'e görev ver…`}
+                placeholder={t(
+                  `Give ${session?.provider ?? selectedProvider} a task…`,
+                  `${session?.provider ?? selectedProvider}'e görev ver…`,
+                )}
                 rows={2}
                 disabled={
                   (session !== undefined && session.status !== 'active') ||
@@ -4879,7 +5328,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     disabled={!prompt.trim() || turnPending}
                     onClick={() => void steerOrInterrupt('steer')}
                   >
-                    Yönlendir
+                    {t('Steer', 'Yönlendir')}
                   </button>
                   <button
                     type="button"
@@ -4934,7 +5383,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           <button
             className="modal-backdrop"
             type="button"
-            aria-label="Provider seçimini kapat"
+            aria-label={t(
+              'Close provider selection',
+              'Provider seçimini kapat',
+            )}
             onClick={() => setProviderSheetOpen(false)}
           />
           <section
@@ -5008,12 +5460,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     <span>
                       <strong>
                         {model.displayName}
-                        {model.isDefault ? <em>varsayılan</em> : null}
+                        {model.isDefault ? (
+                          <em>{t('default', 'varsayılan')}</em>
+                        ) : null}
                       </strong>
                       <small>
                         {model.capabilities.approvals === 'supported'
                           ? 'onay destekli'
-                          : 'sınırlı onay'}{' '}
+                          : t('limited approval', 'sınırlı onay')}{' '}
                         · komut + diff
                       </small>
                     </span>
@@ -5062,7 +5516,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </header>
           <div className="settings-content">
             <section>
-              <p className="settings-label">BU SOHBETİN KULLANIMI</p>
+              <p className="settings-label">
+                {t('THIS CONVERSATION’S USAGE', 'BU SOHBETİN KULLANIMI')}
+              </p>
               <strong className="usage-amount">{usageDisplay.amount}</strong>
               <small>{usageDisplay.detail}</small>
               <dl className="token-grid">
@@ -5102,15 +5558,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </div>
                 <div>
                   <dt>Realtime</dt>
-                  <dd>{realtimeState}</dd>
+                  <dd>{realtimeLabel}</dd>
                 </div>
               </dl>
             </section>
             <section>
-              <p className="settings-label">GÜVENLİK</p>
+              <p className="settings-label">{t('SECURITY', 'GÜVENLİK')}</p>
               <p className="settings-copy">
-                Konuşma içeriği tenant kapsamında saklanır. Parolanız ve hassas
-                environment değerleri timeline veya loglara yazılmaz.
+                {t(
+                  'Conversation content is stored within the tenant scope. Your password and sensitive environment values are never written to the timeline or logs.',
+                  'Konuşma içeriği tenant kapsamında saklanır. Parolanız ve hassas environment değerleri timeline veya loglara yazılmaz.',
+                )}
               </p>
             </section>
             <button

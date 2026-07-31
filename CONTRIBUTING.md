@@ -1,18 +1,15 @@
-# Katkı Rehberi
+# Contributing
 
-Perseverance'e katkı hoş geldiniz. Bu rehber temiz bir
-checkout'tan çalışan bir geliştirme ortamına ve kabul edilen bir katkıya giden
-yolu tanımlar.
+Contributions to Perseverance are welcome.
 
-## Gereksinimler
+## Requirements
 
-- Node.js 24 (`engines` alanı `>=24.0.0` ister)
-- pnpm 9.15.3 (`corepack enable` önerilir; `packageManager` alanı pinlidir)
+- Node.js 24
+- pnpm 9.15.3 through Corepack
 - Git
-- Opsiyonel: sağlayıcı smoke testleri için Codex CLI 0.144.2 ve Docker
-  (çekirdek build/test için gerekmez)
+- Optional: Codex CLI 0.144.2 and Docker for real-provider smoke tests
 
-## Temiz checkout'tan build ve test
+## Build and test from a clean checkout
 
 ```bash
 git clone <repository-url>
@@ -22,51 +19,28 @@ pnpm install --frozen-lockfile
 pnpm verify
 ```
 
-`pnpm verify` tek doğrulama gate'idir: format kontrolü, typecheck, testler,
-build ve SSR smoke'unu birlikte çalıştırır. Temiz bir checkout'ta yukarıdaki
-adımlar dışında hiçbir manuel adım gerekmez; gerekiyorsa bu bir hatadır, issue
-açın. Test suite'i Argon2/PDF gibi CPU-ağır işler ile Git/subprocess
-fixture'larını birlikte çalıştırdığı için Vitest dosya worker sayısı
-`vitest.config.ts` içinde birle sınırlandırılmıştır; kabul koşusunda bu sınırı
-artırmayın. Üretim maliyetindeki Argon2 kontrollerini tek test deadline'ında
-zincirlemeyin; her assertion aynı parametrelerle ayrı testte çalışmalıdır.
+`pnpm verify` is the main local gate: formatting, type checks, tests, build, and
+the SSR smoke test. Keep changes focused and include tests for behavior changes.
+All project documentation, code identifiers, and commit messages must be in
+English. Record changes to security boundaries, protocols, or data models in an
+ADR before implementation.
 
-Lokal geliştirme sunucusu için `README.md` içindeki `pnpm alpha:dev` bölümüne
-bakın.
+## Developer Certificate of Origin
 
-## Değişiklik akışı
-
-1. Değişikliği küçük ve tek amaçlı tutun; davranış değişikliği testle gelir.
-2. Commit'ten önce `pnpm verify` geçmelidir.
-3. Dokümantasyon dili Türkçedir; kod, tanımlayıcılar ve commit mesajları
-   İngilizcedir (mevcut konvansiyon).
-4. Mimari kararlar `docs/architecture/adr-XXXX-*.md` kaydı gerektirir.
-5. İş paketi disiplini `docs/planning/work-package-management.md` içinde
-   tanımlanır.
-
-## Developer Certificate of Origin (DCO)
-
-Katkılar [Developer Certificate of Origin 1.1](https://developercertificate.org)
-beyanıyla alınır. Her commit'i `git commit -s` ile imzalayın:
+Contributions are accepted under the
+[Developer Certificate of Origin 1.1](https://developercertificate.org).
+Sign every commit with `git commit -s`:
 
 ```text
-Signed-off-by: Ad Soyad <eposta@example.com>
+Signed-off-by: Your Name <you@example.com>
 ```
 
-Sign-off, katkınızı repository lisansı (AGPL-3.0-only, bkz. `LICENSE` ve
-ADR-0031) altında sunma hakkına sahip olduğunuzu beyan eder. Ayrı bir CLA şu
-an istenmez; ileride ticari lisanslama gündeme gelirse yeni katkılar için CLA
-ayrı bir kararla duyurulur.
+## Secrets and security
 
-## Secret ve güvenlik kuralları
+- Never place real credentials, tokens, or customer data in files, tests,
+  fixtures, logs, or commit messages.
+- Clearly label test-only credential-shaped values, for example
+  `sk-fixture-not-a-real-key`.
+- Report vulnerabilities using [SECURITY.md](SECURITY.md), not a public issue.
 
-- Gerçek credential, token veya müşteri verisi hiçbir dosyaya, teste,
-  fixture'a veya commit mesajına yazılamaz.
-- Test sabitleri kendini etiketlemelidir (ör. `sk-fixture-not-a-real-key`);
-  secret politikası `infra/release/wp31-gitleaks.toml` ile zorlanır.
-- Güvenlik açığı bildirimi için `SECURITY.md` sürecini kullanın; public issue
-  açmayın.
-
-## Destek
-
-Destek kapsamı ve kanalları için `SUPPORT.md` dosyasına bakın.
+See [SUPPORT.md](SUPPORT.md) for supported channels and scope.

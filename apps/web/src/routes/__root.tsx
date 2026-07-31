@@ -9,6 +9,7 @@ import type { ReactNode } from 'react'
 import { withBase } from '../base-path'
 import appStyles from '../styles.css?url'
 import { PwaRuntime } from '../pwa-runtime'
+import { LanguageSwitcher, LocaleProvider, useTranslations } from '../i18n'
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient
@@ -39,20 +40,23 @@ export const Route = createRootRouteWithContext<{
 function RootComponent() {
   return (
     <RootDocument>
-      <Outlet />
+      <LocaleProvider>
+        <LanguageSwitcher />
+        <Outlet />
+        <PwaRuntime />
+      </LocaleProvider>
     </RootDocument>
   )
 }
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="tr" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
         {children}
-        <PwaRuntime />
         <Scripts />
       </body>
     </html>
@@ -60,10 +64,16 @@ function RootDocument({ children }: { children: ReactNode }) {
 }
 
 function NotFoundPage() {
+  const t = useTranslations()
   return (
     <main className="workspace-shell">
       <p className="eyebrow">404</p>
-      <h1>Bu çalışma alanı görünümü bulunamadı.</h1>
+      <h1>
+        {t(
+          'This workspace view could not be found.',
+          'Bu çalışma alanı görünümü bulunamadı.',
+        )}
+      </h1>
     </main>
   )
 }

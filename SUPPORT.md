@@ -1,33 +1,17 @@
-# Destek Kapsamı
+# Support
 
-## Community (bu repository)
+The open-source release receives best-effort community support:
 
-Bu repository'nin açık kaynak sürümü **best-effort community desteğiyle**
-gelir:
+- Use repository issues for questions and bug reports.
+- There is no response-time or resolution SLA.
+- Security fixes target `main` and the latest release.
+- Operators are responsible for their self-hosted installation, backups, and
+  security.
 
-- Sorular ve hata bildirimleri için repository issue'ları kullanılır.
-- Yanıt süresi veya çözüm için SLA yoktur.
-- Güvenlik düzeltmeleri yalnız `main` branch'ine ve en son release'e uygulanır
-  (bkz. `SECURITY.md`).
-- Self-hosted kurulumların işletimi, yedeklenmesi ve güvenliği kullanıcının
-  sorumluluğundadır.
+Report vulnerabilities through the private channel in [SECURITY.md](SECURITY.md),
+not through issues.
 
-Güvenlik açığı bildirimleri issue yerine `SECURITY.md` içindeki özel kanaldan
-yapılır.
-
-## Kapsam dışı
-
-- Üçüncü taraf provider CLI/SDK'larının (Codex, Claude, Gemini, Cursor)
-  kurulum, lisans ve hesap sorunları — ilgili sağlayıcının destek kanallarına
-  başvurun (bkz.
-  `docs/security/provider-binary-and-sdk-distribution-boundaries.md`).
-- Provider hesap/abonelik koşulları ve maliyetleri.
-- Kullanıcıya özel altyapı danışmanlığı.
-
-## Cloud profili
-
-`cloud` profili, tenant runtime ve provider-auth kodu repository'de tarihsel
-mimari ve contract testleriyle birlikte korunur. İşletilen bir Perseverance
-Managed Cloud hizmeti yoktur; bu profil kurulabilir veya desteklenen bir
-dağıtım hedefi değildir. Destek taahhüdü yalnız yukarıdaki self-hosted
-community sınırı için geçerlidir.
+Third-party provider installation, licensing, account, subscription, and usage
+cost questions are outside this project's support scope. The repository contains
+a historical `cloud` profile and managed-runtime contracts, but Perseverance does
+not operate or support a hosted cloud service.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { baseUrl, withBase } from './base-path'
 import { refreshStoredSession } from './self-hosted-auth'
+import { useTranslations } from './i18n'
 
 // WP38 (ADR-0038): SW, scope kuralı gereği base altından kaydedilir ve servis
 // edilir; kökte withBase no-op'tur. Sürüm wp38-v1: sw.js scope-türevli precache
@@ -35,6 +36,7 @@ export function PushNotificationControl({
   namespace: string
   online: boolean
 }) {
+  const t = useTranslations()
   const [state, setState] = useState<
     'idle' | 'pending' | 'active' | 'denied' | 'unsupported'
   >('idle')
@@ -113,16 +115,19 @@ export function PushNotificationControl({
       className="push-control"
       type="button"
       disabled={!online || state === 'pending' || state === 'active'}
-      aria-label="Approval bildirimlerini bu cihazda etkinleştir"
+      aria-label={t(
+        'Enable approval notifications on this device',
+        'Approval bildirimlerini bu cihazda etkinleştir',
+      )}
       onClick={() => void subscribe().catch(() => setState('idle'))}
     >
       {state === 'active'
-        ? 'Bildirimler açık'
+        ? t('Notifications on', 'Bildirimler açık')
         : state === 'pending'
-          ? 'Bildirim açılıyor…'
+          ? t('Enabling notifications…', 'Bildirim açılıyor…')
           : state === 'denied'
-            ? 'Bildirim izni reddedildi'
-            : 'Bildirimleri aç'}
+            ? t('Notification permission denied', 'Bildirim izni reddedildi')
+            : t('Enable notifications', 'Bildirimleri aç')}
     </button>
   )
 }
@@ -161,6 +166,7 @@ export function useOnlineStatus() {
 }
 
 export function PwaRuntime() {
+  const t = useTranslations()
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker>()
   const [notificationResolutionError, setNotificationResolutionError] =
     useState(false)
@@ -260,13 +266,18 @@ export function PwaRuntime() {
     <>
       {notificationResolutionError ? (
         <p className="pwa-update-banner" role="alert">
-          Bu bildirim artık geçerli değil veya bu hesap için erişilebilir değil.
+          {t(
+            'This notification is no longer valid or is unavailable to this account.',
+            'Bu bildirim artık geçerli değil veya bu hesap için erişilebilir değil.',
+          )}
         </p>
       ) : null}
       {waitingWorker ? (
         <p className="pwa-update-banner" role="status">
-          Yeni sürüm hazır. Açık akışınız kesilmeden istediğiniz zaman
-          etkinleştirin.
+          {t(
+            'A new version is ready. Activate it whenever you like without interrupting your current flow.',
+            'Yeni sürüm hazır. Açık akışınız kesilmeden istediğiniz zaman etkinleştirin.',
+          )}
           <button
             type="button"
             onClick={() => {
@@ -275,7 +286,7 @@ export function PwaRuntime() {
               setWaitingWorker(undefined)
             }}
           >
-            Güncelle
+            {t('Update', 'Güncelle')}
           </button>
         </p>
       ) : null}
