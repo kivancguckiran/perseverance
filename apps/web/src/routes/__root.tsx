@@ -21,7 +21,7 @@ export const Route = createRootRouteWithContext<{
         content: 'width=device-width, initial-scale=1',
       },
       { title: 'Perseverance' },
-      { name: 'theme-color', content: '#0d1714' },
+      { name: 'theme-color', content: '#f3f2f2' },
       { name: 'application-name', content: 'Perseverance' },
     ],
     links: [

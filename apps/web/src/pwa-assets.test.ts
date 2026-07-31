@@ -97,8 +97,8 @@ describe('production PWA assets and cache boundary', () => {
       start_url: './',
       scope: './',
       display: 'standalone',
-      theme_color: '#0d1714',
-      background_color: '#0a100e',
+      theme_color: '#f3f2f2',
+      background_color: '#f3f2f2',
     })
     expect(manifest.icons).toEqual(
       expect.arrayContaining([
