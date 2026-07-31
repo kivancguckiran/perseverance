@@ -212,8 +212,48 @@ async function readReadiness(retry = false): Promise<ReadinessResponse> {
       ...(retry ? { 'x-readiness-retry': '1' } : {}),
     },
   })
-  const body = readinessResponseSchema.parse(await response.json())
-  return body
+  return normalizeReadinessResponse(await response.json())
+}
+
+export function normalizeReadinessResponse(input: unknown): ReadinessResponse {
+  const workspaceReadiness = readinessResponseSchema.safeParse(input)
+  if (workspaceReadiness.success) return workspaceReadiness.data
+
+  // Production/self-hosted deployments expose dependency readiness at the
+  // same path. Treat a healthy production topology as ready so the composer
+  // does not remain permanently disabled while preserving the richer local
+  // workspace readiness contract when it is available.
+  if (
+    typeof input !== 'object' ||
+    input === null ||
+    !('ready' in input) ||
+    typeof input.ready !== 'boolean'
+  )
+    throw workspaceReadiness.error
+
+  const checkedAt =
+    'checkedAt' in input &&
+    typeof input.checkedAt === 'string' &&
+    !Number.isNaN(Date.parse(input.checkedAt))
+      ? input.checkedAt
+      : new Date().toISOString()
+  return readinessResponseSchema.parse({
+    status: input.ready ? 'ready' : 'degraded',
+    checkedAt,
+    checks: [
+      {
+        name: 'provisioning',
+        status: input.ready ? 'ready' : 'failed',
+        code: input.ready ? null : 'PRODUCTION_DEPENDENCY_UNAVAILABLE',
+      },
+    ],
+    recovery: {
+      code: null,
+      instruction: null,
+      retryable: !input.ready,
+      readOnlyAvailable: true,
+    },
+  })
 }
 
 async function readProviderCatalogs(): Promise<ProviderCatalogListResponse> {
@@ -3511,11 +3551,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   }
 
   async function uploadAttachments(files: FileList | null) {
-    if (!session || !files?.length || attachmentPending) return
+    if (!files?.length || attachmentPending) return
     const selected = [...files]
     setAttachmentPending(true)
     setError(undefined)
     try {
+      const activeSession = session ?? (await provisionSession())
       const uploaded = await Promise.all(
         selected.map(async (file) => {
           const mediaType = attachmentMediaType(file)
@@ -3523,7 +3564,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             throw new Error(`${file.name}: desteklenmeyen dosya türü`)
           if (file.size < 1) throw new Error(`${file.name}: dosya boş olmamalı`)
           const response = await fetch(
-            `${apiBaseUrl}/v1/sessions/${encodeURIComponent(session.sessionId)}/attachments`,
+            `${apiBaseUrl}/v1/sessions/${encodeURIComponent(activeSession.sessionId)}/attachments`,
             {
               method: 'POST',
               headers: {
@@ -4695,8 +4736,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   multiple
                   accept="image/png,image/jpeg,image/webp,image/gif,text/plain,text/markdown,application/json,application/pdf,.md,.txt,.json,.pdf"
                   disabled={
-                    !session ||
-                    session.status !== 'active' ||
+                    (session !== undefined && session.status !== 'active') ||
                     !online ||
                     turnPending ||
                     turnActive ||

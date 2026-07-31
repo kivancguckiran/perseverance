@@ -18,6 +18,7 @@ import {
   describeConversationWork,
   describeTimelineEvent,
   isNearScrollEnd,
+  normalizeReadinessResponse,
   readStoredProviderSelection,
   providerPickerSelection,
   providerAuthMessage,
@@ -67,6 +68,50 @@ describe('tenant-aware client cache namespace', () => {
       expect(
         snapshots.get(offlineConversationKey(nextNamespace, 'ses-a')),
       ).toBeUndefined()
+  })
+})
+
+describe('readiness response compatibility', () => {
+  it('keeps the workspace readiness response unchanged', () => {
+    const readiness = normalizeReadinessResponse({
+      status: 'setup_required',
+      checkedAt: '2026-07-31T09:00:00.000Z',
+      checks: [{ name: 'auth', status: 'failed', code: 'AUTH_REQUIRED' }],
+      recovery: {
+        code: 'AUTH_REQUIRED',
+        instruction: 'codex login',
+        retryable: true,
+        readOnlyAvailable: true,
+      },
+    })
+
+    expect(readiness.status).toBe('setup_required')
+    expect(readiness.recovery.code).toBe('AUTH_REQUIRED')
+  })
+
+  it('maps healthy production topology readiness to composer readiness', () => {
+    const readiness = normalizeReadinessResponse({
+      schemaVersion: 1,
+      mode: 'production',
+      ready: true,
+      checkedAt: '2026-07-31T09:00:00.000Z',
+      dependencies: [],
+    })
+
+    expect(readiness.status).toBe('ready')
+    expect(readiness.checks).toEqual([
+      { name: 'provisioning', status: 'ready', code: null },
+    ])
+  })
+
+  it('keeps an unhealthy production topology blocked and retryable', () => {
+    const readiness = normalizeReadinessResponse({
+      ready: false,
+      checkedAt: '2026-07-31T09:00:00.000Z',
+    })
+
+    expect(readiness.status).toBe('degraded')
+    expect(readiness.recovery.retryable).toBe(true)
   })
 })
 
