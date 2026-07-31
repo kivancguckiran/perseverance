@@ -1815,7 +1815,7 @@ export function describeConversationWork(work: ConversationWork): string {
 }
 
 function ConversationWorkBlock({ work }: { work: ConversationWork }) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(work.running)
   const visibleCards = work.cards.slice(-8)
   const corpusCitation = [...visibleCards]
     .reverse()
@@ -1829,7 +1829,7 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
   return (
     <details
       className={`chat-work ${work.running ? 'is-running' : ''}`}
-      open={expanded}
+      open={work.running || expanded}
       onToggle={(event) => setExpanded(event.currentTarget.open)}
     >
       <summary>
@@ -1846,12 +1846,27 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
             </span>
           ) : null}
         </span>
+        <small className="chat-work-meta">
+          {work.running
+            ? `canlı · sequence ${String(work.cards.at(-1)?.event.sequence ?? 0).padStart(4, '0')}`
+            : `${work.cards.length} işlem`}
+        </small>
         <span className="chat-work-chevron" aria-hidden="true" />
       </summary>
       <ol>
         {visibleCards.map((card) => (
           <li key={card.key}>
-            <span aria-hidden="true" />
+            <span aria-hidden="true">
+              {card.event.type.startsWith('command.')
+                ? '$'
+                : card.event.type.startsWith('file.')
+                  ? '±'
+                  : card.event.type.startsWith('token.')
+                    ? '#'
+                    : card.event.type.startsWith('reasoning.')
+                      ? '»'
+                      : '›'}
+            </span>
             <strong>{describeTimelineEvent(card).title}</strong>
             <small>{compactWorkSummary(card)}</small>
           </li>
@@ -1903,7 +1918,13 @@ function ApprovalCard({
             ? 'Komut onayı'
             : 'Dosya değişikliği onayı'}
         </strong>
-        <span>{approval.status}</span>
+        <span>
+          {approval.status === 'pending'
+            ? 'onay bekliyor'
+            : approval.status === 'resolved'
+              ? 'çözüldü'
+              : approval.status}
+        </span>
       </div>
       {context.command ? <pre>$ {String(context.command)}</pre> : null}
       {context.cwd ? (
@@ -1984,19 +2005,19 @@ function ApprovalCard({
       {approval.status === 'pending' && !readOnly ? (
         <div className="approval-actions">
           <button disabled={pending} onClick={() => onDecision('accept')}>
-            Accept once
+            Bir kez onayla
           </button>
           <button
             disabled={pending}
             onClick={() => onDecision('accept_for_session')}
           >
-            Accept for session
+            Oturum için onayla
           </button>
           <button disabled={pending} onClick={() => onDecision('decline')}>
-            Decline
+            Reddet
           </button>
           <button disabled={pending} onClick={() => onDecision('cancel')}>
-            Cancel
+            İptal
           </button>
         </div>
       ) : null}
@@ -2029,6 +2050,7 @@ export function ConversationHistory({
   onArchiveFolder,
   onRestoreFolder,
   onDeleteFolder,
+  onClose,
   tools,
   footer,
 }: {
@@ -2051,6 +2073,7 @@ export function ConversationHistory({
   onArchiveFolder(folder: ConversationFolder): void
   onRestoreFolder(folder: ConversationFolder): void
   onDeleteFolder(folder: ConversationFolder): void
+  onClose?(): void
   tools?: ReactNode
   footer?: ReactNode
 }) {
@@ -2067,10 +2090,17 @@ export function ConversationHistory({
   return (
     <section className="conversation-history" aria-label="Conversation history">
       <div className="history-brand">
-        <span className="history-logo" aria-hidden="true">
-          C
-        </span>
-        <strong>Conversations</strong>
+        <span className="history-logo" aria-hidden="true" />
+        <strong>PERSEVERANCE</strong>
+        {onClose ? (
+          <button
+            type="button"
+            aria-label="Folder drawer'ı kapat"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        ) : null}
       </div>
       <div className="history-actions">
         <button
@@ -2513,6 +2543,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [conversationActionPending, setConversationActionPending] =
     useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [providerSheetOpen, setProviderSheetOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [supportAccessOpen, setSupportAccessOpen] = useState(false)
   const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
@@ -3012,7 +3044,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     : selectedCatalog?.models.find((model) => model.isDefault && !model.hidden)
   const availableEfforts =
     selectedModel?.reasoningEfforts ??
-    (selectedProvider === 'codex' ? ['medium'] : [])
+    (selectedProvider === 'codex'
+      ? (['low', 'medium', 'high', 'xhigh'] as const)
+      : [])
   const capabilityWarnings = selectedModel
     ? Object.entries(selectedModel.capabilities).flatMap(
         ([capability, support]) =>
@@ -3655,15 +3689,16 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           namespace={cacheNamespace}
           online={online && identity.isSuccess}
         />
-        {storedAuth?.username ? (
-          <button
-            type="button"
-            className="signout-button"
-            onClick={() => void signOut(apiBaseUrl)}
-          >
-            Çıkış ({storedAuth.username})
-          </button>
-        ) : null}
+        <button
+          type="button"
+          className="signout-button"
+          onClick={() => void signOut(apiBaseUrl)}
+        >
+          Çıkış{' '}
+          <span suppressHydrationWarning>
+            ({storedAuth?.username ?? 'oturum'})
+          </span>
+        </button>
         <div className={`status-pill status-${meta.status}`}>
           <span className="status-dot" aria-hidden="true" />
           {!online
@@ -3702,6 +3737,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             onArchiveFolder={(folder) => void setFolderArchived(folder, true)}
             onRestoreFolder={(folder) => void setFolderArchived(folder, false)}
             onDeleteFolder={(folder) => void deleteFolder(folder)}
+            onClose={() => setHistoryOpen(false)}
             onNewConversation={(folderId) => {
               beginConversationDraft(folderId)
             }}
@@ -3713,106 +3749,32 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               })
             }}
             footer={
-              <fieldset
-                className="provider-picker provider-picker-compact"
-                disabled={sessionPending || !online}
-              >
-                <legend>Yeni sohbet modeli</legend>
-                <label>
-                  Provider
-                  <select
-                    aria-label="Provider"
-                    value={selectedProvider}
-                    onChange={(event) => {
-                      const provider = event.target.value as
-                        'codex' | 'claude' | 'gemini' | 'cursor'
-                      const catalog = providerCatalogs.data?.catalogs.find(
-                        (entry) => entry.identity.provider === provider,
-                      )
-                      const selection = providerPickerSelection(
-                        provider,
-                        catalog?.models,
-                      )
-                      setSelectedProvider(provider)
-                      setSelectedModelId(selection.modelId)
-                      setSelectedEffort(selection.effort)
-                    }}
-                  >
-                    {(providerCatalogs.data?.catalogs ?? []).map((catalog) => (
-                      <option
-                        key={catalog.identity.provider}
-                        value={catalog.identity.provider}
-                      >
-                        {catalog.identity.provider}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Model
-                  <select
-                    aria-label="Model"
-                    value={selectedModelId}
-                    onChange={(event) => {
-                      const modelId = event.target.value
-                      const model = selectedCatalog?.models.find(
-                        (entry) => entry.modelId === modelId,
-                      )
-                      setSelectedModelId(modelId)
-                      setSelectedEffort(
-                        modelId
-                          ? (model?.defaultReasoningEffort ?? 'none')
-                          : 'medium',
-                      )
-                    }}
-                  >
-                    {selectedProvider === 'codex' ? (
-                      <option value="">sol · catalog default</option>
-                    ) : null}
-                    {(selectedCatalog?.models ?? [])
-                      .filter((model) => !model.hidden)
-                      .map((model) => (
-                        <option key={model.modelId} value={model.modelId}>
-                          {model.displayName}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  Reasoning
-                  <select
-                    aria-label="Reasoning effort"
-                    value={selectedEffort}
-                    onChange={(event) =>
-                      setSelectedEffort(
-                        event.target.value as typeof selectedEffort,
-                      )
-                    }
-                  >
-                    {availableEfforts.map((effort) => (
-                      <option key={effort} value={effort}>
-                        {effort === 'none' && selectedProvider === 'gemini'
-                          ? 'provider default'
-                          : effort}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {capabilityWarnings.length > 0 ? (
-                  <p className="capability-warning" role="note">
-                    {capabilityWarnings.join(' · ')}
-                  </p>
-                ) : null}
-                {selectedProvider !== 'codex' && selectedProviderReadiness ? (
-                  <p className="capability-warning" role="status">
-                    {providerAuthMessage(
-                      selectedProvider,
-                      selectedProviderReadiness.authStatus,
-                      selectedProviderReadiness.instruction,
-                    )}
-                  </p>
-                ) : null}
-              </fieldset>
+              <div className="history-profile">
+                <span aria-hidden="true" suppressHydrationWarning>
+                  {(storedAuth?.username ?? 'K').slice(0, 1).toUpperCase()}
+                </span>
+                <div>
+                  <strong suppressHydrationWarning>
+                    {storedAuth?.username ?? 'kullanıcı'}
+                  </strong>
+                  <small suppressHydrationWarning>
+                    {workspaceId} · {tenantId}
+                  </small>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Ayarlar ve kullanım"
+                  onClick={() => {
+                    setHistoryOpen(false)
+                    setSettingsOpen(true)
+                  }}
+                >
+                  ☷
+                </button>
+                <button type="button" onClick={() => void signOut(apiBaseUrl)}>
+                  ÇIKIŞ
+                </button>
+              </div>
             }
             tools={
               <>
@@ -4066,11 +4028,29 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               ☰
             </button>
             <div>
-              <p className="section-label">Conversation</p>
               <h1 id="chat-title">
                 {session?.title ?? offlineSelected?.title ?? 'Yeni konuşma'}
               </h1>
+              <p className="chat-context">
+                {(conversationFolders.data?.folders ?? []).find(
+                  (folder) => folder.folderId === folderPicker.value,
+                )?.name ?? 'perseverance'}{' '}
+                · main
+              </p>
             </div>
+            <button
+              className={`provider-chip ${turnActive ? 'is-running' : ''}`}
+              type="button"
+              aria-label="Provider ve model seç"
+              onClick={() => setProviderSheetOpen(true)}
+            >
+              <span aria-hidden="true" />
+              {(session?.provider ?? selectedProvider).toUpperCase()} ·{' '}
+              {session?.resolvedModel ??
+                selectedModel?.displayName ??
+                'Default'}{' '}
+              · {session?.reasoningEffort ?? selectedEffort}
+            </button>
             {sessionId ? (
               <details className="usage-summary">
                 <summary aria-live="polite">
@@ -4422,9 +4402,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </div>
               ) : (
                 <div className="chat-welcome">
-                  <span aria-hidden="true">C</span>
-                  <h2>Nasıl yardımcı olabilirim?</h2>
-                  <p>Yeni bir konuşma başlatmak için aşağıya yaz.</p>
+                  <span aria-hidden="true">&gt;_</span>
+                  <h2>İLK TURN İÇİN HAZIR</h2>
+                  <p>Yeni bir konuşma başlatmak için aşağıya görevini yaz.</p>
                 </div>
               )}
             </div>
@@ -4658,6 +4638,22 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           {readOnly ? (
             <p className="read-only-banner">Read-only timeline modu</p>
           ) : null}
+          {turnActive ? (
+            <div className="running-status" role="status">
+              <span aria-hidden="true" />
+              <small>
+                Server üzerinde çalışıyor · sequence{' '}
+                {String(lastSequence.current).padStart(4, '0')}
+              </small>
+              <button
+                type="button"
+                disabled={turnPending}
+                onClick={() => void steerOrInterrupt('interrupt')}
+              >
+                DURDUR
+              </button>
+            </div>
+          ) : null}
           <form
             className="composer"
             onSubmit={(event) => void submitTurn(event)}
@@ -4732,7 +4728,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   if (turnActive) void steerOrInterrupt('steer')
                   else event.currentTarget.form?.requestSubmit()
                 }}
-                placeholder="Kısa bir cevap ver…"
+                placeholder={`${session?.provider ?? selectedProvider}'e görev ver…`}
                 rows={2}
                 disabled={
                   (session !== undefined && session.status !== 'active') ||
@@ -4757,7 +4753,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     (session?.provider ?? selectedProvider) === 'codex')
                 }
               >
-                {turnPending ? 'Gönderiliyor…' : 'Gönder'}
+                {turnPending ? '…' : '↑'}
               </button>
               {turnActive && !readOnly && online ? (
                 <>
@@ -4815,6 +4811,200 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             void supportAudit.refetch()
           }}
         />
+      ) : null}
+      {providerSheetOpen ? (
+        <div className="modal-layer" role="presentation">
+          <button
+            className="modal-backdrop"
+            type="button"
+            aria-label="Provider seçimini kapat"
+            onClick={() => setProviderSheetOpen(false)}
+          />
+          <section
+            className="provider-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provider-sheet-title"
+          >
+            <header>
+              <h2 id="provider-sheet-title">PROVIDER &amp; MODEL</h2>
+              <button type="button" onClick={() => setProviderSheetOpen(false)}>
+                ×
+              </button>
+            </header>
+            <div className="provider-segments" role="radiogroup">
+              {(['codex', 'claude', 'gemini', 'cursor'] as const).map(
+                (provider) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    className={selectedProvider === provider ? 'is-active' : ''}
+                    onClick={() => {
+                      const catalog = providerCatalogs.data?.catalogs.find(
+                        (entry) => entry.identity.provider === provider,
+                      )
+                      const selection = providerPickerSelection(
+                        provider,
+                        catalog?.models,
+                      )
+                      setSelectedProvider(provider)
+                      setSelectedModelId(selection.modelId)
+                      setSelectedEffort(selection.effort)
+                    }}
+                  >
+                    {provider}
+                  </button>
+                ),
+              )}
+            </div>
+            <div className="provider-models">
+              {selectedProvider === 'codex' ? (
+                <button
+                  type="button"
+                  className={selectedModelId === '' ? 'is-selected' : ''}
+                  onClick={() => {
+                    setSelectedModelId('')
+                    setSelectedEffort('medium')
+                  }}
+                >
+                  <span>
+                    <strong>Catalog default</strong>
+                    <small>onay destekli · komut + diff · vision</small>
+                  </span>
+                  <i aria-hidden="true" />
+                </button>
+              ) : null}
+              {(selectedCatalog?.models ?? [])
+                .filter((model) => !model.hidden)
+                .map((model) => (
+                  <button
+                    type="button"
+                    key={model.modelId}
+                    className={
+                      selectedModelId === model.modelId ? 'is-selected' : ''
+                    }
+                    onClick={() => {
+                      setSelectedModelId(model.modelId)
+                      setSelectedEffort(model.defaultReasoningEffort)
+                    }}
+                  >
+                    <span>
+                      <strong>
+                        {model.displayName}
+                        {model.isDefault ? <em>varsayılan</em> : null}
+                      </strong>
+                      <small>
+                        {model.capabilities.approvals === 'supported'
+                          ? 'onay destekli'
+                          : 'sınırlı onay'}{' '}
+                        · komut + diff
+                      </small>
+                    </span>
+                    <i aria-hidden="true" />
+                  </button>
+                ))}
+            </div>
+            <p className="provider-sheet-label">REASONING EFFORT</p>
+            <div className="effort-segments">
+              {availableEfforts.map((effort) => (
+                <button
+                  type="button"
+                  key={effort}
+                  className={selectedEffort === effort ? 'is-active' : ''}
+                  onClick={() => setSelectedEffort(effort)}
+                >
+                  {effort}
+                </button>
+              ))}
+            </div>
+            {capabilityWarnings.length ? (
+              <p className="provider-note">{capabilityWarnings.join(' · ')}</p>
+            ) : null}
+            <button
+              className="provider-apply"
+              type="button"
+              onClick={() => setProviderSheetOpen(false)}
+            >
+              Uygula
+            </button>
+          </section>
+        </div>
+      ) : null}
+      {settingsOpen ? (
+        <section
+          className="settings-screen"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-title"
+        >
+          <header>
+            <button type="button" onClick={() => setSettingsOpen(false)}>
+              ←
+            </button>
+            <h2 id="settings-title">AYARLAR &amp; KULLANIM</h2>
+          </header>
+          <div className="settings-content">
+            <section>
+              <p className="settings-label">BU SOHBETİN KULLANIMI</p>
+              <strong className="usage-amount">{usageDisplay.amount}</strong>
+              <small>{usageDisplay.detail}</small>
+              <dl className="token-grid">
+                <div>
+                  <dt>INPUT</dt>
+                  <dd>{usage.data?.total.counters.inputTokens ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>OUTPUT</dt>
+                  <dd>{usage.data?.total.counters.outputTokens ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>CACHED</dt>
+                  <dd>{usage.data?.total.counters.cachedInputTokens ?? 0}</dd>
+                </div>
+              </dl>
+            </section>
+            <section>
+              <p className="settings-label">OTURUM</p>
+              <dl className="settings-rows">
+                <div>
+                  <dt>Provider</dt>
+                  <dd>
+                    {session?.provider ?? selectedProvider} ·{' '}
+                    {session?.resolvedModel ??
+                      selectedModel?.displayName ??
+                      'default'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Transport</dt>
+                  <dd>codex app-server · JSON-RPC</dd>
+                </div>
+                <div>
+                  <dt>Workspace</dt>
+                  <dd>{workspaceId}</dd>
+                </div>
+                <div>
+                  <dt>Realtime</dt>
+                  <dd>{realtimeState}</dd>
+                </div>
+              </dl>
+            </section>
+            <section>
+              <p className="settings-label">GÜVENLİK</p>
+              <p className="settings-copy">
+                Konuşma içeriği tenant kapsamında saklanır. Parolanız ve hassas
+                environment değerleri timeline veya loglara yazılmaz.
+              </p>
+            </section>
+            <button
+              className="settings-signout"
+              type="button"
+              onClick={() => void signOut(apiBaseUrl)}
+            >
+              OTURUMU KAPAT
+            </button>
+          </div>
+        </section>
       ) : null}
     </main>
   )

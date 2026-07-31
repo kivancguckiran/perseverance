@@ -78,6 +78,7 @@ export function LoginPage() {
     null,
   )
   const [recoveryAcknowledged, setRecoveryAcknowledged] = useState(false)
+  const [recoveryCopied, setRecoveryCopied] = useState(false)
   const passwordAutocomplete = passwordAutocompleteFor(mode)
 
   const submit = async () => {
@@ -125,8 +126,8 @@ export function LoginPage() {
 
   if (issuedRecoveryKey) {
     return (
-      <main className="managed-cloud-shell">
-        <section className="managed-cloud-card signin-card" aria-live="polite">
+      <main className="recovery-poster">
+        <section className="recovery-poster-content" aria-live="polite">
           <p className="eyebrow">KURTARMA KODUNUZ</p>
           <h1>Bu kodu şimdi kaydedin</h1>
           <p>
@@ -138,7 +139,36 @@ export function LoginPage() {
           <pre className="recovery-key" data-testid="recovery-key">
             {issuedRecoveryKey}
           </pre>
-          <label>
+          <div className="recovery-key-actions">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(issuedRecoveryKey)
+                setRecoveryCopied(true)
+                window.setTimeout(() => setRecoveryCopied(false), 2_000)
+              }}
+            >
+              {recoveryCopied ? 'Kopyalandı ✓' : 'Kopyala'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const url = URL.createObjectURL(
+                  new Blob([`${issuedRecoveryKey}\n`], {
+                    type: 'text/plain;charset=utf-8',
+                  }),
+                )
+                const link = document.createElement('a')
+                link.href = url
+                link.download = 'perseverance-kurtarma-kodu.txt'
+                link.click()
+                URL.revokeObjectURL(url)
+              }}
+            >
+              İndir (.txt)
+            </button>
+          </div>
+          <label className="recovery-acknowledgement">
             <input
               type="checkbox"
               checked={recoveryAcknowledged}
@@ -149,13 +179,14 @@ export function LoginPage() {
             Kurtarma kodumu güvenli bir yere kaydettim.
           </label>
           <button
+            className="recovery-continue"
             type="button"
             disabled={!recoveryAcknowledged}
             onClick={() => {
               window.location.href = withBase('/')
             }}
           >
-            Workspace'e devam et
+            WORKSPACE'E DEVAM ET →
           </button>
         </section>
       </main>
@@ -163,9 +194,14 @@ export function LoginPage() {
   }
 
   return (
-    <main className="managed-cloud-shell">
-      <section className="managed-cloud-card signin-card">
-        <p className="eyebrow">PERSISTENT CODEX WORKSPACE</p>
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="auth-accent-rule" aria-hidden="true" />
+        <div className="auth-brand">
+          <span aria-hidden="true" />
+          <strong>PERSEVERANCE</strong>
+        </div>
+        <p className="auth-subbrand">SELF-HOSTED AGENT WORKSPACE</p>
         <h1>
           {mode === 'login'
             ? 'Güvenli giriş'
@@ -179,7 +215,7 @@ export function LoginPage() {
           kimse içeriğinizi okuyamaz.
         </p>
         <form
-          className="onboarding-form"
+          className="auth-form"
           onSubmit={(event) => {
             event.preventDefault()
             void submit()
@@ -205,7 +241,7 @@ export function LoginPage() {
                 autoComplete="off"
                 value={recoveryInput}
                 onChange={(event) => setRecoveryInput(event.target.value)}
-                placeholder="RK1-XXXX-XXXX-…"
+                placeholder="PRSV-XXXX-XXXX-…"
                 required
               />
             </label>
@@ -227,20 +263,20 @@ export function LoginPage() {
               {error}
             </p>
           ) : null}
-          <button type="submit" disabled={pending}>
+          <button className="auth-submit" type="submit" disabled={pending}>
             {pending
               ? 'İşleniyor…'
               : mode === 'login'
-                ? 'Giriş yap'
+                ? 'Giriş yap →'
                 : mode === 'register'
-                  ? 'Kayıt ol'
-                  : 'Parolayı sıfırla'}
+                  ? 'Hesap oluştur →'
+                  : 'Parolayı sıfırla →'}
           </button>
         </form>
         <nav className="signin-alternatives" aria-label="Diğer işlemler">
           {mode !== 'login' ? (
             <button type="button" onClick={() => setMode('login')}>
-              Giriş yap
+              Girişe dön
             </button>
           ) : null}
           {mode !== 'register' ? (
@@ -254,6 +290,7 @@ export function LoginPage() {
             </button>
           ) : null}
         </nav>
+        <footer className="auth-footer">v1.0.0 · AGPL-3.0 · SELF-HOSTED</footer>
       </section>
     </main>
   )
