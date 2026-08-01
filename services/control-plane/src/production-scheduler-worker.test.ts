@@ -62,6 +62,7 @@ describe('production scheduler Codex boundary', () => {
     expect(args).toContain('/scoped-workspace')
     expect(args).not.toContain('/workspace')
     expect(args).not.toContain('/')
+    expect(args).not.toContain('--unshare-all')
     expect(args).toEqual(
       expect.arrayContaining([
         '--ro-bind',

@@ -166,8 +166,10 @@ export function productionWorkspaceSandboxArgs(input: {
   return [
     '--die-with-parent',
     '--new-session',
-    '--unshare-all',
-    '--share-net',
+    // Bubblewrap already creates the mount/user namespace needed for this
+    // filesystem boundary. Docker Desktop rejects mounting /proc after
+    // --unshare-all; extra PID/cgroup namespaces do not strengthen folder
+    // visibility and would make every production turn fail before launch.
     '--dir',
     '/app',
     '--ro-bind',
@@ -337,9 +339,7 @@ export function productionTurnCompletion(
     if (status === 'interrupted') return { error: 'CODEX_TURN_INTERRUPTED' }
     const turnError = turn?.error as Record<string, unknown> | undefined
     return {
-      error: String(
-        turnError?.message ?? 'CODEX_TURN_FAILED',
-      ),
+      error: String(turnError?.message ?? 'CODEX_TURN_FAILED'),
     }
   }
   const items = Array.isArray(turn?.items) ? turn.items : []
