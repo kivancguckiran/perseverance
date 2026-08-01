@@ -3525,10 +3525,14 @@ button:disabled {
   animation: modernist-pulse 1.2s infinite;
 }
 
-.chat-work-label strong {
+.chat-work > summary .chat-work-label strong {
   color: var(--color-text);
   font-size: 12px;
   font-weight: 650;
+}
+
+.chat-work > summary:hover {
+  background: var(--color-neutral-100);
 }
 
 .chat-work-loading {
