@@ -3690,7 +3690,7 @@ describe('WP4 session, turn and live event flow', () => {
     })
   })
 
-  it('sends a file mention using a canonical path with its original extension', async () => {
+  it('sends a ZIP file mention using a canonical path with its original extension', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'file-attachment-api-'))
     const client = new FakeRuntimeClient()
     await setupLive(client, { attachmentRoot: directory })
@@ -3700,10 +3700,10 @@ describe('WP4 session, turn and live event flow', () => {
       headers: {
         ...liveHeaders,
         'content-type': 'application/octet-stream',
-        'x-attachment-name': encodeURIComponent('document.pdf'),
-        'x-attachment-media-type': 'application/pdf',
+        'x-attachment-name': encodeURIComponent('project.zip'),
+        'x-attachment-media-type': 'application/zip',
       },
-      payload: Buffer.from('%PDF-1.5 fixture'),
+      payload: Buffer.from('PK fixture'),
     })
     expect(upload.statusCode).toBe(201)
 
@@ -3722,13 +3722,13 @@ describe('WP4 session, turn and live event flow', () => {
         {
           type: 'text',
           text: expect.stringMatching(
-            /^Bu belgeyi incele[\s\S]*<perseverance-attachments>[\s\S]*document\.pdf[\s\S]*<\/perseverance-attachments>$/,
+            /^Bu belgeyi incele[\s\S]*<perseverance-attachments>[\s\S]*project\.zip[\s\S]*<\/perseverance-attachments>$/,
           ),
         },
         {
           type: 'mention',
-          name: 'document.pdf',
-          path: expect.stringMatching(/document\.pdf$/),
+          name: 'project.zip',
+          path: expect.stringMatching(/project\.zip$/),
         },
       ],
     })

@@ -2,6 +2,7 @@ import { withBase } from './base-path'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import {
   attachmentContextStart,
+  attachmentMediaTypeSchema,
   serverMessageSchema,
   approvalListResponseSchema,
   approvalSchema,
@@ -185,17 +186,6 @@ if (runtimeAuth?.accessToken ?? storedAuth?.accessToken)
 
 const cacheNamespace = tenantCacheNamespace(principalId, tenantId, workspaceId)
 
-const supportedAttachmentTypes = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-  'text/plain',
-  'text/markdown',
-  'application/json',
-  'application/pdf',
-])
-
 export function serverOwnedRunLabel(
   status: DurableRun['status'],
   realtimeState: string,
@@ -210,17 +200,23 @@ export function serverOwnedRunLabel(
 }
 
 export function attachmentMediaType(file: Pick<File, 'name' | 'type'>) {
-  if (supportedAttachmentTypes.has(file.type)) return file.type
+  const declaredMediaType = attachmentMediaTypeSchema.safeParse(file.type)
+  if (declaredMediaType.success) return declaredMediaType.data
   const extension = file.name.toLowerCase().split('.').pop()
-  return extension === 'md'
-    ? 'text/markdown'
-    : extension === 'json'
-      ? 'application/json'
-      : extension === 'txt'
-        ? 'text/plain'
-        : extension === 'pdf'
-          ? 'application/pdf'
-          : undefined
+  const inferredMediaTypes: Record<string, string> = {
+    gif: 'image/gif',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    json: 'application/json',
+    md: 'text/markdown',
+    pdf: 'application/pdf',
+    png: 'image/png',
+    txt: 'text/plain',
+    webp: 'image/webp',
+  }
+  return (
+    (extension && inferredMediaTypes[extension]) || 'application/octet-stream'
+  )
 }
 
 export function sourceMediaType(file: Pick<File, 'name' | 'type'>) {
@@ -4333,13 +4329,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       const uploaded = await Promise.all(
         selected.map(async (file) => {
           const mediaType = attachmentMediaType(file)
-          if (!mediaType)
-            throw new Error(
-              t(
-                `${file.name}: unsupported file type`,
-                `${file.name}: desteklenmeyen dosya türü`,
-              ),
-            )
           if (file.size < 1)
             throw new Error(
               t(
@@ -5674,7 +5663,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 <input
                   type="file"
                   multiple
-                  accept="image/png,image/jpeg,image/webp,image/gif,text/plain,text/markdown,application/json,application/pdf,.md,.txt,.json,.pdf"
                   disabled={
                     (session !== undefined && session.status !== 'active') ||
                     !online ||

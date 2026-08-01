@@ -1013,16 +1013,22 @@ export const gitSnapshotListResponseSchema = z.object({
   snapshots: z.array(gitSnapshotSchema),
 })
 
-export const attachmentMediaTypeSchema = z.enum([
+export const imageAttachmentMediaTypes = [
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif',
-  'text/plain',
-  'text/markdown',
-  'application/json',
-  'application/pdf',
-])
+] as const
+export const imageAttachmentMediaTypeSchema = z.enum(imageAttachmentMediaTypes)
+export const attachmentMediaTypeSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .regex(
+    /^[A-Za-z0-9!#$%&'*+.^_|~-]+\/[A-Za-z0-9!#$%&'*+.^_|~-]+$/,
+    'invalid attachment media type',
+  )
 export const attachmentContextStart = '<perseverance-attachments>'
 export const attachmentContextEnd = '</perseverance-attachments>'
 export const conversationAttachmentSchema = scopeSchema.extend({

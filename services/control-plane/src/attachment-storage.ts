@@ -9,19 +9,12 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
-import type { ConversationAttachment } from '@perseverance/control-plane-contracts'
+import {
+  attachmentMediaTypeSchema,
+  imageAttachmentMediaTypeSchema,
+  type ConversationAttachment,
+} from '@perseverance/control-plane-contracts'
 import type { StoreScope } from '@perseverance/event-store'
-
-const supportedMediaTypes = new Set<ConversationAttachment['mediaType']>([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-  'text/plain',
-  'text/markdown',
-  'application/json',
-  'application/pdf',
-])
 
 function safePart(value: string, name: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value) || value === '.' || value === '..')
@@ -126,11 +119,13 @@ export class LocalAttachmentStorage {
     data: Uint8Array
   }): ConversationAttachment {
     const name = safeName(input.name)
-    if (!supportedMediaTypes.has(input.mediaType as never))
+    const parsedMediaType = attachmentMediaTypeSchema.safeParse(input.mediaType)
+    if (!parsedMediaType.success)
       throw new AttachmentStorageError(
-        'UNSUPPORTED_ATTACHMENT_TYPE',
-        'Attachment type is not supported',
+        'INVALID_ATTACHMENT_MEDIA_TYPE',
+        'Attachment media type is invalid',
       )
+    const mediaType = parsedMediaType.data
     if (input.data.byteLength < 1)
       throw new AttachmentStorageError(
         'INVALID_ATTACHMENT_SIZE',
@@ -145,9 +140,11 @@ export class LocalAttachmentStorage {
       ...input.scope,
       attachmentId,
       name,
-      mediaType: input.mediaType as ConversationAttachment['mediaType'],
+      mediaType,
       byteLength: input.data.byteLength,
-      kind: input.mediaType.startsWith('image/') ? 'image' : 'file',
+      kind: imageAttachmentMediaTypeSchema.safeParse(mediaType).success
+        ? 'image'
+        : 'file',
       createdAt: new Date().toISOString(),
     }
     try {

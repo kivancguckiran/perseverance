@@ -1123,16 +1123,19 @@ describe('conversation projection', () => {
 })
 
 describe('attachment selection', () => {
-  it('accepts supported MIME types and infers common text extensions', () => {
+  it('preserves declared MIME types and accepts unknown extensions as files', () => {
     expect(attachmentMediaType({ name: 'image.png', type: 'image/png' })).toBe(
       'image/png',
     )
     expect(attachmentMediaType({ name: 'notes.md', type: '' })).toBe(
       'text/markdown',
     )
+    expect(attachmentMediaType({ name: 'archive.zip', type: '' })).toBe(
+      'application/octet-stream',
+    )
     expect(
-      attachmentMediaType({ name: 'archive.zip', type: '' }),
-    ).toBeUndefined()
+      attachmentMediaType({ name: 'archive.zip', type: 'application/zip' }),
+    ).toBe('application/zip')
   })
 })
 

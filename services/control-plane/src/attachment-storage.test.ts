@@ -74,7 +74,23 @@ describe('LocalAttachmentStorage', () => {
     ).toBe(data.byteLength)
   })
 
-  it('rejects traversal names, unsupported types, and symlink substitution', () => {
+  it('accepts arbitrary file media types', () => {
+    const fixture = storage()
+    const attachment = fixture.storage.store({
+      scope,
+      name: 'archive.zip',
+      mediaType: 'application/zip',
+      data: Buffer.from('PK fixture'),
+    })
+
+    expect(attachment).toMatchObject({
+      name: 'archive.zip',
+      mediaType: 'application/zip',
+      kind: 'file',
+    })
+  })
+
+  it('rejects traversal names, invalid media types, and symlink substitution', () => {
     const fixture = storage()
     expect(() =>
       fixture.storage.store({
@@ -88,10 +104,10 @@ describe('LocalAttachmentStorage', () => {
       fixture.storage.store({
         scope,
         name: 'archive.zip',
-        mediaType: 'application/zip',
+        mediaType: 'not a media type',
         data: Buffer.from('safe'),
       }),
-    ).toThrow('Attachment type is not supported')
+    ).toThrow('Attachment media type is invalid')
 
     const attachment = fixture.storage.store({
       scope,
