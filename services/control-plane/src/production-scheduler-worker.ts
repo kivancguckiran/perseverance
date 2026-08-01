@@ -126,6 +126,7 @@ export function shouldPersistProductionActivityNotification(
   const message = input as { method?: unknown; params?: unknown }
   if (typeof message.method !== 'string') return false
   if (
+    message.method === 'item/agentMessage/delta' ||
     message.method === 'item/reasoning/summaryTextDelta' ||
     message.method === 'item/plan/delta' ||
     message.method === 'turn/diff/updated' ||
@@ -142,7 +143,8 @@ export function shouldPersistProductionActivityNotification(
 export function productionTurnCompletion(
   input: unknown,
   latestAgentMessage?: string,
-): { text: string } | { error: string } | null {
+  latestAgentMessageItemId?: string,
+): { text: string; itemId?: string } | { error: string } | null {
   if (!input || typeof input !== 'object') return null
   const message = input as { method?: unknown; params?: unknown }
   if (message.method !== 'turn/completed') return null
@@ -175,7 +177,13 @@ export function productionTurnCompletion(
     typeof snapshotMessage?.text === 'string'
       ? snapshotMessage.text
       : latestAgentMessage
-  return text ? { text } : { error: 'CODEX_EMPTY_RESPONSE' }
+  const itemId =
+    typeof snapshotMessage?.id === 'string'
+      ? snapshotMessage.id
+      : latestAgentMessageItemId
+  return text
+    ? { text, ...(itemId ? { itemId } : {}) }
+    : { error: 'CODEX_EMPTY_RESPONSE' }
 }
 
 export async function settleTerminalRunBilling(
@@ -460,13 +468,16 @@ export class ProductionSchedulerWorker {
             cwd: this.options.workspaceCwd,
           } satisfies codexV2.ThreadStartParams,
         )
-        let resolveFinal!: (text: string) => void
+        let resolveFinal!: (message: { text: string; itemId?: string }) => void
         let rejectFinal!: (error: Error) => void
         let latestAgentMessage: string | undefined
-        const final = new Promise<string>((resolve, reject) => {
-          resolveFinal = resolve
-          rejectFinal = reject
-        })
+        let latestAgentMessageItemId: string | undefined
+        const final = new Promise<{ text: string; itemId?: string }>(
+          (resolve, reject) => {
+            resolveFinal = resolve
+            rejectFinal = reject
+          },
+        )
         let activityOrdinal = 0
         let activityWriteError: unknown
         let activityWriteChain = Promise.resolve()
@@ -517,16 +528,23 @@ export class ProductionSchedulerWorker {
           }
           if (message.method === 'item/completed') {
             const item = params.item as Record<string, unknown> | undefined
-            if (item?.type === 'agentMessage' && typeof item.text === 'string')
+            if (
+              item?.type === 'agentMessage' &&
+              typeof item.text === 'string'
+            ) {
               latestAgentMessage = item.text
+              latestAgentMessageItemId =
+                typeof item.id === 'string' ? item.id : undefined
+            }
           }
           const completion = productionTurnCompletion(
             message,
             latestAgentMessage,
+            latestAgentMessageItemId,
           )
           if (completion) {
             if ('error' in completion) rejectFinal(new Error(completion.error))
-            else resolveFinal(completion.text)
+            else resolveFinal(completion)
           }
         })
         const startIntent =
@@ -560,7 +578,7 @@ export class ProductionSchedulerWorker {
           codexTurnId: turn.turn.id,
         })
         if (!marked) throw new Error('STALE_FENCING_TOKEN')
-        const text = await Promise.race([
+        const completedMessage = await Promise.race([
           final,
           new Promise<never>((_, reject) => {
             timeout = setTimeout(
@@ -573,6 +591,7 @@ export class ProductionSchedulerWorker {
         if (activityWriteError) throw activityWriteError
         codexSpan.end('ok')
         await fence()
+        const { text } = completedMessage
         const outputBytes = new TextEncoder().encode(text)
         const capacity = await this.options.repository.meterCapacity({
           ...scope,
@@ -602,6 +621,10 @@ export class ProductionSchedulerWorker {
         )
         await append('agent.message.completed', {
           runId: stored.runId,
+          codexThreadId: thread.thread.id,
+          ...(completedMessage.itemId
+            ? { codexItemId: completedMessage.itemId }
+            : {}),
           outputObjectKey,
           byteLength: outputBytes.byteLength,
           reconciled: true,

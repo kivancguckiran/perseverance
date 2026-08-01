@@ -83,7 +83,7 @@ import {
   offlineHistoryKey,
   tenantCacheNamespace,
 } from './tenant-cache'
-import { localize, useTranslations } from './i18n'
+import { LanguageSwitcher, localize, useTranslations } from './i18n'
 
 interface PlatformMeta {
   service: string
@@ -5538,6 +5538,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <h2 id="settings-title">AYARLAR &amp; KULLANIM</h2>
           </header>
           <div className="settings-content">
+            <section>
+              <p className="settings-label">{t('LANGUAGE', 'DİL')}</p>
+              <LanguageSwitcher variant="settings" />
+            </section>
             <section>
               <p className="settings-label">
                 {t('THIS CONVERSATION’S USAGE', 'BU SOHBETİN KULLANIMI')}

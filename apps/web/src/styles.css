@@ -4306,6 +4306,38 @@ button:disabled {
   backdrop-filter: blur(12px);
 }
 
+body:has(.workspace-shell) .language-switcher.is-floating {
+  display: none;
+}
+
+.language-switcher.is-settings {
+  position: static;
+  width: fit-content;
+  padding: 3px;
+  border: 2px solid var(--color-text);
+  border-radius: 0;
+  color: var(--color-text);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.language-switcher.is-settings button {
+  min-width: 56px;
+  min-height: 36px;
+  border-radius: 0;
+  font:
+    700 11px ui-monospace,
+    Menlo,
+    monospace;
+  letter-spacing: 0.08em;
+}
+
+.language-switcher.is-settings button[aria-pressed='true'] {
+  color: white;
+  background: var(--color-text);
+}
+
 .language-switcher button {
   min-width: 2.35rem;
   min-height: 2rem;

@@ -549,6 +549,43 @@ describe('conversation projection', () => {
     ])
   })
 
+  it('streams agent deltas into one message and reconciles the final item', () => {
+    const first = parseTimelineEvent({
+      ...base,
+      codexItemId: 'message_stream',
+      eventId: 'evt_stream_1',
+      sequence: 22,
+      sourceMethod: 'item/agentMessage/delta',
+      type: 'agent.message.delta',
+      payload: { text: 'Mer' },
+    })
+    const second = parseTimelineEvent({
+      ...base,
+      codexItemId: 'message_stream',
+      eventId: 'evt_stream_2',
+      sequence: 23,
+      sourceMethod: 'item/agentMessage/delta',
+      type: 'agent.message.delta',
+      payload: { text: 'haba' },
+    })
+    const completed = parseTimelineEvent({
+      ...base,
+      codexItemId: 'message_stream',
+      eventId: 'evt_stream_final',
+      sequence: 24,
+      sourceMethod: 'item/completed',
+      type: 'agent.message.completed',
+      payload: { text: 'Merhaba' },
+    })
+
+    expect(conversationMessages([first, second])).toMatchObject([
+      { role: 'assistant', text: 'Merhaba' },
+    ])
+    expect(conversationMessages([first, second, completed])).toMatchObject([
+      { role: 'assistant', text: 'Merhaba' },
+    ])
+  })
+
   it('places compact Codex work between the user prompt and assistant reply', () => {
     const events = [
       parseTimelineEvent({

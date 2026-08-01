@@ -119,7 +119,11 @@ describe('production session API contract', () => {
     const event = productionTimelineEvent(
       storedEvent({
         eventType: 'agent.message.completed',
-        payload: { outputObjectKey: 'protected/output' },
+        payload: {
+          outputObjectKey: 'protected/output',
+          codexThreadId: 'thread-a',
+          codexItemId: 'message-a',
+        },
       }),
       'OK',
     )
@@ -136,6 +140,9 @@ describe('production session API contract', () => {
       type: 'event',
       event: {
         type: 'agent.message.completed',
+        codexThreadId: 'thread-a',
+        codexTurnId: 'run-a',
+        codexItemId: 'message-a',
         payload: { text: 'OK' },
       },
     })

@@ -10,6 +10,12 @@ describe('production scheduler activity capture', () => {
   it('keeps explicit summaries and command lifecycle events', () => {
     expect(
       shouldPersistProductionActivityNotification({
+        method: 'item/agentMessage/delta',
+        params: { delta: 'Mer' },
+      }),
+    ).toBe(true)
+    expect(
+      shouldPersistProductionActivityNotification({
         method: 'item/reasoning/summaryTextDelta',
         params: { delta: 'Checking the workspace' },
       }),
@@ -55,16 +61,20 @@ describe('production scheduler activity capture', () => {
             turn: {
               status: 'completed',
               items: [
-                { type: 'agentMessage', text: 'Working…' },
+                { id: 'msg-working', type: 'agentMessage', text: 'Working…' },
                 { type: 'commandExecution', command: 'head -1 README.md' },
-                { type: 'agentMessage', text: '# Perseverance' },
+                {
+                  id: 'msg-final',
+                  type: 'agentMessage',
+                  text: '# Perseverance',
+                },
               ],
             },
           },
         },
         'Working…',
       ),
-    ).toEqual({ text: '# Perseverance' })
+    ).toEqual({ text: '# Perseverance', itemId: 'msg-final' })
   })
 
   it('fails interrupted turns instead of returning an intermediate message', () => {

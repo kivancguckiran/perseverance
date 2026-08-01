@@ -76,10 +76,18 @@ export function useTranslations() {
   )
 }
 
-export function LanguageSwitcher() {
+export function LanguageSwitcher({
+  variant = 'floating',
+}: {
+  variant?: 'floating' | 'settings'
+}) {
   const { locale, setLocale } = useLocale()
   return (
-    <div className="language-switcher" role="group" aria-label="Language / Dil">
+    <div
+      className={`language-switcher is-${variant}`}
+      role="group"
+      aria-label="Language / Dil"
+    >
       <button
         type="button"
         aria-pressed={locale === 'en'}

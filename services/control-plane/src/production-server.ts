@@ -155,7 +155,13 @@ export function productionTimelineEvent(
     tenantId: stored.tenantId,
     workspaceId: stored.workspaceId,
     sessionId: stored.sessionId,
+    ...(typeof stored.payload.codexThreadId === 'string'
+      ? { codexThreadId: stored.payload.codexThreadId }
+      : {}),
     ...(stored.runId ? { codexTurnId: stored.runId } : {}),
+    ...(typeof stored.payload.codexItemId === 'string'
+      ? { codexItemId: stored.payload.codexItemId }
+      : {}),
     sequence: stored.sequence,
     occurredAt: stored.occurredAt,
     receivedAt: stored.occurredAt,
