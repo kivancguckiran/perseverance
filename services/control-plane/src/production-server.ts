@@ -34,10 +34,15 @@ import {
 } from '@perseverance/billing-platform'
 import {
   createProductionPostgresRepository,
+  type ProductionEvent,
   type ProductionSession,
   type ProductionPostgresRepository,
   type ProductionScope,
 } from '@perseverance/production-topology/production-postgres'
+import {
+  timelineEventSchema,
+  type TimelineEvent,
+} from '@perseverance/domain-events'
 import {
   RabbitMqManagementBroker,
   S3CompatibleObjectStore,
@@ -136,6 +141,90 @@ export function productionRealtimeSubscription(input: unknown) {
       workspaceId: parsed.data.workspaceId,
     } satisfies ProductionScope,
   }
+}
+
+export function productionTimelineEvent(
+  stored: ProductionEvent,
+  contentText?: string,
+): TimelineEvent {
+  const identity = {
+    eventId: stored.eventId,
+    schemaVersion: 1 as const,
+    tenantId: stored.tenantId,
+    workspaceId: stored.workspaceId,
+    sessionId: stored.sessionId,
+    ...(stored.runId ? { codexTurnId: stored.runId } : {}),
+    sequence: stored.sequence,
+    occurredAt: stored.occurredAt,
+    receivedAt: stored.occurredAt,
+    source: 'codex-app-server' as const,
+    sourceVersion: '0.144.2',
+    sourceMethod: stored.eventType,
+    visibility: 'user' as const,
+  }
+  if (stored.eventType === 'turn.started')
+    return timelineEventSchema.parse({
+      ...identity,
+      type: 'turn.started',
+      payload: { status: 'running' },
+    })
+  if (stored.eventType === 'agent.message.completed')
+    return timelineEventSchema.parse({
+      ...identity,
+      type: 'agent.message.completed',
+      payload: { text: contentText ?? '' },
+    })
+  if (stored.eventType === 'turn.completed')
+    return timelineEventSchema.parse({
+      ...identity,
+      type: 'turn.completed',
+      payload: {
+        status:
+          typeof stored.payload.outcome === 'string'
+            ? stored.payload.outcome
+            : 'completed',
+      },
+    })
+  return timelineEventSchema.parse({
+    ...identity,
+    type: 'codex.unknown',
+    payload: {
+      envelopeKind: 'notification',
+      method: `production/${stored.eventType}`,
+      params: stored.payload,
+    },
+  })
+}
+
+export function productionUserMessageEvent(
+  stored: ProductionEvent,
+  text: string,
+): TimelineEvent {
+  return timelineEventSchema.parse({
+    eventId: `${stored.eventId}_user`,
+    schemaVersion: 1,
+    tenantId: stored.tenantId,
+    workspaceId: stored.workspaceId,
+    sessionId: stored.sessionId,
+    ...(stored.runId
+      ? { codexTurnId: stored.runId, codexItemId: `user_${stored.runId}` }
+      : {}),
+    sequence: stored.sequence,
+    occurredAt: stored.occurredAt,
+    receivedAt: stored.occurredAt,
+    source: 'codex-app-server',
+    sourceVersion: '0.144.2',
+    sourceMethod: 'item/completed',
+    visibility: 'user',
+    type: 'codex.unknown',
+    payload: {
+      envelopeKind: 'notification',
+      method: 'item/completed',
+      params: {
+        item: { type: 'userMessage', content: [{ type: 'text', text }] },
+      },
+    },
+  })
 }
 
 function opaquePrincipalId(principal: AuthPrincipal) {
@@ -994,6 +1083,69 @@ export async function buildProductionControlPlane(
     return decided
   })
 
+  const readRunContentText = async (
+    requestScope: ProductionScope,
+    objectKey: string,
+    recordType: 'prompt' | 'model_output',
+    recordId: string,
+  ) => {
+    const bytes = await options.objectStore.get(objectKey)
+    const envelope = parseUserContentEnvelope(bytes)
+    if (!envelope) return decoder.decode(bytes)
+    const lease = options.selfHostedAuth?.leases.acquire(
+      requestScope.workspaceId,
+    )
+    if (!lease) throw new Error('CONTENT_KEY_LOCKED')
+    try {
+      return decoder.decode(
+        await decryptUserContent(
+          lease,
+          { ...requestScope, recordType, recordId },
+          envelope,
+        ),
+      )
+    } catch {
+      throw new Error('CONTENT_UNRECOVERABLE')
+    }
+  }
+
+  const materializeProductionEvents = async (
+    requestScope: ProductionScope,
+    stored: ProductionEvent,
+  ): Promise<TimelineEvent[]> => {
+    if (stored.eventType === 'turn.started' && stored.runId) {
+      const run = await options.repository.getRun(requestScope, stored.runId)
+      const prompt = run?.promptObjectKey
+        ? await readRunContentText(
+            requestScope,
+            run.promptObjectKey,
+            'prompt',
+            stored.runId,
+          )
+        : ''
+      return [
+        productionUserMessageEvent(stored, prompt),
+        productionTimelineEvent(stored),
+      ]
+    }
+    if (stored.eventType === 'agent.message.completed' && stored.runId) {
+      const outputObjectKey =
+        typeof stored.payload.outputObjectKey === 'string'
+          ? stored.payload.outputObjectKey
+          : null
+      const text = outputObjectKey
+        ? await readRunContentText(
+            requestScope,
+            outputObjectKey,
+            'model_output',
+            stored.runId,
+          )
+        : ''
+      return [productionTimelineEvent(stored, text)]
+    }
+    return [productionTimelineEvent(stored)]
+  }
+
   app.get<{
     Params: { sessionId: string }
     Querystring: { after?: string; limit?: string }
@@ -1022,6 +1174,22 @@ export async function buildProductionControlPlane(
       Number.isFinite(after) ? after : 0,
       limit,
     )
+    let events: TimelineEvent[]
+    try {
+      events = (
+        await Promise.all(
+          replay.events.map((stored) =>
+            materializeProductionEvents(requestScope, stored),
+          ),
+        )
+      ).flat()
+    } catch (error) {
+      if (error instanceof Error && error.message === 'CONTENT_KEY_LOCKED')
+        return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+      if (error instanceof Error && error.message === 'CONTENT_UNRECOVERABLE')
+        return reply.code(410).send({ code: 'CONTENT_UNRECOVERABLE' })
+      throw error
+    }
     telemetry.recordMetric(
       'event_replay_lag',
       Math.max(0, performance.now() - replayStarted),
@@ -1035,19 +1203,7 @@ export async function buildProductionControlPlane(
       ...requestScope,
       sessionId: request.params.sessionId,
       ...replay,
-      events: replay.events.map((stored) => ({
-        version: 1,
-        eventId: stored.eventId,
-        sequence: stored.sequence,
-        tenantId: stored.tenantId,
-        workspaceId: stored.workspaceId,
-        sessionId: stored.sessionId,
-        codexTurnId: stored.runId,
-        codexItemId: null,
-        type: stored.eventType,
-        payload: stored.payload,
-        occurredAt: stored.occurredAt,
-      })),
+      events,
     }
   })
 
@@ -1065,25 +1221,21 @@ export async function buildProductionControlPlane(
       type(contentType: string): { send(body: unknown): unknown }
     },
   ) => {
-    const bytes = await options.objectStore.get(objectKey)
-    const envelope = parseUserContentEnvelope(bytes)
-    if (!envelope)
-      return reply.type('text/plain; charset=utf-8').send(decoder.decode(bytes))
-    const lease = options.selfHostedAuth?.leases.acquire(
-      requestScope.workspaceId,
-    )
-    if (!lease) return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
     try {
-      const plaintext = await decryptUserContent(
-        lease,
-        { ...requestScope, recordType, recordId },
-        envelope,
-      )
       return reply
         .type('text/plain; charset=utf-8')
-        .send(decoder.decode(plaintext))
-    } catch {
-      return reply.code(410).send({ code: 'CONTENT_UNRECOVERABLE' })
+        .send(
+          await readRunContentText(
+            requestScope,
+            objectKey,
+            recordType,
+            recordId,
+          ),
+        )
+    } catch (error) {
+      return error instanceof Error && error.message === 'CONTENT_KEY_LOCKED'
+        ? reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+        : reply.code(410).send({ code: 'CONTENT_UNRECOVERABLE' })
     }
   }
 
@@ -1166,13 +1318,20 @@ export async function buildProductionControlPlane(
         )
         for (const stored of replay.events) {
           after = stored.sequence
-          socket.send(
-            JSON.stringify({
-              type: 'event',
-              event: stored,
-              highWaterSequence: replay.highWaterSequence,
-            }),
-          )
+          for (const event of await materializeProductionEvents(
+            requestScope,
+            stored,
+          ))
+            socket.send(
+              JSON.stringify({
+                type: 'event',
+                tenantId: requestScope.tenantId,
+                workspaceId: requestScope.workspaceId,
+                sessionId,
+                event,
+                highWaterSequence: replay.highWaterSequence,
+              }),
+            )
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
       }

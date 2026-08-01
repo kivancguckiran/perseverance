@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { sessionResponseSchema } from '@perseverance/control-plane-contracts'
+import {
+  serverMessageSchema,
+  sessionResponseSchema,
+} from '@perseverance/control-plane-contracts'
 import {
   productionRealtimeSubscription,
   productionSessionResponse,
+  productionTimelineEvent,
+  productionUserMessageEvent,
 } from './production-server'
-import type { ProductionSession } from '@perseverance/production-topology/production-postgres'
+import type {
+  ProductionEvent,
+  ProductionSession,
+} from '@perseverance/production-topology/production-postgres'
 
 const storedSession = (
   overrides: Partial<ProductionSession> = {},
@@ -20,6 +28,24 @@ const storedSession = (
   version: 1,
   createdAt: '2026-07-31T09:00:00.000Z',
   updatedAt: '2026-07-31T09:00:00.000Z',
+  ...overrides,
+})
+
+const storedEvent = (
+  overrides: Partial<ProductionEvent> = {},
+): ProductionEvent => ({
+  tenantId: 'tenant-a',
+  organizationId: 'tenant-a',
+  workspaceId: 'workspace-a',
+  sessionId: 'session-a',
+  runId: 'run-a',
+  eventId: 'event-a',
+  sequence: 1,
+  eventType: 'turn.started',
+  fencingToken: 1,
+  payload: {},
+  byteLength: 2,
+  occurredAt: '2026-07-31T09:00:00.000Z',
   ...overrides,
 })
 
@@ -86,5 +112,46 @@ describe('production session API contract', () => {
         afterSequence: 0,
       })?.scope.organizationId,
     ).toBe('organization-a')
+  })
+
+  it('normalizes production events into the shared realtime envelope', () => {
+    const event = productionTimelineEvent(
+      storedEvent({
+        eventType: 'agent.message.completed',
+        payload: { outputObjectKey: 'protected/output' },
+      }),
+      'OK',
+    )
+
+    expect(
+      serverMessageSchema.parse({
+        type: 'event',
+        tenantId: 'tenant-a',
+        workspaceId: 'workspace-a',
+        sessionId: 'session-a',
+        event,
+      }),
+    ).toMatchObject({
+      type: 'event',
+      event: {
+        type: 'agent.message.completed',
+        payload: { text: 'OK' },
+      },
+    })
+  })
+
+  it('materializes protected prompts as user-message timeline events', () => {
+    expect(productionUserMessageEvent(storedEvent(), 'Merhaba')).toMatchObject({
+      type: 'codex.unknown',
+      payload: {
+        method: 'item/completed',
+        params: {
+          item: {
+            type: 'userMessage',
+            content: [{ type: 'text', text: 'Merhaba' }],
+          },
+        },
+      },
+    })
   })
 })
