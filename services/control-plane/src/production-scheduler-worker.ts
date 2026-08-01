@@ -139,6 +139,45 @@ export function shouldPersistProductionActivityNotification(
   return typeof item?.type === 'string' && ACTIVITY_ITEM_TYPES.has(item.type)
 }
 
+export function productionTurnCompletion(
+  input: unknown,
+  latestAgentMessage?: string,
+): { text: string } | { error: string } | null {
+  if (!input || typeof input !== 'object') return null
+  const message = input as { method?: unknown; params?: unknown }
+  if (message.method !== 'turn/completed') return null
+  const params = message.params as Record<string, unknown> | undefined
+  const turn = params?.turn as Record<string, unknown> | undefined
+  const status = typeof turn?.status === 'string' ? turn.status : 'failed'
+  if (status !== 'completed') {
+    const turnError = turn?.error as Record<string, unknown> | undefined
+    return {
+      error: String(
+        turnError?.message ??
+          (status === 'interrupted'
+            ? 'CODEX_TURN_INTERRUPTED'
+            : 'CODEX_TURN_FAILED'),
+      ),
+    }
+  }
+  const items = Array.isArray(turn?.items) ? turn.items : []
+  const snapshotMessage = [...items]
+    .reverse()
+    .find((item): item is Record<string, unknown> =>
+      Boolean(
+        item &&
+        typeof item === 'object' &&
+        (item as Record<string, unknown>).type === 'agentMessage' &&
+        typeof (item as Record<string, unknown>).text === 'string',
+      ),
+    )
+  const text =
+    typeof snapshotMessage?.text === 'string'
+      ? snapshotMessage.text
+      : latestAgentMessage
+  return text ? { text } : { error: 'CODEX_EMPTY_RESPONSE' }
+}
+
 export async function settleTerminalRunBilling(
   billing: Pick<
     BillingPostgresRepository,
@@ -423,6 +462,7 @@ export class ProductionSchedulerWorker {
         )
         let resolveFinal!: (text: string) => void
         let rejectFinal!: (error: Error) => void
+        let latestAgentMessage: string | undefined
         const final = new Promise<string>((resolve, reject) => {
           resolveFinal = resolve
           rejectFinal = reject
@@ -478,7 +518,15 @@ export class ProductionSchedulerWorker {
           if (message.method === 'item/completed') {
             const item = params.item as Record<string, unknown> | undefined
             if (item?.type === 'agentMessage' && typeof item.text === 'string')
-              resolveFinal(item.text)
+              latestAgentMessage = item.text
+          }
+          const completion = productionTurnCompletion(
+            message,
+            latestAgentMessage,
+          )
+          if (completion) {
+            if ('error' in completion) rejectFinal(new Error(completion.error))
+            else resolveFinal(completion.text)
           }
         })
         const startIntent =
