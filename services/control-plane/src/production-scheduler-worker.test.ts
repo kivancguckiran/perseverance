@@ -1,9 +1,14 @@
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { PrepaidCreditError } from '@perseverance/billing-platform'
 import {
   settleTerminalRunBilling,
   productionThreadStartParams,
   productionTurnCompletion,
+  normalizeGeneratedConversationTitle,
+  readWorkspaceEntry,
   shouldPersistProductionActivityNotification,
 } from './production-scheduler-worker'
 
@@ -14,6 +19,34 @@ describe('production scheduler Codex boundary', () => {
       approvalPolicy: 'never',
       sandbox: 'workspace-write',
     })
+  })
+})
+
+describe('production conversation metadata helpers', () => {
+  it('normalizes a Luna title to one safe line', () => {
+    expect(
+      normalizeGeneratedConversationTitle('  **“Kalıcı Sohbet Başlıkları”**\n'),
+    ).toBe('Kalıcı Sohbet Başlıkları')
+  })
+
+  it('reads scoped workspace files and rejects traversal and symlink escape', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'perseverance-workspace-'))
+    const outside = await mkdtemp(join(tmpdir(), 'perseverance-outside-'))
+    await writeFile(join(root, 'index.md'), '# Başlık')
+    await writeFile(join(outside, 'secret.md'), 'secret')
+    await symlink(join(outside, 'secret.md'), join(root, 'escape.md'))
+
+    await expect(readWorkspaceEntry(root, 'index.md')).resolves.toMatchObject({
+      kind: 'file',
+      path: 'index.md',
+      content: '# Başlık',
+    })
+    await expect(readWorkspaceEntry(root, '../secret.md')).rejects.toThrow(
+      'INVALID_WORKSPACE_PATH',
+    )
+    await expect(readWorkspaceEntry(root, 'escape.md')).rejects.toThrow(
+      'WORKSPACE_PATH_ESCAPE',
+    )
   })
 })
 

@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as EnterpriseRouteImport } from './routes/enterprise'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
+import { Route as FilesSplatRouteImport } from './routes/files.$'
 
 const ManagedCloudRoute = ManagedCloudRouteImport.update({
   id: '/managed-cloud',
@@ -40,12 +41,18 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   path: '/sessions/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FilesSplatRoute = FilesSplatRouteImport.update({
+  id: '/files/$',
+  path: '/files/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/enterprise': typeof EnterpriseRoute
   '/login': typeof LoginRoute
   '/managed-cloud': typeof ManagedCloudRoute
+  '/files/$': typeof FilesSplatRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/enterprise': typeof EnterpriseRoute
   '/login': typeof LoginRoute
   '/managed-cloud': typeof ManagedCloudRoute
+  '/files/$': typeof FilesSplatRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
 }
 export interface FileRoutesById {
@@ -61,20 +69,33 @@ export interface FileRoutesById {
   '/enterprise': typeof EnterpriseRoute
   '/login': typeof LoginRoute
   '/managed-cloud': typeof ManagedCloudRoute
+  '/files/$': typeof FilesSplatRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/enterprise' | '/login' | '/managed-cloud' | '/sessions/$sessionId'
+    | '/'
+    | '/enterprise'
+    | '/login'
+    | '/managed-cloud'
+    | '/files/$'
+    | '/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/enterprise' | '/login' | '/managed-cloud' | '/sessions/$sessionId'
+  to:
+    | '/'
+    | '/enterprise'
+    | '/login'
+    | '/managed-cloud'
+    | '/files/$'
+    | '/sessions/$sessionId'
   id:
     | '__root__'
     | '/'
     | '/enterprise'
     | '/login'
     | '/managed-cloud'
+    | '/files/$'
     | '/sessions/$sessionId'
   fileRoutesById: FileRoutesById
 }
@@ -83,6 +104,7 @@ export interface RootRouteChildren {
   EnterpriseRoute: typeof EnterpriseRoute
   LoginRoute: typeof LoginRoute
   ManagedCloudRoute: typeof ManagedCloudRoute
+  FilesSplatRoute: typeof FilesSplatRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
 }
 
@@ -123,6 +145,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/files/$': {
+      id: '/files/$'
+      path: '/files/$'
+      fullPath: '/files/$'
+      preLoaderRoute: typeof FilesSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -131,6 +160,7 @@ const rootRouteChildren: RootRouteChildren = {
   EnterpriseRoute: EnterpriseRoute,
   LoginRoute: LoginRoute,
   ManagedCloudRoute: ManagedCloudRoute,
+  FilesSplatRoute: FilesSplatRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
 }
 export const routeTree = rootRouteImport

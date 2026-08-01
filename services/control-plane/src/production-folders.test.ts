@@ -64,6 +64,7 @@ describe('production folder compatibility routes', () => {
     })
     expect(listed.statusCode, listed.body).toBe(200)
     expect(listed.json().folders).toEqual([
+      expect.objectContaining({ folderId: 'fol_default', name: 'Default' }),
       expect.objectContaining({ name: 'Research' }),
     ])
 

@@ -11,8 +11,14 @@ export interface ProductionScope {
 
 export interface ProductionSession extends ProductionScope {
   sessionId: string
+  folderId: string
+  title: string
   status: 'active' | 'archived' | 'recovery_required'
   providerId: string
+  requestedPolicy: Record<string, unknown>
+  resolvedModel: string | null
+  reasoningEffort: string
+  titleGeneratedAt: string | null
   codexThreadId: string | null
   highWaterSequence: number
   version: number
@@ -104,8 +110,15 @@ function session(row: Row): ProductionSession {
     organizationId: String(row.organization_id),
     workspaceId: String(row.workspace_id),
     sessionId: String(row.session_id),
+    folderId: String(row.folder_id),
+    title: String(row.title),
     status: row.status as ProductionSession['status'],
     providerId: String(row.provider_id),
+    requestedPolicy: asJson(row.requested_policy),
+    resolvedModel: nullable(row.resolved_model),
+    reasoningEffort: String(row.reasoning_effort),
+    titleGeneratedAt:
+      row.title_generated_at == null ? null : iso(row.title_generated_at),
     codexThreadId: nullable(row.codex_thread_id),
     highWaterSequence: Number(row.high_water_sequence),
     version: Number(row.version),
@@ -228,18 +241,38 @@ export class ProductionPostgresRepository {
   }
 
   async createSession(
-    input: ProductionScope & { sessionId?: string },
+    input: ProductionScope & {
+      sessionId?: string
+      folderId: string
+      title: string
+      providerId: string
+      requestedPolicy: Record<string, unknown>
+      resolvedModel?: string | null
+      reasoningEffort: string
+    },
   ): Promise<ProductionSession> {
     const sessionId = input.sessionId ?? `ses_${randomUUID()}`
     return this.#tx(input, async (client) => {
       const result = await client.query(
         `INSERT INTO persistent_codex.ha_sessions
-          (tenant_id,organization_id,workspace_id,session_id,status)
-         VALUES ($1,$2,$3,$4,'active')
+          (tenant_id,organization_id,workspace_id,session_id,status,folder_id,title,
+           provider_id,requested_policy,resolved_model,reasoning_effort)
+         VALUES ($1,$2,$3,$4,'active',$5,$6,$7,$8::jsonb,$9,$10)
          ON CONFLICT (tenant_id,organization_id,workspace_id,session_id)
          DO UPDATE SET updated_at=persistent_codex.ha_sessions.updated_at
          RETURNING *`,
-        [input.tenantId, input.organizationId, input.workspaceId, sessionId],
+        [
+          input.tenantId,
+          input.organizationId,
+          input.workspaceId,
+          sessionId,
+          input.folderId,
+          input.title,
+          input.providerId,
+          JSON.stringify(input.requestedPolicy),
+          input.resolvedModel ?? null,
+          input.reasoningEffort,
+        ],
       )
       return session(result.rows[0] as Row)
     })
@@ -297,6 +330,114 @@ export class ProductionPostgresRepository {
         [scope.tenantId, scope.organizationId, scope.workspaceId, sessionId],
       )
       return result.rowCount ? session(result.rows[0] as Row) : null
+    })
+  }
+
+  async listSessions(
+    scope: ProductionScope,
+    input: {
+      limit: number
+      archived: boolean
+      cursor?: { updatedAt: string; sessionId: string }
+    },
+  ): Promise<{ sessions: ProductionSession[]; hasMore: boolean }> {
+    return this.#tx(scope, async (client) => {
+      const values: unknown[] = [
+        scope.tenantId,
+        scope.organizationId,
+        scope.workspaceId,
+        input.archived,
+        input.limit + 1,
+      ]
+      const cursorClause = input.cursor
+        ? `AND (updated_at,session_id) < ($6::timestamptz,$7)`
+        : ''
+      if (input.cursor)
+        values.push(input.cursor.updatedAt, input.cursor.sessionId)
+      const result = await client.query(
+        `SELECT * FROM persistent_codex.ha_sessions
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND (($4::boolean AND status='archived') OR
+                (NOT $4::boolean AND status<>'archived')) ${cursorClause}
+         ORDER BY updated_at DESC,session_id DESC LIMIT $5`,
+        values,
+      )
+      const sessions = result.rows
+        .slice(0, input.limit)
+        .map((row) => session(row as Row))
+      return { sessions, hasMore: result.rows.length > input.limit }
+    })
+  }
+
+  async updateConversation(
+    scope: ProductionScope,
+    sessionId: string,
+    changes: { folderId?: string; title?: string },
+  ): Promise<ProductionSession | null> {
+    return this.#tx(scope, async (client) => {
+      const result = await client.query(
+        `UPDATE persistent_codex.ha_sessions
+         SET folder_id=COALESCE($5,folder_id),title=COALESCE($6,title),
+             title_generated_at=CASE WHEN $6 IS NULL THEN title_generated_at ELSE NULL END,
+             version=version+1,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+         RETURNING *`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          sessionId,
+          changes.folderId ?? null,
+          changes.title ?? null,
+        ],
+      )
+      return result.rowCount ? session(result.rows[0] as Row) : null
+    })
+  }
+
+  async setSessionArchived(
+    scope: ProductionScope,
+    sessionId: string,
+    archived: boolean,
+  ): Promise<ProductionSession | null> {
+    return this.#tx(scope, async (client) => {
+      const result = await client.query(
+        `UPDATE persistent_codex.ha_sessions
+         SET status=$5,version=version+1,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+         RETURNING *`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          sessionId,
+          archived ? 'archived' : 'active',
+        ],
+      )
+      return result.rowCount ? session(result.rows[0] as Row) : null
+    })
+  }
+
+  async setGeneratedTitle(
+    scope: ProductionScope,
+    sessionId: string,
+    title: string,
+  ): Promise<boolean> {
+    return this.#tx(scope, async (client) => {
+      const result = await client.query(
+        `UPDATE persistent_codex.ha_sessions
+         SET title=$5,title_generated_at=now(),version=version+1,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND title='Yeni konuşma' AND title_generated_at IS NULL`,
+        [
+          scope.tenantId,
+          scope.organizationId,
+          scope.workspaceId,
+          sessionId,
+          title,
+        ],
+      )
+      return (result.rowCount ?? 0) > 0
     })
   }
 

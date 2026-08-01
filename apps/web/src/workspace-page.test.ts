@@ -367,6 +367,36 @@ describe('bounded browser timeline state', () => {
     ])
   })
 
+  it('retains production history while model resolution is still null', () => {
+    expect(
+      parseOfflineHistory(
+        JSON.stringify({
+          version: 1,
+          sessions: [
+            {
+              sessionId: 'ses_default',
+              title: 'Yeni konuşma',
+              status: 'active',
+              provider: 'codex',
+              resolvedModel: null,
+              reasoningEffort: 'medium',
+              folderId: 'fol_default',
+              folderName: 'Default',
+              archivedAt: null,
+              updatedAt: '2026-08-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        sessionId: 'ses_default',
+        resolvedModel: null,
+        folderId: 'fol_default',
+      }),
+    ])
+  })
+
   it('keeps only bounded read-only conversation message fields offline', () => {
     expect(
       parseOfflineConversation(

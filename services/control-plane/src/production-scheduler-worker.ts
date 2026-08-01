@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
+import { isAbsolute, relative, resolve } from 'node:path'
 import {
   ProductionTelemetry,
   OtlpHttpExporter,
@@ -41,6 +43,7 @@ import {
   parseUserContentEnvelope,
   type UserContentKeyMaterial,
 } from './user-content-crypto'
+import { CodexTitleProcessRunner } from './title-process-runner'
 
 // WP37: workspace-agent, kullanıcı workspace'lerinin content key'ini
 // control-plane'in iç listener'ından alır (anahtar diske yazılmaz).
@@ -103,6 +106,66 @@ export interface ProductionSchedulerWorkerOptions {
   telemetry?: ProductionTelemetry
   telemetryExporter?: OtlpHttpExporter
   contentKeys?: ContentKeyResolver
+  titleModelId?: string
+  internalRuntimeToken?: string
+}
+
+export const DEFAULT_LUNA_TITLE_MODEL_ID = 'gpt-5.6-terra'
+
+export function normalizeGeneratedConversationTitle(value: string) {
+  const title = value
+    .replaceAll(/[\r\n]+/g, ' ')
+    .replace(/^\s*[#>*`"'“”]+|[#>*`"'“”]+\s*$/g, '')
+    .replaceAll(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120)
+    .trim()
+  return title || null
+}
+
+function authorizedInternalRequest(
+  authorization: string | undefined,
+  expected: string | undefined,
+) {
+  if (!authorization || !expected) return false
+  const supplied = Buffer.from(authorization.replace(/^Bearer\s+/i, ''))
+  const target = Buffer.from(expected)
+  return supplied.length === target.length && timingSafeEqual(supplied, target)
+}
+
+export async function readWorkspaceEntry(workspaceCwd: string, input: string) {
+  if (
+    input.includes('\0') ||
+    isAbsolute(input) ||
+    input.split(/[\\/]+/).includes('..')
+  )
+    throw new Error('INVALID_WORKSPACE_PATH')
+  const root = await realpath(workspaceCwd)
+  const target = await realpath(resolve(root, input || '.'))
+  const scoped = relative(root, target)
+  if (scoped.startsWith('..') || isAbsolute(scoped))
+    throw new Error('WORKSPACE_PATH_ESCAPE')
+  const info = await stat(target)
+  if (info.isDirectory()) {
+    const entries = await readdir(target, { withFileTypes: true })
+    return {
+      kind: 'directory' as const,
+      path: scoped,
+      entries: entries.slice(0, 500).map((entry) => ({
+        name: entry.name,
+        directory: entry.isDirectory(),
+      })),
+    }
+  }
+  if (!info.isFile() || info.size > 2 * 1024 * 1024)
+    throw new Error('WORKSPACE_FILE_UNSUPPORTED')
+  const bytes = await readFile(target)
+  if (bytes.includes(0)) throw new Error('WORKSPACE_FILE_BINARY')
+  return {
+    kind: 'file' as const,
+    path: scoped,
+    content: bytes.toString('utf8'),
+  }
 }
 
 const ACTIVITY_ITEM_TYPES = new Set([
@@ -259,15 +322,53 @@ export class ProductionSchedulerWorker {
       this.#telemetryTimer.unref()
     }
     if (this.options.healthPort) {
-      this.#healthServer = createServer((_request, response) => {
-        response.writeHead(200, { 'content-type': 'application/json' })
-        response.end(
-          JSON.stringify({
-            status: 'ready',
-            role: 'scheduler',
-            ownerId: this.options.ownerId,
-          }),
-        )
+      this.#healthServer = createServer((request, response) => {
+        void (async () => {
+          const url = new URL(request.url ?? '/', 'http://workspace-agent')
+          response.setHeader('content-type', 'application/json')
+          if (url.pathname === '/internal/v1/workspace-files') {
+            if (
+              !authorizedInternalRequest(
+                request.headers.authorization,
+                this.options.internalRuntimeToken,
+              )
+            ) {
+              response.writeHead(401)
+              response.end(JSON.stringify({ code: 'UNAUTHORIZED' }))
+              return
+            }
+            try {
+              const entry = await readWorkspaceEntry(
+                this.options.workspaceCwd,
+                url.searchParams.get('path') ?? '',
+              )
+              response.writeHead(200)
+              response.end(JSON.stringify(entry))
+            } catch (error) {
+              response.writeHead(404)
+              response.end(
+                JSON.stringify({
+                  code:
+                    error instanceof Error
+                      ? error.message
+                      : 'WORKSPACE_FILE_NOT_FOUND',
+                }),
+              )
+            }
+            return
+          }
+          response.writeHead(200)
+          response.end(
+            JSON.stringify({
+              status: 'ready',
+              role: 'scheduler',
+              ownerId: this.options.ownerId,
+            }),
+          )
+        })().catch(() => {
+          response.writeHead(500)
+          response.end(JSON.stringify({ code: 'INTERNAL_ERROR' }))
+        })
       })
       await new Promise<void>((resolve, reject) => {
         this.#healthServer!.once('error', reject)
@@ -455,6 +556,55 @@ export class ProductionSchedulerWorker {
       } else {
         prompt = new TextDecoder().decode(promptBytes)
       }
+      const currentSession = await this.options.repository.getSession(
+        scope,
+        stored.sessionId,
+      )
+      const titleHome =
+        currentSession?.title === 'Yeni konuşma' &&
+        currentSession.titleGeneratedAt === null
+          ? createIsolatedCodexHome({
+              ...(this.options.codexProvisioningSource
+                ? { sourceHome: this.options.codexProvisioningSource }
+                : {}),
+              includeConfig: false,
+            })
+          : null
+      const titlePromise = titleHome
+        ? new CodexTitleProcessRunner()
+            .run({
+              binary: this.options.codexBin,
+              args: [
+                'exec',
+                '--json',
+                '--skip-git-repo-check',
+                '--sandbox',
+                'read-only',
+                '--model',
+                this.options.titleModelId ?? DEFAULT_LUNA_TITLE_MODEL_ID,
+                '--config',
+                'model_reasoning_effort="none"',
+                [
+                  'Produce only a short, safe, single-line Turkish conversation title (maximum 8 words).',
+                  'Do not use tools. Do not include quotes, markdown, or explanation.',
+                  `Message 1: ${prompt.slice(0, 2_000)}`,
+                ].join('\n'),
+              ],
+              codexHome: titleHome.path,
+              requestId: `title:${stored.sessionId}`,
+            })
+            .then(async ({ title }) => {
+              const normalized = normalizeGeneratedConversationTitle(title)
+              if (normalized)
+                await this.options.repository.setGeneratedTitle(
+                  scope,
+                  stored.sessionId,
+                  normalized,
+                )
+            })
+            .catch(() => undefined)
+            .finally(() => titleHome.cleanup())
+        : Promise.resolve()
       const isolatedHome = createIsolatedCodexHome({
         ...(this.options.codexProvisioningSource
           ? { sourceHome: this.options.codexProvisioningSource }
@@ -662,6 +812,9 @@ export class ProductionSchedulerWorker {
           outputObjectKey,
         })
         if (!completed) throw new Error('STALE_FENCING_TOKEN')
+        // Başlık işi ana Codex turn'ünden ayrı bir Luna çağrısıdır; kullanıcı
+        // cevabını geciktirmeden paralel başlar, lease bırakılmadan kalıcılaşır.
+        await titlePromise
         await this.options.topology.releaseLease({
           ...scope,
           leaseId: claimed.lease.leaseId,
@@ -820,6 +973,10 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
     runtimeTimeoutMs: Number(env.SCHEDULER_RUNTIME_TIMEOUT_MS ?? 180_000),
     ...(env.CONTENT_KEY_SERVICE_URL && env.INTERNAL_RUNTIME_TOKEN_FILE
       ? {
+          internalRuntimeToken: readFileSync(
+            env.INTERNAL_RUNTIME_TOKEN_FILE,
+            'utf8',
+          ).trim(),
           contentKeys: new HttpContentKeyResolver(
             env.CONTENT_KEY_SERVICE_URL,
             readFileSync(env.INTERNAL_RUNTIME_TOKEN_FILE, 'utf8').trim(),

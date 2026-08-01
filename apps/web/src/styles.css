@@ -4415,3 +4415,77 @@ body:has(.workspace-shell) .language-switcher.is-floating {
   background: CanvasText;
   color: Canvas;
 }
+
+/* The active product theme is light; override the retired dark-chat palette. */
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4 {
+  color: var(--color-text);
+}
+
+.message-markdown blockquote {
+  border-left-color: var(--color-neutral-500);
+  color: var(--color-neutral-700);
+}
+
+.message-markdown code {
+  border-color: var(--color-neutral-400);
+  color: var(--color-text);
+  background: var(--color-neutral-200);
+}
+
+.message-markdown pre {
+  border-color: var(--color-neutral-400);
+  color: var(--color-text);
+  background: var(--color-neutral-200);
+}
+
+.message-markdown a {
+  color: var(--color-accent-700);
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--color-accent) 55%,
+    transparent
+  );
+}
+
+.workspace-file-page {
+  width: min(100% - 32px, 900px);
+  margin-inline: auto;
+  padding: 24px 0 64px;
+  color: var(--color-text);
+}
+
+.workspace-file-page > header {
+  display: flex;
+  margin-bottom: 28px;
+  padding-bottom: 14px;
+  border-bottom: 2px solid var(--color-text);
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.workspace-file-page a,
+.workspace-directory-list a {
+  color: var(--color-accent-700);
+}
+
+.workspace-file-plain {
+  padding: 18px;
+  border: 2px solid var(--color-neutral-400);
+  background: var(--color-neutral-200);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workspace-directory-list {
+  padding: 0;
+  list-style: none;
+}
+
+.workspace-directory-list li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-neutral-400);
+}

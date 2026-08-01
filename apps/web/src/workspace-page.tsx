@@ -138,8 +138,9 @@ interface PlatformMeta {
 }
 
 const MessageMarkdown = lazy(() => import('./message-markdown'))
+export const DEFAULT_CONVERSATION_FOLDER_ID = 'fol_default'
 
-const apiBaseUrl =
+export const apiBaseUrl =
   (import.meta.env.VITE_CONTROL_PLANE_URL as string | undefined) ??
   'http://127.0.0.1:3100'
 const locationScope =
@@ -168,7 +169,7 @@ const runtimeAccessToken = () => {
 }
 const principalId = runtimeAuth?.subject ?? storedAuth?.subject ?? 'dev-user'
 const historyDesktopMediaQuery = '(min-width: 1100px)'
-const scopeHeaders: Record<string, string> = {
+export const scopeHeaders: Record<string, string> = {
   'content-type': 'application/json',
   'x-tenant-id': tenantId,
   'x-workspace-id': workspaceId,
@@ -421,8 +422,10 @@ export function parseOfflineHistory(
           item.provider === 'claude' ||
           item.provider === 'gemini' ||
           item.provider === 'cursor') &&
-        typeof item.resolvedModel === 'string' &&
-        typeof item.reasoningEffort === 'string' &&
+        (typeof item.resolvedModel === 'string' ||
+          item.resolvedModel === null) &&
+        (typeof item.reasoningEffort === 'string' ||
+          item.reasoningEffort === null) &&
         typeof item.updatedAt === 'string'
         ? [
             {
@@ -430,7 +433,7 @@ export function parseOfflineHistory(
               title: item.title,
               status: item.status as OfflineHistorySession['status'],
               provider: item.provider,
-              resolvedModel: item.resolvedModel,
+              resolvedModel: item.resolvedModel as string | null,
               reasoningEffort:
                 item.reasoningEffort as OfflineHistorySession['reasoningEffort'],
               folderId:
@@ -2477,11 +2480,20 @@ export function ConversationHistory({
   const activeFolders = folders.filter((folder) => !folder.archivedAt)
   const archivedFolders = folders.filter((folder) => folder.archivedAt)
   const groups = [
+    ...(activeFolders.some(
+      (folder) => folder.folderId === DEFAULT_CONVERSATION_FOLDER_ID,
+    )
+      ? []
+      : [
+          {
+            folderId: DEFAULT_CONVERSATION_FOLDER_ID as string | null,
+            name: 'Default',
+          },
+        ]),
     ...activeFolders.map((folder) => ({
       folderId: folder.folderId as string | null,
       name: folder.name,
     })),
-    { folderId: null, name: t('Other conversations', 'Diğer konuşmalar') },
   ]
   return (
     <section className="conversation-history" aria-label="Conversation history">
@@ -2503,7 +2515,7 @@ export function ConversationHistory({
           className="new-conversation-button"
           type="button"
           disabled={readOnly}
-          onClick={() => onNewConversation(null)}
+          onClick={() => onNewConversation(DEFAULT_CONVERSATION_FOLDER_ID)}
         >
           <span aria-hidden="true">＋</span>{' '}
           {t('New conversation', 'Yeni sohbet')}
@@ -2550,10 +2562,10 @@ export function ConversationHistory({
       <div className="history-folders">
         {groups.map((group) => {
           const groupedSessions = sessions.filter(
-            (item) => item.folderId === group.folderId,
+            (item) =>
+              (item.folderId ?? DEFAULT_CONVERSATION_FOLDER_ID) ===
+              group.folderId,
           )
-          if (group.folderId === null && groupedSessions.length === 0)
-            return null
           return (
             <details
               className="history-folder"
@@ -2582,26 +2594,28 @@ export function ConversationHistory({
                     >
                       +
                     </button>
-                    <button
-                      type="button"
-                      disabled={
-                        readOnly || folderActionPending === group.folderId
-                      }
-                      aria-label={t(
-                        `Archive ${group.name} folder`,
-                        `${group.name} folder'ını arşivle`,
-                      )}
-                      title={t('Archive', 'Arşivle')}
-                      onClick={(event) => {
-                        event.preventDefault()
-                        const folder = activeFolders.find(
-                          (item) => item.folderId === group.folderId,
-                        )
-                        if (folder) onArchiveFolder(folder)
-                      }}
-                    >
-                      ↓
-                    </button>
+                    {group.folderId !== DEFAULT_CONVERSATION_FOLDER_ID ? (
+                      <button
+                        type="button"
+                        disabled={
+                          readOnly || folderActionPending === group.folderId
+                        }
+                        aria-label={t(
+                          `Archive ${group.name} folder`,
+                          `${group.name} folder'ını arşivle`,
+                        )}
+                        title={t('Archive', 'Arşivle')}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          const folder = activeFolders.find(
+                            (item) => item.folderId === group.folderId,
+                          )
+                          if (folder) onArchiveFolder(folder)
+                        }}
+                      >
+                        ↓
+                      </button>
+                    ) : null}
                   </span>
                 ) : null}
               </summary>
@@ -2907,6 +2921,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [offlineMessages, setOfflineMessages] = useState<ConversationMessage[]>(
     [],
   )
+  const restoredFolderSessions = useRef(new Set<string>())
   const conversationFolders = useQuery({
     queryKey: ['conversation-folders', cacheNamespace],
     queryFn: readConversationFolders,
@@ -3004,7 +3019,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const deepLinkedApprovalId = locationScope?.get('approval') ?? undefined
   const [readOnly, setReadOnly] = useState(false)
   const [masterExpanded, setMasterExpanded] = useState(true)
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(
+    DEFAULT_CONVERSATION_FOLDER_ID,
+  )
   const [folderName, setFolderName] = useState('')
   const [folderPending, setFolderPending] = useState(false)
   const [sharedFolderName, setSharedFolderName] = useState('')
@@ -3042,8 +3059,22 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     () => recentSessions.data?.pages.flatMap((page) => page.sessions) ?? [],
     [recentSessions.data],
   )
-  const historySessions: HistorySession[] = syncedHistory.length
-    ? syncedHistory
+  const reconciledSyncedHistory = useMemo(
+    () =>
+      syncedHistory.map((item) => {
+        const cached = offlineHistory.find(
+          (entry) => entry.sessionId === item.sessionId,
+        )
+        return (item.folderId === null || item.folderId === 'fol_default') &&
+          cached?.folderId &&
+          cached.folderId !== 'fol_default'
+          ? { ...item, folderId: cached.folderId }
+          : item
+      }),
+    [offlineHistory, syncedHistory],
+  )
+  const historySessions: HistorySession[] = reconciledSyncedHistory.length
+    ? reconciledSyncedHistory
     : online
       ? []
       : offlineHistory
@@ -3093,7 +3124,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   ])
 
   useEffect(() => {
-    if (!syncedHistory.length) return
+    if (!reconciledSyncedHistory.length) return
     const folderNames = new Map<string, string>([
       ...(conversationFolders.data?.folders ?? []).map(
         (folder) => [folder.folderId, folder.name] as const,
@@ -3102,7 +3133,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         (entry) => [entry.folder.folderId, entry.folder.name] as const,
       ),
     ])
-    const minimized: OfflineHistorySession[] = syncedHistory
+    const minimized: OfflineHistorySession[] = reconciledSyncedHistory
       .slice(0, 24)
       .map((item) => ({
         sessionId: item.sessionId,
@@ -3130,6 +3161,61 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   }, [
     cacheNamespace,
     conversationFolders.data?.folders,
+    sharedFolders.data?.folders,
+    reconciledSyncedHistory,
+  ])
+
+  useEffect(() => {
+    if (!online || !syncedHistory.length || !offlineHistory.length) return
+    const availableFolders = new Set([
+      ...(conversationFolders.data?.folders ?? []).map(
+        (folder) => folder.folderId,
+      ),
+      ...(sharedFolders.data?.folders ?? []).map(
+        (entry) => entry.folder.folderId,
+      ),
+    ])
+    const restorations = syncedHistory.flatMap((item) => {
+      const cached = offlineHistory.find(
+        (entry) => entry.sessionId === item.sessionId,
+      )
+      return (item.folderId === null || item.folderId === 'fol_default') &&
+        cached?.folderId &&
+        cached.folderId !== 'fol_default' &&
+        availableFolders.has(cached.folderId) &&
+        !restoredFolderSessions.current.has(item.sessionId)
+        ? [{ sessionId: item.sessionId, folderId: cached.folderId }]
+        : []
+    })
+    if (!restorations.length) return
+    restorations.forEach(({ sessionId: restoringSessionId }) =>
+      restoredFolderSessions.current.add(restoringSessionId),
+    )
+    void Promise.all(
+      restorations.map(({ sessionId: restoringSessionId, folderId }) =>
+        fetch(
+          `${apiBaseUrl}/v1/sessions/${encodeURIComponent(restoringSessionId)}/conversation`,
+          {
+            method: 'PATCH',
+            headers: scopeHeaders,
+            body: JSON.stringify({ folderId }),
+          },
+        ).then((response) => {
+          if (!response.ok) throw new Error('FOLDER_RESTORE_FAILED')
+        }),
+      ),
+    )
+      .then(() => recentSessions.refetch())
+      .catch(() => {
+        restorations.forEach(({ sessionId: restoringSessionId }) =>
+          restoredFolderSessions.current.delete(restoringSessionId),
+        )
+      })
+  }, [
+    conversationFolders.data?.folders,
+    offlineHistory,
+    online,
+    recentSessions,
     sharedFolders.data?.folders,
     syncedHistory,
   ])
@@ -4940,18 +5026,20 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   else setSelectedFolderId(folderId)
                 }}
               >
-                <option value="">{t('No folder', 'Folder yok')}</option>
-                {(conversationFolders.data?.folders ?? []).map((folder) => (
-                  <option
-                    key={folder.folderId}
-                    value={folder.folderId}
-                    disabled={Boolean(folder.archivedAt)}
-                  >
-                    {folder.archivedAt
-                      ? `[${t('Archived', 'Arşiv')}] ${folder.name}`
-                      : folder.name}
-                  </option>
-                ))}
+                <option value={DEFAULT_CONVERSATION_FOLDER_ID}>Default</option>
+                {(conversationFolders.data?.folders ?? []).map((folder) =>
+                  folder.folderId === DEFAULT_CONVERSATION_FOLDER_ID ? null : (
+                    <option
+                      key={folder.folderId}
+                      value={folder.folderId}
+                      disabled={Boolean(folder.archivedAt)}
+                    >
+                      {folder.archivedAt
+                        ? `[${t('Archived', 'Arşiv')}] ${folder.name}`
+                        : folder.name}
+                    </option>
+                  ),
+                )}
                 {(sharedFolders.data?.folders ?? []).map((entry) => (
                   <option
                     key={entry.folder.folderId}
@@ -5026,7 +5114,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                           <strong>
                             {item.role === 'assistant'
                               ? 'Codex'
-                              : t('You', 'Sen')}
+                              : t('YOU', 'SEN')}
                           </strong>
                           <MessageCopyButton
                             text={item.text}

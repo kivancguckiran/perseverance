@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import websocket from '@fastify/websocket'
 import Fastify from 'fastify'
 import { z, ZodError } from 'zod'
@@ -12,12 +13,16 @@ import {
   conversationFolderListResponseSchema,
   conversationFolderSchema,
   createConversationFolderRequestSchema,
+  createSessionRequestSchema,
   createSharedFolderRequestSchema,
   folderListResponseSchema,
   folderMembershipSchema,
   sessionResponseSchema,
+  sessionListResponseSchema,
   sharedFolderSchema,
   subscribeMessageSchema,
+  updateConversationRequestSchema,
+  updateSessionArchiveRequestSchema,
   type AuthPrincipal,
   type SessionResponse,
 } from '@perseverance/control-plane-contracts'
@@ -108,6 +113,33 @@ export interface ProductionControlPlaneOptions {
   managedCloud?: ReturnType<typeof createManagedCloudProductionComposition>
   selfHostedAuth?: SelfHostedAuthService
   sharedFolders?: SharedFolderRepository
+  internalRuntimeToken?: string
+}
+
+export const DEFAULT_CONVERSATION_FOLDER_ID = 'fol_default'
+const DEFAULT_CONVERSATION_FOLDER_NAME = 'Default'
+
+function encodeSessionCursor(value: { updatedAt: string; sessionId: string }) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url')
+}
+
+function decodeSessionCursor(value: string | undefined) {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(value, 'base64url').toString('utf8'),
+    ) as Record<string, unknown>
+    if (
+      typeof parsed.updatedAt !== 'string' ||
+      !Number.isFinite(Date.parse(parsed.updatedAt)) ||
+      typeof parsed.sessionId !== 'string' ||
+      !parsed.sessionId
+    )
+      return null
+    return { updatedAt: parsed.updatedAt, sessionId: parsed.sessionId }
+  } catch {
+    return null
+  }
 }
 
 function header(value: string | string[] | undefined) {
@@ -275,12 +307,12 @@ export function productionSessionResponse(
     tenantId: stored.tenantId,
     workspaceId: stored.workspaceId,
     sessionId: stored.sessionId,
-    folderId: null,
-    title: 'Yeni konuşma',
+    folderId: stored.folderId,
+    title: stored.title,
     provider,
-    requestedPolicy: { alias: 'sol', reasoningEffort: 'medium' },
-    resolvedModel: null,
-    reasoningEffort: 'medium',
+    requestedPolicy: stored.requestedPolicy,
+    resolvedModel: stored.resolvedModel,
+    reasoningEffort: stored.reasoningEffort,
     capabilitySnapshot: null,
     codexThreadId: stored.codexThreadId,
     status: archived ? 'failed' : stored.status,
@@ -688,7 +720,18 @@ export async function buildProductionControlPlane(
       if (!identity) return reply.code(400).send({ code: 'MISSING_SCOPE' })
       const folders = await options.sharedFolders!.listFolders(identity)
       return conversationFolderListResponseSchema.parse({
-        folders: folders.map((entry) => legacyFolder(entry.folder)),
+        folders: [
+          conversationFolderSchema.parse({
+            tenantId: identity.tenantId,
+            workspaceId: identity.workspaceId,
+            folderId: DEFAULT_CONVERSATION_FOLDER_ID,
+            name: DEFAULT_CONVERSATION_FOLDER_NAME,
+            createdAt: '1970-01-01T00:00:00.000Z',
+            updatedAt: '1970-01-01T00:00:00.000Z',
+            archivedAt: null,
+          }),
+          ...folders.map((entry) => legacyFolder(entry.folder)),
+        ],
       })
     })
 
@@ -735,6 +778,28 @@ export async function buildProductionControlPlane(
         .header('x-artifact-id', artifact.artifactId)
         .type('application/octet-stream')
         .send(Buffer.from(bytes))
+    },
+  )
+
+  app.get<{ Querystring: { path?: string } }>(
+    '/v1/workspace-files',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      if (!options.internalRuntimeToken)
+        return reply.code(503).send({ code: 'WORKSPACE_FILES_UNAVAILABLE' })
+      const endpoint = new URL(
+        '/internal/v1/workspace-files',
+        options.runtimeControlReadinessUrl,
+      )
+      endpoint.searchParams.set('path', request.query.path ?? '')
+      const response = await fetch(endpoint, {
+        headers: { authorization: `Bearer ${options.internalRuntimeToken}` },
+      })
+      const body = await response.json().catch(() => ({
+        code: 'WORKSPACE_FILE_SERVICE_ERROR',
+      }))
+      return reply.code(response.status).send(body)
     },
   )
 
@@ -832,14 +897,88 @@ export async function buildProductionControlPlane(
   app.post('/v1/sessions', async (request, reply) => {
     const requestScope = scope(request.headers)
     if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+    const body = createSessionRequestSchema.safeParse(request.body ?? {})
+    if (!body.success) return reply.code(400).send({ code: 'VALIDATION_ERROR' })
     const unavailable = await requireReady()
     if (unavailable)
       return reply.code(503).send({
         code: 'PRODUCTION_DEPENDENCY_UNAVAILABLE',
         readiness: unavailable,
       })
-    const created = await options.repository.createSession(requestScope)
+    const folderId = body.data.folderId ?? DEFAULT_CONVERSATION_FOLDER_ID
+    if (folderId !== DEFAULT_CONVERSATION_FOLDER_ID) {
+      const identity =
+        options.sharedFolders && requestPrincipals.get(request as object)
+          ? {
+              ...requestScope,
+              principalId: opaquePrincipalId(
+                requestPrincipals.get(request as object)!,
+              ),
+            }
+          : null
+      if (!identity)
+        return reply.code(403).send({ code: 'FOLDER_ACCESS_DENIED' })
+      try {
+        await options.sharedFolders!.getFolder(identity, folderId, 'mutate')
+      } catch {
+        return reply.code(404).send({ code: 'FOLDER_NOT_FOUND' })
+      }
+    }
+    const requestedPolicy = body.data.model ?? {
+      alias: 'sol' as const,
+      reasoningEffort: 'medium' as const,
+    }
+    const created = await options.repository.createSession({
+      ...requestScope,
+      folderId,
+      title: body.data.title ?? 'Yeni konuşma',
+      providerId: body.data.provider,
+      requestedPolicy,
+      resolvedModel:
+        'modelId' in requestedPolicy ? requestedPolicy.modelId : null,
+      reasoningEffort: requestedPolicy.reasoningEffort,
+    })
     return reply.code(201).send(productionSessionResponse(created))
+  })
+
+  app.get<{
+    Querystring: { cursor?: string; limit?: string; archived?: string }
+  }>('/v1/sessions', async (request, reply) => {
+    const requestScope = scope(request.headers)
+    if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+    const limit = request.query.limit ? Number(request.query.limit) : 20
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      return reply.code(400).send({ code: 'INVALID_LIMIT' })
+    if (
+      request.query.archived !== undefined &&
+      request.query.archived !== 'true' &&
+      request.query.archived !== 'false'
+    )
+      return reply.code(400).send({ code: 'INVALID_ARCHIVED_FILTER' })
+    const cursor = decodeSessionCursor(request.query.cursor)
+    if (cursor === null) return reply.code(400).send({ code: 'INVALID_CURSOR' })
+    const page = await options.repository.listSessions(requestScope, {
+      limit,
+      archived: request.query.archived === 'true',
+      ...(cursor ? { cursor } : {}),
+    })
+    const sessions = page.sessions.map((stored) => ({
+      ...productionSessionResponse(stored),
+      lastSequence: stored.highWaterSequence,
+      createdAt: stored.createdAt,
+      updatedAt: stored.updatedAt,
+    }))
+    const last = sessions.at(-1)
+    return sessionListResponseSchema.parse({
+      sessions,
+      nextCursor:
+        page.hasMore && last
+          ? encodeSessionCursor({
+              updatedAt: last.updatedAt,
+              sessionId: last.sessionId,
+            })
+          : null,
+    })
   })
 
   app.get<{ Params: { sessionId: string } }>(
@@ -853,6 +992,63 @@ export async function buildProductionControlPlane(
       )
       if (!stored) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
       return productionSessionResponse(stored)
+    },
+  )
+
+  app.patch<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/conversation',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      const body = updateConversationRequestSchema.safeParse(request.body ?? {})
+      if (!requestScope || !body.success)
+        return reply.code(400).send({ code: 'VALIDATION_ERROR' })
+      const folderId =
+        body.data.folderId === null
+          ? DEFAULT_CONVERSATION_FOLDER_ID
+          : body.data.folderId
+      if (folderId && folderId !== DEFAULT_CONVERSATION_FOLDER_ID) {
+        const principal = requestPrincipals.get(request as object)
+        if (!options.sharedFolders || !principal)
+          return reply.code(403).send({ code: 'FOLDER_ACCESS_DENIED' })
+        try {
+          await options.sharedFolders.getFolder(
+            { ...requestScope, principalId: opaquePrincipalId(principal) },
+            folderId,
+            'mutate',
+          )
+        } catch {
+          return reply.code(404).send({ code: 'FOLDER_NOT_FOUND' })
+        }
+      }
+      const updated = await options.repository.updateConversation(
+        requestScope,
+        request.params.sessionId,
+        {
+          ...(folderId !== undefined ? { folderId } : {}),
+          ...(body.data.title !== undefined ? { title: body.data.title } : {}),
+        },
+      )
+      if (!updated) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      return productionSessionResponse(updated)
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/archive',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      const body = updateSessionArchiveRequestSchema.safeParse(
+        request.body ?? {},
+      )
+      if (!requestScope || !body.success)
+        return reply.code(400).send({ code: 'VALIDATION_ERROR' })
+      const updated = await options.repository.setSessionArchived(
+        requestScope,
+        request.params.sessionId,
+        body.data.archived,
+      )
+      if (!updated) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      return productionSessionResponse(updated)
     },
   )
 
@@ -1542,6 +1738,14 @@ export async function buildProductionControlPlaneFromEnv(
       : {}),
     ...(selfHostedAuth ? { selfHostedAuth: selfHostedAuth.service } : {}),
     sharedFolders,
+    ...(env.INTERNAL_RUNTIME_TOKEN_FILE
+      ? {
+          internalRuntimeToken: readFileSync(
+            env.INTERNAL_RUNTIME_TOKEN_FILE,
+            'utf8',
+          ).trim(),
+        }
+      : {}),
   })
   app.addHook('onClose', async () => sharedFolders.close())
   if (selfHostedAuth) app.addHook('onClose', async () => selfHostedAuth.close())
