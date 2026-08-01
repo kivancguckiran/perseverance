@@ -3417,6 +3417,64 @@ button:disabled {
   background: var(--color-neutral-200);
 }
 
+.chat-message-content {
+  position: relative;
+}
+
+.message-copy-button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border: 1px solid var(--color-neutral-300);
+  border-radius: 4px;
+  place-items: center;
+  color: var(--color-neutral-700);
+  background: var(--color-bg);
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.chat-message:hover .message-copy-button,
+.message-copy-button:focus-visible {
+  opacity: 1;
+}
+
+.message-copy-button:hover,
+.message-copy-button:focus-visible,
+.message-copy-button.is-copied {
+  border-color: var(--color-text);
+  color: var(--color-text);
+}
+
+.message-copy-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+  stroke-width: 1.6;
+}
+
+.chat-message.is-user .message-copy-button {
+  top: 8px;
+  right: 8px;
+  background: var(--color-neutral-200);
+}
+
+@media (hover: none) {
+  .message-copy-button {
+    opacity: 0.65;
+  }
+}
+
 .chat-message.is-user > div > strong {
   color: var(--color-neutral-700);
 }

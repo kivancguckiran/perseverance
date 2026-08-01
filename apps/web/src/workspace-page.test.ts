@@ -23,6 +23,7 @@ import {
   providerPickerSelection,
   providerAuthMessage,
   formatUsageCost,
+  MessageCopyButton,
   parseOfflineConversation,
   parseOfflineHistory,
   parseStoredProviderSelection,
@@ -463,6 +464,26 @@ describe('bounded browser timeline state', () => {
 })
 
 describe('Codex-style timeline presentation', () => {
+  it('renders an accessible copy action for both message authors', () => {
+    const assistant = renderToStaticMarkup(
+      createElement(MessageCopyButton, {
+        text: 'Codex response',
+        author: 'assistant',
+      }),
+    )
+    const user = renderToStaticMarkup(
+      createElement(MessageCopyButton, {
+        text: 'User prompt',
+        author: 'user',
+      }),
+    )
+
+    expect(assistant).toContain('aria-label="Copy Codex message"')
+    expect(user).toContain('aria-label="Copy your message"')
+    expect(assistant).toContain('message-copy-button')
+    expect(assistant).toContain('<svg')
+  })
+
   it('gives known upstream notifications a human-readable operation name', () => {
     const event = parseTimelineEvent({
       ...base,

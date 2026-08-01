@@ -85,6 +85,51 @@ import {
 } from './tenant-cache'
 import { LanguageSwitcher, localize, useTranslations } from './i18n'
 
+export function MessageCopyButton({
+  text,
+  author,
+}: {
+  text: string
+  author: 'assistant' | 'user'
+}) {
+  const t = useTranslations()
+  const [copied, setCopied] = useState(false)
+  const authorLabel = author === 'assistant' ? 'Codex' : t('your', 'kendi')
+  const label = copied
+    ? t('Copied', 'Kopyalandı')
+    : t(`Copy ${authorLabel} message`, `${authorLabel} mesajını kopyala`)
+
+  return (
+    <button
+      type="button"
+      className={`message-copy-button${copied ? ' is-copied' : ''}`}
+      aria-label={label}
+      title={label}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text)
+          setCopied(true)
+        } catch {
+          setCopied(false)
+        }
+      }}
+      onBlur={() => setCopied(false)}
+      onPointerLeave={() => setCopied(false)}
+    >
+      {copied ? (
+        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path d="m4.5 10.5 3.25 3.25L15.5 6" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <rect x="6.5" y="6.5" width="9" height="9" rx="1" />
+          <path d="M13.5 6.5v-2h-9v9h2" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 interface PlatformMeta {
   service: string
   phase: string
@@ -4874,12 +4919,16 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                         <span className="chat-avatar" aria-hidden="true">
                           {item.role === 'assistant' ? 'C' : 'S'}
                         </span>
-                        <div>
+                        <div className="chat-message-content">
                           <strong>
                             {item.role === 'assistant'
                               ? 'Codex'
                               : t('You', 'Sen')}
                           </strong>
+                          <MessageCopyButton
+                            text={item.text}
+                            author={item.role}
+                          />
                           <Suspense fallback={<p>{item.text}</p>}>
                             {item.text ? (
                               <MessageMarkdown>{item.text}</MessageMarkdown>
