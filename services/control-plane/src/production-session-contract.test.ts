@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { sessionResponseSchema } from '@perseverance/control-plane-contracts'
-import { productionSessionResponse } from './production-server'
+import {
+  productionRealtimeSubscription,
+  productionSessionResponse,
+} from './production-server'
 import type { ProductionSession } from '@perseverance/production-topology/production-postgres'
 
 const storedSession = (
@@ -47,5 +50,41 @@ describe('production session API contract', () => {
       'start_new_session',
       'view_read_only',
     ])
+  })
+
+  it('accepts the shared realtime subscribe contract without an organization field', () => {
+    expect(
+      productionRealtimeSubscription({
+        type: 'subscribe',
+        accessToken: 'access-token',
+        tenantId: 'tenant-a',
+        workspaceId: 'workspace-a',
+        sessionId: 'session-a',
+        afterSequence: 4,
+      }),
+    ).toEqual({
+      accessToken: 'access-token',
+      sessionId: 'session-a',
+      afterSequence: 4,
+      scope: {
+        tenantId: 'tenant-a',
+        organizationId: 'tenant-a',
+        workspaceId: 'workspace-a',
+      },
+    })
+  })
+
+  it('preserves an explicit organization scope when supplied', () => {
+    expect(
+      productionRealtimeSubscription({
+        type: 'subscribe',
+        accessToken: 'access-token',
+        tenantId: 'tenant-a',
+        organizationId: 'organization-a',
+        workspaceId: 'workspace-a',
+        sessionId: 'session-a',
+        afterSequence: 0,
+      })?.scope.organizationId,
+    ).toBe('organization-a')
   })
 })

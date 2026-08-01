@@ -17,6 +17,7 @@ import {
   folderMembershipSchema,
   sessionResponseSchema,
   sharedFolderSchema,
+  subscribeMessageSchema,
   type AuthPrincipal,
   type SessionResponse,
 } from '@perseverance/control-plane-contracts'
@@ -112,6 +113,29 @@ function scope(headers: Record<string, string | string[] | undefined>) {
   const workspaceId = header(headers['x-workspace-id'])
   if (!tenantId || !organizationId || !workspaceId) return null
   return { tenantId, organizationId, workspaceId } satisfies ProductionScope
+}
+
+export function productionRealtimeSubscription(input: unknown) {
+  const parsed = subscribeMessageSchema.safeParse(input)
+  if (!parsed.success || !parsed.data.accessToken) return null
+  const organizationId =
+    typeof input === 'object' &&
+    input !== null &&
+    'organizationId' in input &&
+    typeof input.organizationId === 'string' &&
+    input.organizationId.length > 0
+      ? input.organizationId
+      : parsed.data.tenantId
+  return {
+    accessToken: parsed.data.accessToken,
+    sessionId: parsed.data.sessionId,
+    afterSequence: parsed.data.afterSequence,
+    scope: {
+      tenantId: parsed.data.tenantId,
+      organizationId,
+      workspaceId: parsed.data.workspaceId,
+    } satisfies ProductionScope,
+  }
 }
 
 function opaquePrincipalId(principal: AuthPrincipal) {
@@ -1155,34 +1179,15 @@ export async function buildProductionControlPlane(
     }
     socket.once('message', (raw: unknown) => {
       void (async () => {
-        const message = JSON.parse(String(raw)) as {
-          type?: unknown
-          accessToken?: unknown
-          tenantId?: unknown
-          organizationId?: unknown
-          workspaceId?: unknown
-          sessionId?: unknown
-          afterSequence?: unknown
-        }
-        if (
-          message.type !== 'subscribe' ||
-          typeof message.accessToken !== 'string' ||
-          typeof message.tenantId !== 'string' ||
-          typeof message.organizationId !== 'string' ||
-          typeof message.workspaceId !== 'string' ||
-          typeof message.sessionId !== 'string' ||
-          !options.authentication
+        const subscription = productionRealtimeSubscription(
+          JSON.parse(String(raw)),
         )
-          return socket.close(4400)
+        if (!subscription || !options.authentication) return socket.close(4400)
         const principal = await options.authentication.authenticate({
-          authorization: `Bearer ${message.accessToken}`,
+          authorization: `Bearer ${subscription.accessToken}`,
           headers: request.headers,
         })
-        const requestScope = {
-          tenantId: message.tenantId,
-          organizationId: message.organizationId,
-          workspaceId: message.workspaceId,
-        }
+        const requestScope = subscription.scope
         const membership = await options.repository.pool.query(
           `SELECT 1 FROM persistent_codex.organization_memberships m
            WHERE m.issuer=$1 AND m.subject=$2 AND m.organization_id=$3
@@ -1192,13 +1197,13 @@ export async function buildProductionControlPlane(
         if (!membership.rowCount) return socket.close(4403)
         const storedSession = await options.repository.getSession(
           requestScope,
-          message.sessionId,
+          subscription.sessionId,
         )
         if (!storedSession) return socket.close(4404)
         await pump(
           requestScope,
-          message.sessionId,
-          Number(message.afterSequence) || 0,
+          subscription.sessionId,
+          subscription.afterSequence,
         )
       })().catch(() => socket.close(4401))
     })
