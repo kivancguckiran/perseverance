@@ -11,7 +11,7 @@ describe('workspace markdown links', () => {
     )
     expect(
       workspaceMarkdownHref('/scoped-workspace/index.md', 'ses_1'),
-    ).toContain('/files/index.md?sessionId=ses_1')
+    ).toContain('/sessions/ses_1/files/index.md')
   })
 
   it('leaves external links external and rejects traversal', () => {

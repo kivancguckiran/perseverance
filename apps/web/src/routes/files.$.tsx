@@ -19,10 +19,13 @@ export function copyWorkspaceFileContent(
   return clipboard.writeText(content)
 }
 
-function FilePage() {
-  const params = Route.useParams()
-  const search = Route.useSearch()
-  const path = params._splat ?? ''
+export function WorkspaceFilePage({
+  path,
+  sessionId,
+}: {
+  path: string
+  sessionId?: string | undefined
+}) {
   const t = useTranslations()
   const [entry, setEntry] = useState<WorkspaceEntry>()
   const [error, setError] = useState<string>()
@@ -34,7 +37,7 @@ function FilePage() {
     setError(undefined)
     setCopied(false)
     void fetch(
-      `${apiBaseUrl}/v1/workspace-files?path=${encodeURIComponent(path)}&sessionId=${encodeURIComponent(search.sessionId ?? '')}`,
+      `${apiBaseUrl}/v1/workspace-files?path=${encodeURIComponent(path)}&sessionId=${encodeURIComponent(sessionId ?? '')}`,
       { headers: scopeHeaders, signal: controller.signal },
     )
       .then(async (response) => {
@@ -48,16 +51,17 @@ function FilePage() {
           setError(cause instanceof Error ? cause.message : String(cause))
       })
     return () => controller.abort()
-  }, [path, search.sessionId, t])
+  }, [path, sessionId, t])
 
   return (
     <main className="workspace-file-page">
       <header>
-        {search.sessionId ? (
+        {sessionId ? (
           <Link
             className="workspace-file-back"
             to="/sessions/$sessionId"
-            params={{ sessionId: search.sessionId }}
+            params={{ sessionId }}
+            replace
             aria-label={t('Back to conversation', 'Konuşmaya dön')}
             title={t('Back to conversation', 'Konuşmaya dön')}
           >
@@ -117,7 +121,7 @@ function FilePage() {
       {!entry && !error ? <p>{t('Loading…', 'Yükleniyor…')}</p> : null}
       {entry?.kind === 'file' ? (
         path.toLowerCase().endsWith('.md') ? (
-          <MessageMarkdown sessionId={search.sessionId}>
+          <MessageMarkdown sessionId={sessionId}>
             {entry.content}
           </MessageMarkdown>
         ) : (
@@ -130,20 +134,41 @@ function FilePage() {
             const childPath = [path, item.name].filter(Boolean).join('/')
             return (
               <li key={item.name}>
-                <Link
-                  to="/files/$"
-                  params={{ _splat: childPath }}
-                  search={{ sessionId: search.sessionId }}
-                >
-                  {item.directory ? '▸ ' : ''}
-                  {item.name}
-                </Link>
+                {sessionId ? (
+                  <Link
+                    to="/sessions/$sessionId/files/$"
+                    params={{ sessionId, _splat: childPath }}
+                  >
+                    {item.directory ? '▸ ' : ''}
+                    {item.name}
+                  </Link>
+                ) : (
+                  <Link
+                    to="/files/$"
+                    params={{ _splat: childPath }}
+                    search={{ sessionId: undefined }}
+                  >
+                    {item.directory ? '▸ ' : ''}
+                    {item.name}
+                  </Link>
+                )}
               </li>
             )
           })}
         </ul>
       ) : null}
     </main>
+  )
+}
+
+function FilePage() {
+  const params = Route.useParams()
+  const search = Route.useSearch()
+  return (
+    <WorkspaceFilePage
+      path={params._splat ?? ''}
+      sessionId={search.sessionId}
+    />
   )
 }
 

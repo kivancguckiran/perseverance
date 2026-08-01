@@ -15,6 +15,7 @@ import { Route as EnterpriseRouteImport } from './routes/enterprise'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 import { Route as FilesSplatRouteImport } from './routes/files.$'
+import { Route as SessionsSessionIdFilesSplatRouteImport } from './routes/sessions.$sessionId.files.$'
 
 const ManagedCloudRoute = ManagedCloudRouteImport.update({
   id: '/managed-cloud',
@@ -46,6 +47,12 @@ const FilesSplatRoute = FilesSplatRouteImport.update({
   path: '/files/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SessionsSessionIdFilesSplatRoute =
+  SessionsSessionIdFilesSplatRouteImport.update({
+    id: '/files/$',
+    path: '/files/$',
+    getParentRoute: () => SessionsSessionIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -53,7 +60,8 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/managed-cloud': typeof ManagedCloudRoute
   '/files/$': typeof FilesSplatRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/sessions/$sessionId': typeof SessionsSessionIdRouteWithChildren
+  '/sessions/$sessionId/files/$': typeof SessionsSessionIdFilesSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -61,7 +69,8 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/managed-cloud': typeof ManagedCloudRoute
   '/files/$': typeof FilesSplatRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/sessions/$sessionId': typeof SessionsSessionIdRouteWithChildren
+  '/sessions/$sessionId/files/$': typeof SessionsSessionIdFilesSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -70,7 +79,8 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/managed-cloud': typeof ManagedCloudRoute
   '/files/$': typeof FilesSplatRoute
-  '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/sessions/$sessionId': typeof SessionsSessionIdRouteWithChildren
+  '/sessions/$sessionId/files/$': typeof SessionsSessionIdFilesSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -81,6 +91,7 @@ export interface FileRouteTypes {
     | '/managed-cloud'
     | '/files/$'
     | '/sessions/$sessionId'
+    | '/sessions/$sessionId/files/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -89,6 +100,7 @@ export interface FileRouteTypes {
     | '/managed-cloud'
     | '/files/$'
     | '/sessions/$sessionId'
+    | '/sessions/$sessionId/files/$'
   id:
     | '__root__'
     | '/'
@@ -97,6 +109,7 @@ export interface FileRouteTypes {
     | '/managed-cloud'
     | '/files/$'
     | '/sessions/$sessionId'
+    | '/sessions/$sessionId/files/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -105,7 +118,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ManagedCloudRoute: typeof ManagedCloudRoute
   FilesSplatRoute: typeof FilesSplatRoute
-  SessionsSessionIdRoute: typeof SessionsSessionIdRoute
+  SessionsSessionIdRoute: typeof SessionsSessionIdRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -152,8 +165,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof FilesSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sessions/$sessionId/files/$': {
+      id: '/sessions/$sessionId/files/$'
+      path: '/files/$'
+      fullPath: '/sessions/$sessionId/files/$'
+      preLoaderRoute: typeof SessionsSessionIdFilesSplatRouteImport
+      parentRoute: typeof SessionsSessionIdRoute
+    }
   }
 }
+
+interface SessionsSessionIdRouteChildren {
+  SessionsSessionIdFilesSplatRoute: typeof SessionsSessionIdFilesSplatRoute
+}
+
+const SessionsSessionIdRouteChildren: SessionsSessionIdRouteChildren = {
+  SessionsSessionIdFilesSplatRoute: SessionsSessionIdFilesSplatRoute,
+}
+
+const SessionsSessionIdRouteWithChildren =
+  SessionsSessionIdRoute._addFileChildren(SessionsSessionIdRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -161,7 +192,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ManagedCloudRoute: ManagedCloudRoute,
   FilesSplatRoute: FilesSplatRoute,
-  SessionsSessionIdRoute: SessionsSessionIdRoute,
+  SessionsSessionIdRoute: SessionsSessionIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

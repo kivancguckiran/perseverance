@@ -33,10 +33,11 @@ export function workspaceMarkdownHref(
   const workspacePath = workspaceMarkdownPath(href)
   if (!workspacePath) return null
   const encodedPath = workspacePath.split('/').map(encodeURIComponent).join('/')
-  const target = withBase(`/files/${encodedPath}`)
   return sessionId
-    ? `${target}?sessionId=${encodeURIComponent(sessionId)}`
-    : target
+    ? withBase(
+        `/sessions/${encodeURIComponent(sessionId)}/files/${encodedPath}`,
+      )
+    : withBase(`/files/${encodedPath}`)
 }
 
 function markdownComponents(sessionId?: string): Components {
@@ -44,14 +45,24 @@ function markdownComponents(sessionId?: string): Components {
     a: ({ node: _node, href, children, title }) => {
       const workspacePath = workspaceMarkdownPath(href)
       return workspacePath ? (
-        <Link
-          to="/files/$"
-          params={{ _splat: workspacePath }}
-          search={{ sessionId }}
-          {...(title ? { title } : {})}
-        >
-          {children}
-        </Link>
+        sessionId ? (
+          <Link
+            to="/sessions/$sessionId/files/$"
+            params={{ sessionId, _splat: workspacePath }}
+            {...(title ? { title } : {})}
+          >
+            {children}
+          </Link>
+        ) : (
+          <Link
+            to="/files/$"
+            params={{ _splat: workspacePath }}
+            search={{ sessionId: undefined }}
+            {...(title ? { title } : {})}
+          >
+            {children}
+          </Link>
+        )
       ) : (
         <a
           href={href}

@@ -81,7 +81,7 @@ describe('session route integration', () => {
   it('returns from a workspace file to the conversation that opened it', async () => {
     const router = getRouter(
       createMemoryHistory({
-        initialEntries: ['/files/notes/result.md?sessionId=ses-file-source'],
+        initialEntries: ['/sessions/ses-file-source/files/notes/result.md'],
       }),
     )
     await router.load()
@@ -91,8 +91,12 @@ describe('session route integration', () => {
     )
 
     expect(markup).toContain('href="/sessions/ses-file-source"')
+    expect(markup).toContain('data-session-id="ses-file-source"')
     expect(markup).toContain('aria-label="Back to conversation"')
     expect(markup).not.toContain('← Back to conversation')
+    expect(router.state.matches.map((match) => match.routeId)).toContain(
+      '/sessions/$sessionId',
+    )
   })
 
   it('copies the complete workspace file content', async () => {
