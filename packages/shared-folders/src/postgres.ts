@@ -414,18 +414,6 @@ export class PostgresSharedFolderRepository implements SharedFolderRepository {
         'folder.deleted',
         'DELETED',
       )
-      await client.query(
-        `UPDATE persistent_codex.folder_memberships
-         SET status='revoked',revoked_at=now(),updated_at=now(),version=version+1
-         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
-           AND folder_id=$4 AND status='active'`,
-        [
-          input.tenantId,
-          input.organizationId,
-          input.workspaceId,
-          input.folderId,
-        ],
-      )
       const result = await client.query(
         `UPDATE persistent_codex.folders
          SET archived_at=now(),updated_at=now(),version=version+1

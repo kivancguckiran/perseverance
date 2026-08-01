@@ -190,14 +190,6 @@ class InMemorySharedFolderCore {
     const now = input.now ?? new Date()
     const changed = this.#bump(input, input.folderId, 'revoked', null, now)
     this.#appendAudit(input, changed, 'folder.deleted', 'success', 'DELETED')
-    const prefix = `${folderKey(input, input.folderId)}:`
-    for (const [key, membership] of this.#memberships.entries()) {
-      if (!key.startsWith(prefix) || membership.status !== 'active') continue
-      membership.status = 'revoked'
-      membership.revokedAt = now.toISOString()
-      membership.updatedAt = now.toISOString()
-      membership.version++
-    }
     const stored = this.#folders.get(folderKey(input, input.folderId))!
     stored.archivedAt = now.toISOString()
     return clone({ ...folder, ...stored })
@@ -206,7 +198,7 @@ class InMemorySharedFolderCore {
   listFolders(identity: FolderIdentity) {
     const prefix = `${scopeKey(identity)}:`
     return [...this.#folders.entries()]
-      .filter(([key]) => key.startsWith(prefix))
+      .filter(([key, folder]) => key.startsWith(prefix) && !folder.archivedAt)
       .flatMap(([, folder]) => {
         const membership = this.#activeMembership(identity, folder.folderId)
         return membership ? [{ folder: clone(folder), membership }] : []

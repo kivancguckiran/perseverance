@@ -50,9 +50,11 @@ folder is intentionally narrower and destructive: `fol_default` cannot be
 deleted, a folder with any non-deleted conversation cannot be deleted, and a
 folder serving an active turn returns a conflict. Once authorized, the private
 listener recursively removes only that canonical physical home; the shared
-folder aggregate is then archived, all active memberships are revoked, and a
-`folder.deleted` audit record is retained. This preserves immutable audit and
-foreign-key history without leaving the deleted folder visible or accessible.
+folder aggregate is then archived and a `folder.deleted` audit record is
+retained. Membership history stays intact so the last-owner invariant is not
+weakened; archived folders are excluded by authorization and listing queries.
+This preserves immutable audit and foreign-key history without leaving the
+deleted folder visible or accessible.
 
 The production worker launches the real Codex app-server inside an outer
 Bubblewrap namespace. It contains only read-only OS/runtime trees, the Codex

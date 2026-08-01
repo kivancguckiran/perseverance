@@ -91,6 +91,7 @@ import {
   parseUserContentEnvelope,
 } from './user-content-crypto'
 import {
+  SharedFolderError,
   type FolderIdentity,
   type SharedFolderRepository,
 } from '@perseverance/shared-folders'
@@ -469,6 +470,16 @@ export async function buildProductionControlPlane(
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError)
       return reply.code(400).send({ code: 'INVALID_REQUEST' })
+    if (error instanceof SharedFolderError) {
+      const status = error.code.includes('NOT_FOUND')
+        ? 404
+        : error.code.includes('DENIED')
+          ? 403
+          : error.code.includes('PROTECTED') || error.code.includes('CONFLICT')
+            ? 409
+            : 400
+      return reply.code(status).send({ code: error.code })
+    }
     if (error instanceof ManagedCloudError) {
       const status =
         error.code === 'AUTH_REQUIRED'

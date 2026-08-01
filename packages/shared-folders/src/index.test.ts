@@ -34,7 +34,7 @@ async function shared(
 }
 
 describe('async shared folder repository contract', () => {
-  it('tombstones a folder and revokes access when its owner deletes it', async () => {
+  it('tombstones a folder without violating last-owner protection', async () => {
     const repository = new InMemorySharedFolderRepository()
     const { created } = await shared(repository)
     await repository.deleteFolder({
