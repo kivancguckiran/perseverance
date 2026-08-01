@@ -13,6 +13,7 @@ import {
   coalesceTimelineEvents,
   ConversationHistory,
   conversationFolderPickerState,
+  conversationFolderDisplayName,
   conversationFeed,
   conversationMessages,
   describeConversationWork,
@@ -217,11 +218,56 @@ describe('bounded browser timeline state', () => {
     ).toEqual({ value: 'fol_session', disabled: false })
     expect(
       conversationFolderPickerState({
+        sessionFolderId: undefined,
+        cachedSessionFolderId: 'fol_cached',
+        selectedFolderId: 'fol_stale',
+        online: true,
+      }),
+    ).toEqual({ value: 'fol_cached', disabled: false })
+    expect(
+      conversationFolderPickerState({
+        sessionFolderId: null,
+        cachedSessionFolderId: 'fol_cached',
+        selectedFolderId: 'fol_stale',
+        online: true,
+      }),
+    ).toEqual({ value: '', disabled: false })
+    expect(
+      conversationFolderPickerState({
         sessionFolderId: null,
         selectedFolderId: null,
         online: false,
       }),
     ).toEqual({ value: '', disabled: true })
+  })
+
+  it('resolves personal, shared, and cached folder names', () => {
+    const folders = [{ folderId: 'fol_personal', name: 'Drafts' }]
+    const sharedFolders = [
+      { folder: { folderId: 'fld_shared', name: 'Editorial' } },
+    ]
+    expect(
+      conversationFolderDisplayName({
+        folderId: 'fol_personal',
+        folders,
+        sharedFolders,
+      }),
+    ).toBe('Drafts')
+    expect(
+      conversationFolderDisplayName({
+        folderId: 'fld_shared',
+        folders,
+        sharedFolders,
+      }),
+    ).toBe('Editorial')
+    expect(
+      conversationFolderDisplayName({
+        folderId: 'fol_cached',
+        folders: [],
+        sharedFolders: [],
+        cachedFolderName: 'Cached folder',
+      }),
+    ).toBe('Cached folder')
   })
 
   it('distinguishes estimated, partial, and reconciled cost labels', () => {
@@ -296,6 +342,9 @@ describe('bounded browser timeline state', () => {
               provider: 'codex',
               resolvedModel: 'model',
               reasoningEffort: 'medium',
+              folderId: 'fol_writing',
+              folderName: 'Writing',
+              archivedAt: null,
               updatedAt: '2026-07-15T00:00:00.000Z',
               secret: 'discard',
             },
@@ -310,7 +359,8 @@ describe('bounded browser timeline state', () => {
         provider: 'codex',
         resolvedModel: 'model',
         reasoningEffort: 'medium',
-        folderId: null,
+        folderId: 'fol_writing',
+        folderName: 'Writing',
         archivedAt: null,
         updatedAt: '2026-07-15T00:00:00.000Z',
       },

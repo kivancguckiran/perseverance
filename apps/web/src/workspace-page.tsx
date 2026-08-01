@@ -399,7 +399,10 @@ type OfflineHistorySession = Pick<
   | 'provider'
   | 'resolvedModel'
   | 'reasoningEffort'
-> & { folderId: null; archivedAt: null; updatedAt: string }
+  | 'folderId'
+  | 'archivedAt'
+  | 'updatedAt'
+> & { folderName: string | null }
 
 export function parseOfflineHistory(
   raw: string | null,
@@ -430,8 +433,12 @@ export function parseOfflineHistory(
               resolvedModel: item.resolvedModel,
               reasoningEffort:
                 item.reasoningEffort as OfflineHistorySession['reasoningEffort'],
-              folderId: null,
-              archivedAt: null,
+              folderId:
+                typeof item.folderId === 'string' ? item.folderId : null,
+              folderName:
+                typeof item.folderName === 'string' ? item.folderName : null,
+              archivedAt:
+                typeof item.archivedAt === 'string' ? item.archivedAt : null,
               updatedAt: item.updatedAt,
             },
           ]
@@ -2793,17 +2800,45 @@ export function providerAuthMessage(
 
 export function conversationFolderPickerState({
   sessionFolderId,
+  cachedSessionFolderId,
   selectedFolderId,
   online,
 }: {
   sessionFolderId: string | null | undefined
+  cachedSessionFolderId?: string | null | undefined
   selectedFolderId: string | null
   online: boolean
 }) {
+  const folderId =
+    sessionFolderId !== undefined
+      ? sessionFolderId
+      : cachedSessionFolderId !== undefined
+        ? cachedSessionFolderId
+        : selectedFolderId
   return {
-    value: sessionFolderId ?? selectedFolderId ?? '',
+    value: folderId ?? '',
     disabled: !online,
   }
+}
+
+export function conversationFolderDisplayName({
+  folderId,
+  folders,
+  sharedFolders,
+  cachedFolderName,
+}: {
+  folderId: string
+  folders: Array<Pick<ConversationFolder, 'folderId' | 'name'>>
+  sharedFolders: Array<{ folder: Pick<SharedFolder, 'folderId' | 'name'> }>
+  cachedFolderName?: string | null
+}) {
+  return (
+    folders.find((folder) => folder.folderId === folderId)?.name ??
+    sharedFolders.find((entry) => entry.folder.folderId === folderId)?.folder
+      .name ??
+    cachedFolderName ??
+    'perseverance'
+  )
 }
 
 export function WorkspacePage({ sessionId }: { sessionId?: string }) {
@@ -3040,6 +3075,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
 
   useEffect(() => {
     if (!syncedHistory.length) return
+    const folderNames = new Map<string, string>([
+      ...(conversationFolders.data?.folders ?? []).map(
+        (folder) => [folder.folderId, folder.name] as const,
+      ),
+      ...(sharedFolders.data?.folders ?? []).map(
+        (entry) => [entry.folder.folderId, entry.folder.name] as const,
+      ),
+    ])
     const minimized: OfflineHistorySession[] = syncedHistory
       .slice(0, 24)
       .map((item) => ({
@@ -3049,8 +3092,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         provider: item.provider,
         resolvedModel: item.resolvedModel,
         reasoningEffort: item.reasoningEffort,
-        folderId: null,
-        archivedAt: null,
+        folderId: item.folderId,
+        folderName: item.folderId
+          ? (folderNames.get(item.folderId) ?? null)
+          : null,
+        archivedAt: item.archivedAt,
         updatedAt: item.updatedAt,
       }))
     setOfflineHistory(minimized)
@@ -3062,7 +3108,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         sessions: minimized,
       }),
     )
-  }, [syncedHistory])
+  }, [
+    cacheNamespace,
+    conversationFolders.data?.folders,
+    sharedFolders.data?.folders,
+    syncedHistory,
+  ])
 
   useEffect(() => {
     if (!sessionId) {
@@ -3501,8 +3552,18 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     providerCatalogs.data?.readiness[selectedProvider]
   const folderPicker = conversationFolderPickerState({
     sessionFolderId: session?.folderId,
+    cachedSessionFolderId: offlineSelected?.folderId,
     selectedFolderId,
     online,
+  })
+  const folderDisplayName = conversationFolderDisplayName({
+    folderId: folderPicker.value,
+    folders: conversationFolders.data?.folders ?? [],
+    sharedFolders: sharedFolders.data?.folders ?? [],
+    cachedFolderName:
+      offlineSelected?.folderId === folderPicker.value
+        ? offlineSelected.folderName
+        : null,
   })
 
   function beginConversationDraft(folderId = selectedFolderId) {
@@ -4557,12 +4618,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   offlineSelected?.title ??
                   t('New conversation', 'Yeni konuşma')}
               </h1>
-              <p className="chat-context">
-                {(conversationFolders.data?.folders ?? []).find(
-                  (folder) => folder.folderId === folderPicker.value,
-                )?.name ?? 'perseverance'}{' '}
-                · main
-              </p>
+              <p className="chat-context">{folderDisplayName} · main</p>
             </div>
             <button
               className={`provider-chip ${turnActive ? 'is-running' : ''}`}
