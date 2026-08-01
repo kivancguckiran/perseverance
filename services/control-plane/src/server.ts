@@ -647,6 +647,12 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       resourceType: 'session',
     },
     {
+      method: 'DELETE',
+      route: '/v1/sessions/:sessionId',
+      action: 'session.update',
+      resourceType: 'session',
+    },
+    {
       method: 'GET',
       route: '/v1/sessions',
       action: 'session.read',
@@ -4571,6 +4577,33 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
         if (error instanceof StoreNotFoundError)
           return reply
             .code(404)
+            .send({ code: error.code, message: error.message })
+        throw error
+      }
+    },
+  )
+
+  app.delete<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId',
+    async (request, reply) => {
+      const scope = requestScope(request.headers, request.params.sessionId)
+      if (!scope)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      try {
+        await enforceSessionFolder(request, scope, 'mutate')
+        await orchestrator.deleteSession(scope)
+        return reply.code(204).send()
+      } catch (error) {
+        if (error instanceof StoreNotFoundError)
+          return reply
+            .code(404)
+            .send({ code: error.code, message: error.message })
+        if (error instanceof StoreConflictError)
+          return reply
+            .code(409)
             .send({ code: error.code, message: error.message })
         throw error
       }

@@ -1052,6 +1052,42 @@ export async function buildProductionControlPlane(
     },
   )
 
+  app.delete<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const stored = await options.repository.getSession(
+        requestScope,
+        request.params.sessionId,
+      )
+      if (!stored) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      if (stored.folderId !== DEFAULT_CONVERSATION_FOLDER_ID) {
+        const principal = requestPrincipals.get(request as object)
+        if (!options.sharedFolders || !principal)
+          return reply.code(403).send({ code: 'FOLDER_ACCESS_DENIED' })
+        try {
+          await options.sharedFolders.getFolder(
+            { ...requestScope, principalId: opaquePrincipalId(principal) },
+            stored.folderId,
+            'mutate',
+          )
+        } catch {
+          return reply.code(404).send({ code: 'FOLDER_NOT_FOUND' })
+        }
+      }
+      const result = await options.repository.deleteSession(
+        requestScope,
+        request.params.sessionId,
+      )
+      if (result === 'not_found')
+        return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      if (result === 'active_run')
+        return reply.code(409).send({ code: 'SESSION_HAS_ACTIVE_RUN' })
+      return reply.code(204).send()
+    },
+  )
+
   app.post<{
     Params: { sessionId: string }
     Body: {

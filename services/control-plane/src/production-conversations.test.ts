@@ -69,6 +69,7 @@ describe('production conversation persistence routes', () => {
         session = stored({ ...session, ...changes })
         return session
       },
+      deleteSession: vi.fn(async () => 'deleted' as const),
     }
     const app = await buildProductionControlPlane({
       instanceId: 'production-conversation-test',
@@ -130,6 +131,70 @@ describe('production conversation persistence routes', () => {
       folderId: DEFAULT_CONVERSATION_FOLDER_ID,
       title: 'Kalıcı başlık',
     })
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/v1/sessions/ses_a',
+      headers,
+      payload: {},
+    })
+    expect(deleted.statusCode, deleted.body).toBe(204)
+    expect(repository.deleteSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'org-a',
+        organizationId: 'org-a',
+        workspaceId: 'workspace-a',
+      }),
+      'ses_a',
+    )
+    await app.close()
+  })
+
+  it('rejects deletion while a production run is active', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 200 })),
+    )
+    const app = await buildProductionControlPlane({
+      instanceId: 'production-delete-conflict-test',
+      repository: {
+        pool: {
+          query: async () => ({ rowCount: 1, rows: [{ role: 'admin' }] }),
+        },
+        listOutbox: async () => [],
+        markOutboxPublished: async () => {},
+        getSession: async () => stored({ sessionId: 'ses_running' }),
+        deleteSession: async () => 'active_run',
+      } as never,
+      objectStore: { ready: async () => true } as never,
+      broker: { ready: async () => true } as never,
+      runtimeControlReadinessUrl: 'http://workspace-agent',
+      kmsReadinessUrl: 'http://kms',
+      requiredRegionId: 'self-hosted-1',
+      billing: {} as never,
+      authentication: {
+        async authenticate() {
+          return {
+            version: 1 as const,
+            kind: 'end_user' as const,
+            issuer: 'https://identity.example.test',
+            subject: 'user-a',
+            audience: ['production-delete-conflict-test'],
+            authenticatedAt: '2026-08-01T00:00:00.000Z',
+            expiresAt: '2030-01-01T00:00:00.000Z',
+            assurance: { level: 'mfa' as const, mfa: true },
+            memberships: [],
+          }
+        },
+      },
+    })
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/v1/sessions/ses_running',
+      headers,
+      payload: {},
+    })
+    expect(response.statusCode).toBe(409)
+    expect(response.json()).toEqual({ code: 'SESSION_HAS_ACTIVE_RUN' })
     await app.close()
   })
 })

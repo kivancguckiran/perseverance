@@ -1548,7 +1548,8 @@ export class SqliteEventStore {
         `UPDATE sessions SET folder_id = ?, title = ?,
            manual_title_at = CASE WHEN ? THEN ? ELSE manual_title_at END,
            updated_at = ?
-         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+           AND deleted_at IS NULL`,
       )
       .run(
         folderId,
@@ -1570,7 +1571,8 @@ export class SqliteEventStore {
     const result = this.#database
       .prepare(
         `UPDATE sessions SET archived_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+           AND deleted_at IS NULL`,
       )
       .run(
         archived ? timestamp : null,
@@ -1581,6 +1583,32 @@ export class SqliteEventStore {
       )
     if (Number(result.changes) !== 1) throw new StoreNotFoundError()
     return this.getSession(scope)
+  }
+
+  deleteSession(scope: StoreScope): void {
+    assertScope(scope)
+    if (this.getActiveDurableRun(scope))
+      throw new StoreConflictError(
+        'SESSION_HAS_ACTIVE_RUN',
+        'A conversation with an active turn cannot be deleted',
+      )
+    const timestamp = this.#timestamp()
+    const result = this.#database
+      .prepare(
+        `UPDATE sessions
+         SET deleted_at = ?, archived_at = COALESCE(archived_at, ?), updated_at = ?
+         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+           AND deleted_at IS NULL`,
+      )
+      .run(
+        timestamp,
+        timestamp,
+        timestamp,
+        scope.tenantId,
+        scope.workspaceId,
+        scope.sessionId,
+      )
+    if (Number(result.changes) !== 1) throw new StoreNotFoundError()
   }
 
   recordDurableUserMessage(
@@ -1882,7 +1910,8 @@ export class SqliteEventStore {
     const row = this.#database
       .prepare(
         `SELECT * FROM sessions
-         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?`,
+         WHERE tenant_id = ? AND workspace_id = ? AND session_id = ?
+           AND deleted_at IS NULL`,
       )
       .get(scope.tenantId, scope.workspaceId, scope.sessionId) as unknown as
       SessionRow | undefined
@@ -2926,7 +2955,9 @@ export class SqliteEventStore {
     assertIdentifier(scope.workspaceId, 'workspaceId')
     const rows = this.#database
       .prepare(
-        `SELECT * FROM sessions WHERE tenant_id = ? AND workspace_id = ? ORDER BY created_at`,
+        `SELECT * FROM sessions
+         WHERE tenant_id = ? AND workspace_id = ? AND deleted_at IS NULL
+         ORDER BY created_at`,
       )
       .all(scope.tenantId, scope.workspaceId) as unknown as SessionRow[]
     return rows.map(sessionFromRow)
@@ -2946,6 +2977,7 @@ export class SqliteEventStore {
       .prepare(
         `SELECT * FROM sessions
          WHERE tenant_id = ? AND workspace_id = ?
+           AND deleted_at IS NULL
            AND archived_at IS ${archived ? 'NOT ' : ''}NULL
            AND (
              EXISTS (

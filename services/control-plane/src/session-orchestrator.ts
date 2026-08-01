@@ -75,6 +75,8 @@ type ThreadReadResponse = codexV2.ThreadReadResponse
 type ThreadResumeResponse = codexV2.ThreadResumeResponse
 type ThreadArchiveParams = codexV2.ThreadArchiveParams
 type ThreadArchiveResponse = codexV2.ThreadArchiveResponse
+type ThreadDeleteParams = codexV2.ThreadDeleteParams
+type ThreadDeleteResponse = codexV2.ThreadDeleteResponse
 type ThreadUnarchiveParams = codexV2.ThreadUnarchiveParams
 type ThreadUnarchiveResponse = codexV2.ThreadUnarchiveResponse
 type TurnSteerParams = codexV2.TurnSteerParams
@@ -895,6 +897,30 @@ export class SessionOrchestrator {
     }
     this.#store.setSessionArchived(scope, archived)
     return this.getSession(scope)
+  }
+
+  async deleteSession(scope: StoreScope): Promise<void> {
+    const session = this.#store.getSession(scope)
+    if (this.#store.getActiveDurableRun(scope))
+      throw new StoreConflictError(
+        'SESSION_HAS_ACTIVE_RUN',
+        'A conversation with an active turn cannot be deleted',
+      )
+    if (session.provider === 'codex' && session.codexThreadId) {
+      const cwd =
+        typeof this.#workspaceCwd === 'function'
+          ? this.#workspaceCwd(scope)
+          : this.#workspaceCwd
+      const runtime = await this.#registry.getOrInitialize({
+        ...scope,
+        cwd,
+        codexHome: this.#codexHome(scope),
+      })
+      await runtime.client.request<ThreadDeleteResponse>('thread/delete', {
+        threadId: session.codexThreadId,
+      } satisfies ThreadDeleteParams)
+    }
+    this.#store.deleteSession(scope)
   }
 
   async captureGitSnapshot(

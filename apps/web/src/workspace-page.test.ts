@@ -1252,6 +1252,7 @@ describe('conversation archiving history surface', () => {
     onSelectConversation: () => {},
     onArchiveConversation: () => {},
     onRestoreConversation: () => {},
+    onDeleteConversation: () => {},
     onSelectFolder: () => {},
     onArchiveFolder: () => {},
     onRestoreFolder: () => {},
@@ -1278,6 +1279,8 @@ describe('conversation archiving history surface', () => {
     expect(markup).toContain('Aktif sohbet')
     expect(markup).toContain('Archive conversation')
     expect(markup).toContain('Archive Aktif sohbet conversation')
+    expect(markup).toContain('Delete conversation')
+    expect(markup).toContain('Delete Aktif sohbet conversation')
     expect(markup).not.toContain('Archived conversations')
   })
 
@@ -1306,5 +1309,6 @@ describe('conversation archiving history surface', () => {
     expect(markup).toContain('Eski sohbet')
     expect(markup).toContain('Daha eski sohbet')
     expect(markup).toContain('Restore')
+    expect(markup).toContain('Delete')
   })
 })

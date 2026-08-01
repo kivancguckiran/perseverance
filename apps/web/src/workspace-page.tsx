@@ -2446,6 +2446,7 @@ export function ConversationHistory({
   onSelectConversation,
   onArchiveConversation,
   onRestoreConversation,
+  onDeleteConversation,
   onSelectFolder,
   onArchiveFolder,
   onRestoreFolder,
@@ -2469,6 +2470,7 @@ export function ConversationHistory({
   onSelectConversation(sessionId: string): void
   onArchiveConversation(session: HistorySession): void
   onRestoreConversation(session: HistorySession): void
+  onDeleteConversation(session: HistorySession): void
   onSelectFolder(folderId: string | null): void
   onArchiveFolder(folder: ConversationFolder): void
   onRestoreFolder(folder: ConversationFolder): void
@@ -2634,21 +2636,40 @@ export function ConversationHistory({
                       <span>{item.title}</span>
                       <small>{item.status}</small>
                     </button>
-                    <button
-                      type="button"
-                      className="history-conversation-action"
-                      disabled={
-                        readOnly || conversationActionPending === item.sessionId
-                      }
-                      aria-label={t(
-                        `Archive ${item.title} conversation`,
-                        `${item.title} sohbetini arşivle`,
-                      )}
-                      title={t('Archive conversation', 'Sohbeti arşivle')}
-                      onClick={() => onArchiveConversation(item)}
-                    >
-                      ↓
-                    </button>
+                    <span className="history-conversation-actions">
+                      <button
+                        type="button"
+                        className="history-conversation-action"
+                        disabled={
+                          readOnly ||
+                          conversationActionPending === item.sessionId
+                        }
+                        aria-label={t(
+                          `Archive ${item.title} conversation`,
+                          `${item.title} sohbetini arşivle`,
+                        )}
+                        title={t('Archive conversation', 'Sohbeti arşivle')}
+                        onClick={() => onArchiveConversation(item)}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        type="button"
+                        className="history-conversation-action danger"
+                        disabled={
+                          readOnly ||
+                          conversationActionPending === item.sessionId
+                        }
+                        aria-label={t(
+                          `Delete ${item.title} conversation`,
+                          `${item.title} sohbetini sil`,
+                        )}
+                        title={t('Delete conversation', 'Sohbeti sil')}
+                        onClick={() => onDeleteConversation(item)}
+                      >
+                        ×
+                      </button>
+                    </span>
                   </div>
                 ))}
                 {groupedSessions.length === 0 ? (
@@ -2723,6 +2744,16 @@ export function ConversationHistory({
                   onClick={() => onRestoreConversation(item)}
                 >
                   {t('Restore', 'Geri al')}
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={
+                    readOnly || conversationActionPending === item.sessionId
+                  }
+                  onClick={() => onDeleteConversation(item)}
+                >
+                  {t('Delete', 'Sil')}
                 </button>
               </div>
             ))}
@@ -3958,6 +3989,44 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
   }
 
+  async function deleteConversation(conversation: HistorySession) {
+    if (
+      !window.confirm(
+        t(
+          `Delete “${conversation.title}”? This conversation will be removed from your workspace.`,
+          `“${conversation.title}” silinsin mi? Bu sohbet workspace'inizden kaldırılacak.`,
+        ),
+      )
+    )
+      return
+    setConversationActionPending(conversation.sessionId)
+    setError(undefined)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/v1/sessions/${encodeURIComponent(conversation.sessionId)}`,
+        { method: 'DELETE', headers: scopeHeaders, body: '{}' },
+      )
+      if (!response.ok) throw await apiError(response)
+      const nextOfflineHistory = offlineHistory.filter(
+        (item) => item.sessionId !== conversation.sessionId,
+      )
+      setOfflineHistory(nextOfflineHistory)
+      window.localStorage.setItem(
+        offlineHistoryKey(cacheNamespace),
+        JSON.stringify(nextOfflineHistory),
+      )
+      window.localStorage.removeItem(
+        offlineConversationKey(cacheNamespace, conversation.sessionId),
+      )
+      if (conversation.sessionId === sessionId) beginConversationDraft()
+      await Promise.all([recentSessions.refetch(), archivedSessions.refetch()])
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setConversationActionPending(undefined)
+    }
+  }
+
   async function deleteFolder(folder: ConversationFolder) {
     if (
       !window.confirm(
@@ -4438,6 +4507,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             }
             onRestoreConversation={(conversation) =>
               void setConversationArchived(conversation, false)
+            }
+            onDeleteConversation={(conversation) =>
+              void deleteConversation(conversation)
             }
             onArchiveFolder={(folder) => void setFolderArchived(folder, true)}
             onRestoreFolder={(folder) => void setFolderArchived(folder, false)}

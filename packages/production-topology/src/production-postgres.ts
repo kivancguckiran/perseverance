@@ -326,7 +326,8 @@ export class ProductionPostgresRepository {
     return this.#tx(scope, async (client) => {
       const result = await client.query(
         `SELECT * FROM persistent_codex.ha_sessions
-         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4`,
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND deleted_at IS NULL`,
         [scope.tenantId, scope.organizationId, scope.workspaceId, sessionId],
       )
       return result.rowCount ? session(result.rows[0] as Row) : null
@@ -357,6 +358,7 @@ export class ProductionPostgresRepository {
       const result = await client.query(
         `SELECT * FROM persistent_codex.ha_sessions
          WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND deleted_at IS NULL
            AND (($4::boolean AND status='archived') OR
                 (NOT $4::boolean AND status<>'archived')) ${cursorClause}
          ORDER BY updated_at DESC,session_id DESC LIMIT $5`,
@@ -381,6 +383,7 @@ export class ProductionPostgresRepository {
              title_generated_at=CASE WHEN $6 IS NULL THEN title_generated_at ELSE NULL END,
              version=version+1,updated_at=now()
          WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND deleted_at IS NULL
          RETURNING *`,
         [
           scope.tenantId,
@@ -405,6 +408,7 @@ export class ProductionPostgresRepository {
         `UPDATE persistent_codex.ha_sessions
          SET status=$5,version=version+1,updated_at=now()
          WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND deleted_at IS NULL
          RETURNING *`,
         [
           scope.tenantId,
@@ -418,6 +422,37 @@ export class ProductionPostgresRepository {
     })
   }
 
+  async deleteSession(
+    scope: ProductionScope,
+    sessionId: string,
+  ): Promise<'deleted' | 'not_found' | 'active_run'> {
+    return this.#tx(scope, async (client) => {
+      const existing = await client.query(
+        `SELECT 1 FROM persistent_codex.ha_sessions
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND deleted_at IS NULL`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId, sessionId],
+      )
+      if (!existing.rowCount) return 'not_found'
+      const activeRun = await client.query(
+        `SELECT 1 FROM persistent_codex.ha_runs
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND state IN ('queued','awaiting_approval','leased','starting','running')
+         LIMIT 1`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId, sessionId],
+      )
+      if (activeRun.rowCount) return 'active_run'
+      const result = await client.query(
+        `UPDATE persistent_codex.ha_sessions
+         SET deleted_at=now(),status='archived',version=version+1,updated_at=now()
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND deleted_at IS NULL`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId, sessionId],
+      )
+      return result.rowCount ? 'deleted' : 'not_found'
+    })
+  }
+
   async setGeneratedTitle(
     scope: ProductionScope,
     sessionId: string,
@@ -428,6 +463,7 @@ export class ProductionPostgresRepository {
         `UPDATE persistent_codex.ha_sessions
          SET title=$5,title_generated_at=now(),version=version+1,updated_at=now()
          WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3 AND session_id=$4
+           AND deleted_at IS NULL
            AND title='Yeni konuşma' AND title_generated_at IS NULL`,
         [
           scope.tenantId,

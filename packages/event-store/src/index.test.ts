@@ -859,7 +859,7 @@ describe('SqliteEventStore replay and durability', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 14,
+        user_version: 15,
       })
       database.close()
     } finally {
@@ -965,6 +965,34 @@ describe('WP10 sessions and Git snapshot persistence', () => {
           true,
         ).sessions,
       ).toEqual([expect.objectContaining({ sessionId: 'ses_2' })])
+    })
+  })
+
+  it('soft-deletes a conversation from reads and both history lists', () => {
+    withStore((store) => {
+      store.recordDurableUserMessage({
+        ...scope,
+        messageId: 'msg_delete',
+        idempotencyKey: 'turn_delete',
+        content: 'Delete this conversation',
+      })
+      store.deleteSession(scope)
+      expect(() => store.getSession(scope)).toThrow(StoreNotFoundError)
+      expect(
+        store.listRecentSessions(
+          { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
+          10,
+        ).sessions,
+      ).toEqual([])
+      expect(
+        store.listRecentSessions(
+          { tenantId: scope.tenantId, workspaceId: scope.workspaceId },
+          10,
+          undefined,
+          true,
+        ).sessions,
+      ).toEqual([])
+      expect(() => store.deleteSession(scope)).toThrow(StoreNotFoundError)
     })
   })
 
@@ -1171,7 +1199,7 @@ describe('WP11 durable audit', () => {
       expect(reopened.listAudit(scope).records).toHaveLength(1)
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toMatchObject({
-        user_version: 14,
+        user_version: 15,
       })
       database.close()
     } finally {
@@ -1610,7 +1638,7 @@ describe('WP14 durable detached run lifecycle', () => {
       })
       const database = new DatabaseSync(path)
       expect(database.prepare('PRAGMA user_version').get()).toEqual({
-        user_version: 14,
+        user_version: 15,
       })
       database.close()
     } finally {

@@ -466,6 +466,9 @@ select {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
+.history-conversation-actions {
+  display: flex;
+}
 .history-conversation > button:first-child {
   display: grid;
   min-width: 0;
@@ -510,6 +513,10 @@ select {
   color: #d8e8e1;
   background: #1a2c25;
 }
+.history-conversation-action.danger:hover {
+  color: #ffb4ab;
+  background: #3a1f1d;
+}
 .archived-conversations {
   margin-top: 14px;
   padding-top: 12px;
@@ -524,7 +531,7 @@ select {
 .archived-conversation {
   display: grid;
   padding: 4px 7px;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 6px;
 }
 .archived-conversation button {
