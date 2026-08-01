@@ -21,8 +21,18 @@ contents before a Codex turn and its normal approval policy.
 
 The attachment contract accepts any syntactically valid media type. Browsers
 preserve a declared media type and use `application/octet-stream` when none is
-available. The control-plane stores every non-empty file unchanged with the
-existing tenant, workspace, session, name, canonical-path, and symlink checks.
+available. The local control-plane stores every non-empty file unchanged with
+the existing tenant, workspace, session, name, canonical-path, and symlink
+checks.
+
+The production control-plane encrypts attachment bytes and metadata with the
+user content key and writes them to tenant/organization/workspace/session-scoped
+object keys. A turn stores an encrypted versioned input envelope containing the
+prompt and selected attachment manifests. The workspace worker authenticates
+and decrypts that envelope, validates every manifest against the claimed run
+scope, and materializes the bytes below the selected physical conversation
+workspace before starting Codex. The materialized path is stable and visible
+inside the same Bubblewrap mount as the conversation workspace.
 
 PNG, JPEG, WebP, and GIF retain the upstream `localImage` input. Every other
 attachment, including ZIP files and unrecognized image formats, is sent to the
@@ -35,6 +45,9 @@ sandbox; the control-plane does not extract it automatically.
 - The composer accepts any local file that the browser can upload.
 - ZIP and other archives reach Codex without a product-specific allowlist.
 - Existing supported images keep their native image-input behavior.
+- Production attachments remain encrypted at rest and cross the
+  control-plane/workspace boundary through object storage rather than a shared
+  host mount.
 - Archive extraction remains visible in the Codex turn and subject to the
   workspace sandbox and approval policy.
 - Upload storage requirements remain unchanged because files are not expanded.

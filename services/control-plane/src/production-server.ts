@@ -10,14 +10,20 @@ import {
 } from '@perseverance/authz'
 import {
   apiErrorResponseSchema,
+  attachmentMediaTypeSchema,
+  conversationAttachmentSchema,
   conversationFolderListResponseSchema,
   conversationFolderSchema,
   createConversationFolderRequestSchema,
   createSessionRequestSchema,
   createSharedFolderRequestSchema,
+  createTurnRequestSchema,
   folderListResponseSchema,
   folderMembershipSchema,
   interruptTurnRequestSchema,
+  imageAttachmentMediaTypeSchema,
+  productionTurnAttachmentSchema,
+  productionTurnInputEnvelopeSchema,
   sessionResponseSchema,
   sessionListResponseSchema,
   sharedFolderSchema,
@@ -26,6 +32,7 @@ import {
   updateSessionArchiveRequestSchema,
   turnActionResponseSchema,
   type AuthPrincipal,
+  type ProductionTurnAttachment,
   type SessionResponse,
 } from '@perseverance/control-plane-contracts'
 import {
@@ -96,6 +103,10 @@ import {
   type SharedFolderRepository,
 } from '@perseverance/shared-folders'
 import { PostgresSharedFolderRepository } from '@perseverance/shared-folders/postgres'
+import {
+  decodeProductionTurnInput,
+  productionAttachmentObjectKeys,
+} from './production-turn-input'
 
 export interface ProductionControlPlaneOptions {
   instanceId: string
@@ -260,8 +271,9 @@ export function productionCodexNotificationEvent(
 
 export function productionUserMessageEvent(
   stored: ProductionEvent,
-  text: string,
+  input: string,
 ): TimelineEvent {
+  const turnInput = decodeProductionTurnInput(input)
   return timelineEventSchema.parse({
     eventId: `${stored.eventId}_user`,
     schemaVersion: 1,
@@ -283,7 +295,23 @@ export function productionUserMessageEvent(
       envelopeKind: 'notification',
       method: 'item/completed',
       params: {
-        item: { type: 'userMessage', content: [{ type: 'text', text }] },
+        item: {
+          type: 'userMessage',
+          content: [
+            ...(turnInput.prompt
+              ? [{ type: 'text', text: turnInput.prompt }]
+              : []),
+            ...turnInput.attachments.map((attachment) =>
+              attachment.kind === 'image'
+                ? { type: 'localImage', path: attachment.name }
+                : {
+                    type: 'mention',
+                    name: attachment.name,
+                    path: attachment.name,
+                  },
+            ),
+          ],
+        },
       },
     },
   })
@@ -357,6 +385,11 @@ export async function buildProductionControlPlane(
   options: ProductionControlPlaneOptions,
 ) {
   const app = Fastify({ logger: options.logger ?? false })
+  app.addContentTypeParser(
+    'application/octet-stream',
+    { parseAs: 'buffer', bodyLimit: 16 * 1024 * 1024 },
+    (_request, body, done) => done(null, body),
+  )
   await app.register(websocket)
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
@@ -380,12 +413,68 @@ export async function buildProductionControlPlane(
     options.repository.pool,
   )
 
+  const attachmentContentKey = async (requestScope: ProductionScope) => {
+    if (
+      !options.selfHostedAuth ||
+      !(await options.selfHostedAuth.isUserWorkspace(requestScope.workspaceId))
+    )
+      return null
+    const lease = options.selfHostedAuth.leases.acquire(
+      requestScope.workspaceId,
+    )
+    if (!lease) throw new Error('CONTENT_KEY_LOCKED')
+    return lease
+  }
+
+  const readProductionAttachment = async (
+    requestScope: ProductionScope,
+    sessionId: string,
+    attachmentId: string,
+    contentKey?: { contentKey: Buffer; keyVersion: string } | null,
+  ): Promise<ProductionTurnAttachment> => {
+    const keys = productionAttachmentObjectKeys({
+      ...requestScope,
+      sessionId,
+      attachmentId,
+    })
+    const stored = await options.objectStore.get(keys.metadata)
+    const envelope = parseUserContentEnvelope(stored)
+    const key = envelope
+      ? (contentKey ?? (await attachmentContentKey(requestScope)))
+      : null
+    if (envelope && !key) throw new Error('CONTENT_KEY_LOCKED')
+    const bytes = envelope
+      ? await decryptUserContent(
+          key!,
+          {
+            ...requestScope,
+            recordType: 'attachment',
+            recordId: `${attachmentId}:metadata`,
+          },
+          envelope,
+        )
+      : stored
+    const attachment = productionTurnAttachmentSchema.parse(
+      JSON.parse(decoder.decode(bytes)),
+    )
+    if (
+      attachment.tenantId !== requestScope.tenantId ||
+      attachment.organizationId !== requestScope.organizationId ||
+      attachment.workspaceId !== requestScope.workspaceId ||
+      attachment.sessionId !== sessionId ||
+      attachment.attachmentId !== attachmentId ||
+      attachment.dataObjectKey !== keys.data
+    )
+      throw new Error('ATTACHMENT_SCOPE_MISMATCH')
+    return attachment
+  }
+
   app.addHook('onSend', async (_request, reply, payload) => {
     if (options.allowedWebOrigin) {
       reply.header('access-control-allow-origin', options.allowedWebOrigin)
       reply.header(
         'access-control-allow-headers',
-        'authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id',
+        'authorization,content-type,idempotency-key,x-tenant-id,x-organization-id,x-workspace-id,x-principal-id,x-attachment-name,x-attachment-media-type',
       )
       reply.header('access-control-allow-methods', 'GET,POST,OPTIONS')
       reply.header('vary', 'origin')
@@ -1193,10 +1282,154 @@ export async function buildProductionControlPlane(
     },
   )
 
+  app.post<{ Params: { sessionId: string }; Body: Buffer }>(
+    '/v1/sessions/:sessionId/attachments',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const encodedName = header(request.headers['x-attachment-name'])
+      const parsedMediaType = attachmentMediaTypeSchema.safeParse(
+        header(request.headers['x-attachment-media-type']),
+      )
+      if (
+        !encodedName ||
+        !parsedMediaType.success ||
+        !Buffer.isBuffer(request.body) ||
+        request.body.byteLength < 1
+      )
+        return reply.code(400).send({ code: 'INVALID_ATTACHMENT_REQUEST' })
+      const storedSession = await options.repository.getSession(
+        requestScope,
+        request.params.sessionId,
+      )
+      if (!storedSession)
+        return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      let name: string
+      try {
+        name = decodeURIComponent(encodedName)
+      } catch {
+        return reply.code(400).send({ code: 'INVALID_ATTACHMENT_NAME' })
+      }
+      const attachmentId = `att_${randomUUID()}`
+      const keys = productionAttachmentObjectKeys({
+        ...requestScope,
+        sessionId: request.params.sessionId,
+        attachmentId,
+      })
+      try {
+        const contentKey = await attachmentContentKey(requestScope)
+        const attachment = productionTurnAttachmentSchema.parse({
+          ...requestScope,
+          sessionId: request.params.sessionId,
+          attachmentId,
+          name,
+          mediaType: parsedMediaType.data,
+          byteLength: request.body.byteLength,
+          kind: imageAttachmentMediaTypeSchema.safeParse(parsedMediaType.data)
+            .success
+            ? 'image'
+            : 'file',
+          createdAt: new Date().toISOString(),
+          dataObjectKey: keys.data,
+        })
+        const metadata = encoder.encode(JSON.stringify(attachment))
+        await options.objectStore.put(
+          keys.data,
+          contentKey
+            ? await encryptUserContent(
+                contentKey,
+                {
+                  ...requestScope,
+                  recordType: 'attachment',
+                  recordId: `${attachmentId}:data`,
+                },
+                request.body,
+              )
+            : request.body,
+          contentKey ? 'application/json' : attachment.mediaType,
+        )
+        try {
+          await options.objectStore.put(
+            keys.metadata,
+            contentKey
+              ? await encryptUserContent(
+                  contentKey,
+                  {
+                    ...requestScope,
+                    recordType: 'attachment',
+                    recordId: `${attachmentId}:metadata`,
+                  },
+                  metadata,
+                )
+              : metadata,
+            'application/json; charset=utf-8',
+          )
+        } catch (error) {
+          await options.objectStore.delete(keys.data).catch(() => undefined)
+          throw error
+        }
+        return reply
+          .code(201)
+          .send(conversationAttachmentSchema.parse(attachment))
+      } catch (error) {
+        if (error instanceof Error && error.message === 'CONTENT_KEY_LOCKED')
+          return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+        if (error instanceof ZodError)
+          return reply.code(400).send({ code: 'INVALID_ATTACHMENT_REQUEST' })
+        throw error
+      }
+    },
+  )
+
+  app.delete<{ Params: { sessionId: string; attachmentId: string } }>(
+    '/v1/sessions/:sessionId/attachments/:attachmentId',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      const storedSession = await options.repository.getSession(
+        requestScope,
+        request.params.sessionId,
+      )
+      if (!storedSession)
+        return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      try {
+        const contentKey = await attachmentContentKey(requestScope)
+        const attachment = await readProductionAttachment(
+          requestScope,
+          request.params.sessionId,
+          request.params.attachmentId,
+          contentKey,
+        )
+        const keys = productionAttachmentObjectKeys({
+          ...requestScope,
+          sessionId: request.params.sessionId,
+          attachmentId: attachment.attachmentId,
+        })
+        await Promise.all([
+          options.objectStore.delete(keys.data),
+          options.objectStore.delete(keys.metadata),
+        ])
+        return reply.code(204).send()
+      } catch (error) {
+        if (error instanceof Error && error.message === 'CONTENT_KEY_LOCKED')
+          return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+        if (
+          error instanceof ZodError ||
+          (error instanceof Error &&
+            (error.message.includes('OBJECT_GET_FAILED:404') ||
+              error.message === 'ATTACHMENT_SCOPE_MISMATCH'))
+        )
+          return reply.code(404).send({ code: 'ATTACHMENT_NOT_FOUND' })
+        throw error
+      }
+    },
+  )
+
   app.post<{
     Params: { sessionId: string }
     Body: {
       prompt?: unknown
+      attachmentIds?: unknown
       approvalContext?: {
         kind?: unknown
         command?: unknown
@@ -1217,12 +1450,12 @@ export async function buildProductionControlPlane(
         code: 'PRODUCTION_DEPENDENCY_UNAVAILABLE',
         readiness: unavailable,
       })
-    if (
-      typeof request.body?.prompt !== 'string' ||
-      request.body.prompt.length === 0 ||
-      request.body.prompt.length > 100_000
-    )
-      return reply.code(400).send({ code: 'INVALID_PROMPT' })
+    const parsedTurn = createTurnRequestSchema.safeParse({
+      prompt: request.body?.prompt,
+      attachmentIds: request.body?.attachmentIds,
+    })
+    if (!parsedTurn.success)
+      return reply.code(400).send({ code: 'INVALID_TURN_REQUEST' })
     const idempotencyKey = header(request.headers['idempotency-key'])
     if (!idempotencyKey)
       return reply.code(400).send({ code: 'IDEMPOTENCY_KEY_REQUIRED' })
@@ -1237,16 +1470,31 @@ export async function buildProductionControlPlane(
     let contentKeyLease: {
       contentKey: Buffer
       keyVersion: string
-    } | null = null
-    if (
-      options.selfHostedAuth &&
-      (await options.selfHostedAuth.isUserWorkspace(requestScope.workspaceId))
-    ) {
-      contentKeyLease = options.selfHostedAuth.leases.acquire(
-        requestScope.workspaceId,
+    } | null
+    let turnAttachments: ProductionTurnAttachment[]
+    try {
+      contentKeyLease = await attachmentContentKey(requestScope)
+      turnAttachments = await Promise.all(
+        parsedTurn.data.attachmentIds.map((attachmentId) =>
+          readProductionAttachment(
+            requestScope,
+            request.params.sessionId,
+            attachmentId,
+            contentKeyLease,
+          ),
+        ),
       )
-      if (!contentKeyLease)
+    } catch (error) {
+      if (error instanceof Error && error.message === 'CONTENT_KEY_LOCKED')
         return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+      if (
+        error instanceof ZodError ||
+        (error instanceof Error &&
+          (error.message.includes('OBJECT_GET_FAILED:404') ||
+            error.message === 'ATTACHMENT_SCOPE_MISMATCH'))
+      )
+        return reply.code(404).send({ code: 'ATTACHMENT_NOT_FOUND' })
+      throw error
     }
     const billingDecision = await options.billing.admit({
       ...requestScope,
@@ -1267,18 +1515,25 @@ export async function buildProductionControlPlane(
     const runId = `run_${randomUUID()}`
     const objectKey = `${requestScope.tenantId}/${requestScope.organizationId}/${requestScope.workspaceId}/runs/${runId}/input`
     try {
+      const turnInputBytes = encoder.encode(
+        JSON.stringify(
+          productionTurnInputEnvelopeSchema.parse({
+            schemaVersion: 1,
+            prompt: parsedTurn.data.prompt,
+            attachments: turnAttachments,
+          }),
+        ),
+      )
       await options.objectStore.put(
         objectKey,
         contentKeyLease
           ? await encryptUserContent(
               contentKeyLease,
               { ...requestScope, recordType: 'prompt', recordId: runId },
-              encoder.encode(request.body.prompt),
+              turnInputBytes,
             )
-          : encoder.encode(request.body.prompt),
-        contentKeyLease
-          ? 'application/json; charset=utf-8'
-          : 'text/plain; charset=utf-8',
+          : turnInputBytes,
+        'application/json; charset=utf-8',
       )
       const approvalContext = request.body.approvalContext
       const accepted = await options.repository.enqueueTurn({
@@ -1287,7 +1542,13 @@ export async function buildProductionControlPlane(
         runId,
         idempotencyKey,
         promptObjectKey: objectKey,
-        requestBody: request.body,
+        requestBody: {
+          prompt: parsedTurn.data.prompt,
+          attachmentIds: parsedTurn.data.attachmentIds,
+          ...(request.body.approvalContext
+            ? { approvalContext: request.body.approvalContext }
+            : {}),
+        },
         requiredRegionId: options.requiredRegionId,
         maxAttempts: 4,
         traceId: admissionSpan.context.traceId,
@@ -1668,15 +1929,18 @@ export async function buildProductionControlPlane(
     },
   ) => {
     try {
+      const content = await readRunContentText(
+        requestScope,
+        objectKey,
+        recordType,
+        recordId,
+      )
       return reply
         .type('text/plain; charset=utf-8')
         .send(
-          await readRunContentText(
-            requestScope,
-            objectKey,
-            recordType,
-            recordId,
-          ),
+          recordType === 'prompt'
+            ? decodeProductionTurnInput(content).prompt
+            : content,
         )
     } catch (error) {
       return error instanceof Error && error.message === 'CONTENT_KEY_LOCKED'

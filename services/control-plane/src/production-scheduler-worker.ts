@@ -1,6 +1,14 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, readFile, readdir, realpath, rm, stat } from 'node:fs/promises'
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { isAbsolute, relative, resolve } from 'node:path'
 import {
@@ -44,6 +52,12 @@ import {
   type UserContentKeyMaterial,
 } from './user-content-crypto'
 import { CodexTitleProcessRunner } from './title-process-runner'
+import {
+  decodeProductionTurnInput,
+  productionAttachmentObjectKeys,
+  productionPromptWithAttachmentContext,
+  type MaterializedProductionAttachment,
+} from './production-turn-input'
 
 // WP37: workspace-agent, kullanıcı workspace'lerinin content key'ini
 // control-plane'in iç listener'ından alır (anahtar diske yazılmaz).
@@ -154,6 +168,78 @@ export async function ensureConversationWorkspaceRoot(
   if (scoped.startsWith('..') || isAbsolute(scoped))
     throw new Error('CONVERSATION_WORKSPACE_ESCAPE')
   return physical
+}
+
+export async function materializeProductionAttachments(input: {
+  scope: ProductionScope
+  sessionId: string
+  physicalWorkspace: string
+  sandboxed: boolean
+  attachments:
+    | MaterializedProductionAttachment[]
+    | Array<Omit<MaterializedProductionAttachment, 'path'>>
+  objectStore: ObjectStore
+  contentKey: UserContentKeyMaterial | null
+}): Promise<MaterializedProductionAttachment[]> {
+  return await Promise.all(
+    input.attachments.map(async (attachment) => {
+      if (
+        !/^[A-Za-z0-9._-]{1,160}$/.test(attachment.attachmentId) ||
+        !/^[A-Za-z0-9._-]{1,160}$/.test(input.sessionId) ||
+        !attachment.name ||
+        attachment.name === '.' ||
+        attachment.name === '..' ||
+        /[\\/\0\r\n]/.test(attachment.name) ||
+        attachment.tenantId !== input.scope.tenantId ||
+        attachment.organizationId !== input.scope.organizationId ||
+        attachment.workspaceId !== input.scope.workspaceId ||
+        attachment.sessionId !== input.sessionId
+      )
+        throw new Error('ATTACHMENT_SCOPE_MISMATCH')
+      const keys = productionAttachmentObjectKeys({
+        ...input.scope,
+        sessionId: input.sessionId,
+        attachmentId: attachment.attachmentId,
+      })
+      if (attachment.dataObjectKey !== keys.data)
+        throw new Error('ATTACHMENT_SCOPE_MISMATCH')
+      const stored = await input.objectStore.get(keys.data)
+      const envelope = parseUserContentEnvelope(stored)
+      if (envelope && !input.contentKey) throw new Error('CONTENT_KEY_LOCKED')
+      const bytes = envelope
+        ? await decryptUserContent(
+            input.contentKey!,
+            {
+              ...input.scope,
+              recordType: 'attachment',
+              recordId: `${attachment.attachmentId}:data`,
+            },
+            envelope,
+          )
+        : stored
+      if (bytes.byteLength !== attachment.byteLength)
+        throw new Error('ATTACHMENT_SIZE_MISMATCH')
+      const directory = resolve(
+        input.physicalWorkspace,
+        '.perseverance',
+        'attachments',
+        input.sessionId,
+        attachment.attachmentId,
+      )
+      const dataPath = resolve(directory, attachment.name)
+      const scoped = relative(input.physicalWorkspace, dataPath)
+      if (scoped.startsWith('..') || isAbsolute(scoped))
+        throw new Error('ATTACHMENT_PATH_ESCAPE')
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      await writeFile(dataPath, bytes, { mode: 0o600 })
+      return {
+        ...attachment,
+        path: input.sandboxed
+          ? resolve(CODEX_SCOPED_WORKSPACE_CWD, scoped)
+          : dataPath,
+      }
+    }),
+  )
 }
 
 export async function deleteConversationWorkspaceRoot(
@@ -833,12 +919,12 @@ export class ProductionSchedulerWorker {
       // lease yoksa run fail-closed düşer (düz metin fallback yoktur).
       const promptEnvelope = parseUserContentEnvelope(promptBytes)
       let userContentKey: UserContentKeyMaterial | null = null
-      let prompt: string
+      let turnInputText: string
       if (promptEnvelope) {
         if (!this.options.contentKeys) throw new Error('CONTENT_KEY_LOCKED')
         userContentKey = await this.options.contentKeys.resolve(scope)
         if (!userContentKey) throw new Error('CONTENT_KEY_LOCKED')
-        prompt = new TextDecoder().decode(
+        turnInputText = new TextDecoder().decode(
           await decryptUserContent(
             userContentKey,
             { ...scope, recordType: 'prompt', recordId: stored.runId },
@@ -846,8 +932,10 @@ export class ProductionSchedulerWorker {
           ),
         )
       } else {
-        prompt = new TextDecoder().decode(promptBytes)
+        turnInputText = new TextDecoder().decode(promptBytes)
       }
+      const turnInput = decodeProductionTurnInput(turnInputText)
+      const prompt = turnInput.prompt
       const currentSession = await this.options.repository.getSession(
         scope,
         stored.sessionId,
@@ -859,6 +947,15 @@ export class ProductionSchedulerWorker {
         currentSession.folderId,
       )
       const sandboxed = Boolean(this.options.workspaceSandboxBin)
+      const materializedAttachments = await materializeProductionAttachments({
+        scope,
+        sessionId: stored.sessionId,
+        physicalWorkspace,
+        sandboxed,
+        attachments: turnInput.attachments,
+        objectStore: this.options.objectStore,
+        contentKey: userContentKey,
+      })
       const isolatedHomeRoot = resolve(
         this.options.codexProvisioningSource ?? '/codex-home',
         'runtime',
@@ -1066,7 +1163,32 @@ export class ProductionSchedulerWorker {
           'turn/start',
           {
             threadId: thread.thread.id,
-            input: [{ type: 'text', text: prompt, text_elements: [] }],
+            input: [
+              ...(prompt ||
+              materializedAttachments.some(
+                (attachment) => attachment.kind === 'file',
+              )
+                ? [
+                    {
+                      type: 'text' as const,
+                      text: productionPromptWithAttachmentContext(
+                        prompt,
+                        materializedAttachments,
+                      ),
+                      text_elements: [],
+                    },
+                  ]
+                : []),
+              ...materializedAttachments.map((attachment) =>
+                attachment.kind === 'image'
+                  ? ({ type: 'localImage', path: attachment.path } as const)
+                  : ({
+                      type: 'mention',
+                      name: attachment.name,
+                      path: attachment.path,
+                    } as const),
+              ),
+            ],
           } satisfies codexV2.TurnStartParams,
         )
         this.#activeTurn = {

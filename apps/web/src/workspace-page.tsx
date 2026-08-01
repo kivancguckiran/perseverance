@@ -171,7 +171,6 @@ const runtimeAccessToken = () => {
   return readStoredAuth()?.accessToken
 }
 const principalId = runtimeAuth?.subject ?? storedAuth?.subject ?? 'dev-user'
-const historyDesktopMediaQuery = '(min-width: 1100px)'
 export const scopeHeaders: Record<string, string> = {
   'content-type': 'application/json',
   'x-tenant-id': tenantId,
@@ -3312,18 +3311,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const forceChatScrollRef = useRef(false)
   const previousChatScrollTopRef = useRef<number | null>(null)
 
-  useEffect(() => {
-    const desktop = window.matchMedia(historyDesktopMediaQuery)
-    const syncHistoryForViewport = (event: Pick<MediaQueryList, 'matches'>) =>
-      setHistoryOpen(event.matches)
-    syncHistoryForViewport(desktop)
-    desktop.addEventListener('change', syncHistoryForViewport)
-    return () => desktop.removeEventListener('change', syncHistoryForViewport)
-  }, [])
-
   function closeHistoryOverlay() {
-    if (!window.matchMedia(historyDesktopMediaQuery).matches)
-      setHistoryOpen(false)
+    setHistoryOpen(false)
   }
 
   useEffect(() => {

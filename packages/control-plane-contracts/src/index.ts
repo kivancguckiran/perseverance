@@ -1029,15 +1029,34 @@ export const attachmentMediaTypeSchema = z
     /^[A-Za-z0-9!#$%&'*+.^_|~-]+\/[A-Za-z0-9!#$%&'*+.^_|~-]+$/,
     'invalid attachment media type',
   )
+export const attachmentFileNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .refine(
+    (value) => value !== '.' && value !== '..' && !/[\\/\0\r\n]/.test(value),
+    'invalid attachment file name',
+  )
 export const attachmentContextStart = '<perseverance-attachments>'
 export const attachmentContextEnd = '</perseverance-attachments>'
 export const conversationAttachmentSchema = scopeSchema.extend({
   attachmentId: identifierSchema,
-  name: z.string().trim().min(1).max(255),
+  name: attachmentFileNameSchema,
   mediaType: attachmentMediaTypeSchema,
   byteLength: z.number().int().positive(),
   kind: z.enum(['image', 'file']),
   createdAt: z.iso.datetime(),
+})
+export const productionTurnAttachmentSchema =
+  conversationAttachmentSchema.extend({
+    organizationId: identifierSchema,
+    dataObjectKey: z.string().min(1).max(2_048),
+  })
+export const productionTurnInputEnvelopeSchema = z.object({
+  schemaVersion: z.literal(1),
+  prompt: z.string().max(100_000),
+  attachments: z.array(productionTurnAttachmentSchema).max(100),
 })
 export const createTurnRequestSchema = z
   .object({
@@ -1516,6 +1535,12 @@ export type GitSnapshotListResponse = z.infer<
 export type CreateTurnRequest = z.infer<typeof createTurnRequestSchema>
 export type ConversationAttachment = z.infer<
   typeof conversationAttachmentSchema
+>
+export type ProductionTurnAttachment = z.infer<
+  typeof productionTurnAttachmentSchema
+>
+export type ProductionTurnInputEnvelope = z.infer<
+  typeof productionTurnInputEnvelopeSchema
 >
 export type TurnAcceptedResponse = z.infer<typeof turnAcceptedResponseSchema>
 export type SteerTurnRequest = z.infer<typeof steerTurnRequestSchema>

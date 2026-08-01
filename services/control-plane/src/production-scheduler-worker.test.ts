@@ -1,4 +1,4 @@
-import { mkdtemp, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,7 @@ import {
   settleTerminalRunBilling,
   deleteConversationWorkspaceRoot,
   ensureConversationWorkspaceRoot,
+  materializeProductionAttachments,
   productionWorkspaceSandboxArgs,
   productionThreadStartParams,
   productionTurnCompletion,
@@ -14,6 +15,10 @@ import {
   readWorkspaceEntry,
   shouldPersistProductionActivityNotification,
 } from './production-scheduler-worker'
+import {
+  productionAttachmentObjectKeys,
+  productionPromptWithAttachmentContext,
+} from './production-turn-input'
 
 describe('production scheduler Codex boundary', () => {
   it('permits workspace writes without approval escalation', () => {
@@ -101,6 +106,66 @@ describe('production scheduler Codex boundary', () => {
     )
     expect(args.at(-2)).toBe('/app/codex/bin/codex.js')
     expect(args.at(-1)).toBe('app-server')
+  })
+
+  it('materializes scoped object attachments inside the Codex workspace mount', async () => {
+    const physicalWorkspace = await mkdtemp(
+      join(tmpdir(), 'perseverance-attachments-'),
+    )
+    const scope = {
+      tenantId: 'tenant-a',
+      organizationId: 'organization-a',
+      workspaceId: 'workspace-a',
+    }
+    const attachmentId = 'att_archive'
+    const sessionId = 'ses_archive'
+    const keys = productionAttachmentObjectKeys({
+      ...scope,
+      sessionId,
+      attachmentId,
+    })
+    const bytes = Buffer.from('PK fixture')
+    const materialized = await materializeProductionAttachments({
+      scope,
+      sessionId,
+      physicalWorkspace,
+      sandboxed: true,
+      attachments: [
+        {
+          ...scope,
+          sessionId,
+          attachmentId,
+          name: 'project.zip',
+          mediaType: 'application/zip',
+          byteLength: bytes.byteLength,
+          kind: 'file',
+          createdAt: '2026-08-01T00:00:00.000Z',
+          dataObjectKey: keys.data,
+        },
+      ],
+      objectStore: {
+        get: async (key: string) => {
+          expect(key).toBe(keys.data)
+          return bytes
+        },
+      } as never,
+      contentKey: null,
+    })
+
+    expect(materialized[0]?.path).toBe(
+      '/scoped-workspace/.perseverance/attachments/ses_archive/att_archive/project.zip',
+    )
+    expect(
+      await readFile(
+        join(
+          physicalWorkspace,
+          '.perseverance/attachments/ses_archive/att_archive/project.zip',
+        ),
+      ),
+    ).toEqual(bytes)
+    expect(
+      productionPromptWithAttachmentContext('Arşivi incele', materialized),
+    ).toContain('project.zip')
   })
 })
 
