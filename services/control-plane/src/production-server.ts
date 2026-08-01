@@ -43,6 +43,8 @@ import {
   timelineEventSchema,
   type TimelineEvent,
 } from '@perseverance/domain-events'
+import { adaptCodexNotification } from '@perseverance/codex-event-adapter'
+import type { ServerNotification } from '@perseverance/codex-protocol-generated'
 import {
   RabbitMqManagementBroker,
   S3CompatibleObjectStore,
@@ -193,6 +195,21 @@ export function productionTimelineEvent(
       method: `production/${stored.eventType}`,
       params: stored.payload,
     },
+  })
+}
+
+export function productionCodexNotificationEvent(
+  stored: ProductionEvent,
+  notification: unknown,
+): TimelineEvent {
+  return adaptCodexNotification(notification as ServerNotification, {
+    tenantId: stored.tenantId,
+    workspaceId: stored.workspaceId,
+    sessionId: stored.sessionId,
+    sourceVersion: '0.144.2',
+    nextSequence: () => stored.sequence,
+    now: () => new Date(stored.occurredAt),
+    nextEventId: () => stored.eventId,
   })
 }
 
@@ -1086,7 +1103,7 @@ export async function buildProductionControlPlane(
   const readRunContentText = async (
     requestScope: ProductionScope,
     objectKey: string,
-    recordType: 'prompt' | 'model_output',
+    recordType: 'prompt' | 'model_output' | 'raw_event',
     recordId: string,
   ) => {
     const bytes = await options.objectStore.get(objectKey)
@@ -1142,6 +1159,25 @@ export async function buildProductionControlPlane(
           )
         : ''
       return [productionTimelineEvent(stored, text)]
+    }
+    if (stored.eventType === 'codex.notification') {
+      const activityObjectKey =
+        typeof stored.payload.activityObjectKey === 'string'
+          ? stored.payload.activityObjectKey
+          : null
+      const recordId =
+        typeof stored.payload.recordId === 'string'
+          ? stored.payload.recordId
+          : null
+      if (!activityObjectKey || !recordId)
+        return [productionTimelineEvent(stored)]
+      const raw = await readRunContentText(
+        requestScope,
+        activityObjectKey,
+        'raw_event',
+        recordId,
+      )
+      return [productionCodexNotificationEvent(stored, JSON.parse(raw))]
     }
     return [productionTimelineEvent(stored)]
   }

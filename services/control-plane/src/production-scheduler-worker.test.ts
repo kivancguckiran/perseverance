@@ -1,6 +1,41 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PrepaidCreditError } from '@perseverance/billing-platform'
-import { settleTerminalRunBilling } from './production-scheduler-worker'
+import {
+  settleTerminalRunBilling,
+  shouldPersistProductionActivityNotification,
+} from './production-scheduler-worker'
+
+describe('production scheduler activity capture', () => {
+  it('keeps explicit summaries and command lifecycle events', () => {
+    expect(
+      shouldPersistProductionActivityNotification({
+        method: 'item/reasoning/summaryTextDelta',
+        params: { delta: 'Checking the workspace' },
+      }),
+    ).toBe(true)
+    expect(
+      shouldPersistProductionActivityNotification({
+        method: 'item/started',
+        params: { item: { type: 'commandExecution' } },
+      }),
+    ).toBe(true)
+  })
+
+  it('never retains hidden reasoning text or duplicate agent messages', () => {
+    expect(
+      shouldPersistProductionActivityNotification({
+        method: 'item/reasoning/textDelta',
+        params: { delta: 'private reasoning' },
+      }),
+    ).toBe(false)
+    expect(
+      shouldPersistProductionActivityNotification({
+        method: 'item/completed',
+        params: { item: { type: 'agentMessage', text: 'done' } },
+      }),
+    ).toBe(false)
+  })
+})
 
 describe('production scheduler billing cleanup', () => {
   it('settles and releases admission for a terminal failed run', async () => {
@@ -42,7 +77,12 @@ describe('production scheduler billing cleanup', () => {
     }
 
     await expect(
-      settleTerminalRunBilling(billing as never, scope, 'run-byok', 'completed'),
+      settleTerminalRunBilling(
+        billing as never,
+        scope,
+        'run-byok',
+        'completed',
+      ),
     ).resolves.toBeUndefined()
 
     expect(billing.completeOperation).toHaveBeenCalledWith(scope, 'run-byok')

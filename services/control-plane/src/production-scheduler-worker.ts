@@ -105,6 +105,40 @@ export interface ProductionSchedulerWorkerOptions {
   contentKeys?: ContentKeyResolver
 }
 
+const ACTIVITY_ITEM_TYPES = new Set([
+  'plan',
+  'commandExecution',
+  'fileChange',
+  'mcpToolCall',
+  'dynamicToolCall',
+  'contextCompaction',
+])
+
+/**
+ * Only user-visible activity is retained. In particular, reasoning text deltas
+ * are deliberately excluded; explicit reasoning summaries are the sole
+ * reasoning representation that may reach the timeline.
+ */
+export function shouldPersistProductionActivityNotification(
+  input: unknown,
+): boolean {
+  if (!input || typeof input !== 'object') return false
+  const message = input as { method?: unknown; params?: unknown }
+  if (typeof message.method !== 'string') return false
+  if (
+    message.method === 'item/reasoning/summaryTextDelta' ||
+    message.method === 'item/plan/delta' ||
+    message.method === 'turn/diff/updated' ||
+    message.method === 'thread/compacted'
+  )
+    return true
+  if (message.method !== 'item/started' && message.method !== 'item/completed')
+    return false
+  const params = message.params as Record<string, unknown> | undefined
+  const item = params?.item as Record<string, unknown> | undefined
+  return typeof item?.type === 'string' && ACTIVITY_ITEM_TYPES.has(item.type)
+}
+
 export async function settleTerminalRunBilling(
   billing: Pick<
     BillingPostgresRepository,
@@ -393,9 +427,48 @@ export class ProductionSchedulerWorker {
           resolveFinal = resolve
           rejectFinal = reject
         })
+        let activityOrdinal = 0
+        let activityWriteError: unknown
+        let activityWriteChain = Promise.resolve()
         client.onNotification((message) => {
           const params = message.params as Record<string, unknown> | undefined
           if (params?.threadId !== thread.thread.id) return
+          if (shouldPersistProductionActivityNotification(message)) {
+            const ordinal = ++activityOrdinal
+            activityWriteChain = activityWriteChain
+              .then(async () => {
+                const recordId = `${stored.runId}:activity:${ordinal}`
+                const activityObjectKey = `${scope.tenantId}/${scope.organizationId}/${scope.workspaceId}/runs/${stored.runId}/activity/${String(ordinal).padStart(6, '0')}`
+                const activityBytes = new TextEncoder().encode(
+                  JSON.stringify(message),
+                )
+                await this.options.objectStore.put(
+                  activityObjectKey,
+                  userContentKey
+                    ? await encryptUserContent(
+                        userContentKey,
+                        { ...scope, recordType: 'raw_event', recordId },
+                        activityBytes,
+                      )
+                    : activityBytes,
+                  'application/json; charset=utf-8',
+                )
+                await append(
+                  'codex.notification',
+                  {
+                    runId: stored.runId,
+                    activityObjectKey,
+                    recordType: 'raw_event',
+                    recordId,
+                    method: message.method,
+                  },
+                  `activity_${ordinal}`,
+                )
+              })
+              .catch((error: unknown) => {
+                activityWriteError ??= error
+              })
+          }
           if (message.method === 'error') {
             const value = params.error as Record<string, unknown> | undefined
             rejectFinal(
@@ -448,6 +521,8 @@ export class ProductionSchedulerWorker {
             )
           }),
         ])
+        await activityWriteChain
+        if (activityWriteError) throw activityWriteError
         codexSpan.end('ok')
         await fence()
         const outputBytes = new TextEncoder().encode(text)

@@ -5,6 +5,7 @@ import {
 } from '@perseverance/control-plane-contracts'
 import {
   productionRealtimeSubscription,
+  productionCodexNotificationEvent,
   productionSessionResponse,
   productionTimelineEvent,
   productionUserMessageEvent,
@@ -153,5 +154,37 @@ describe('production session API contract', () => {
         },
       },
     })
+  })
+
+  it('normalizes protected Codex activity through the shared adapter', () => {
+    const event = productionCodexNotificationEvent(
+      storedEvent({ eventType: 'codex.notification', sequence: 9 }),
+      {
+        method: 'item/reasoning/summaryTextDelta',
+        params: {
+          threadId: 'thread-a',
+          turnId: 'turn-a',
+          itemId: 'reasoning-a',
+          summaryIndex: 0,
+          delta: 'Inspecting the workspace',
+        },
+      },
+    )
+
+    expect(event).toMatchObject({
+      eventId: 'event-a',
+      sequence: 9,
+      type: 'reasoning.summary.delta',
+      payload: { text: 'Inspecting the workspace' },
+    })
+    expect(
+      serverMessageSchema.parse({
+        type: 'event',
+        tenantId: 'tenant-a',
+        workspaceId: 'workspace-a',
+        sessionId: 'session-a',
+        event,
+      }),
+    ).toBeTruthy()
   })
 })

@@ -2153,8 +2153,8 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
         </span>
         <small className="chat-work-meta">
           {work.running
-            ? `${t('live', 'canlı')} · sequence ${String(work.cards.at(-1)?.event.sequence ?? 0).padStart(4, '0')}`
-            : `${work.cards.length} ${t('operations', 'işlem')}`}
+            ? t('live', 'canlı')
+            : `${work.cards.length} ${t('steps', 'adım')}`}
         </small>
         <span className="chat-work-chevron" aria-hidden="true" />
       </summary>
@@ -2190,7 +2190,7 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
       {work.cards.length > visibleCards.length ? (
         <p>
           {work.cards.length - visibleCards.length}{' '}
-          {t('older operations hidden.', 'eski işlem gizlendi.')}
+          {t('older steps hidden.', 'eski adım gizlendi.')}
         </p>
       ) : null}
     </details>
