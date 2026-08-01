@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { getRouter } from './router'
+import { copyWorkspaceFileContent } from './routes/files.$'
 import { readSessionDetail } from './workspace-page'
 
 const sessionResponse = {
@@ -90,6 +91,16 @@ describe('session route integration', () => {
     )
 
     expect(markup).toContain('href="/sessions/ses-file-source"')
-    expect(markup).toContain('Back to conversation')
+    expect(markup).toContain('aria-label="Back to conversation"')
+    expect(markup).not.toContain('← Back to conversation')
+  })
+
+  it('copies the complete workspace file content', async () => {
+    const writeText = vi.fn(async () => undefined)
+
+    await copyWorkspaceFileContent('first line\nsecond line', { writeText })
+
+    expect(writeText).toHaveBeenCalledOnce()
+    expect(writeText).toHaveBeenCalledWith('first line\nsecond line')
   })
 })
