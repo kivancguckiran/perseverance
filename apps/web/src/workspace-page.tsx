@@ -85,6 +85,8 @@ import {
 } from './tenant-cache'
 import { LanguageSwitcher, localize, useTranslations } from './i18n'
 
+export const conversationTitleRefreshDelaysMs = [1_000, 3_000, 10_000, 30_000]
+
 export function MessageCopyButton({
   text,
   author,
@@ -3317,6 +3319,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     let accessRevoked = false
     let socket: WebSocket | undefined
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    const titleRefreshTimers: ReturnType<typeof setTimeout>[] = []
 
     const apply = (incoming: TimelineEvent[]) => {
       lastSequence.current = Math.max(
@@ -3402,8 +3405,16 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         if (
           parsed.data.type === 'event' &&
           parsed.data.event.type === 'turn.completed'
-        )
+        ) {
           void recentSessions.refetch()
+          for (const delay of conversationTitleRefreshDelaysMs) {
+            titleRefreshTimers.push(
+              setTimeout(() => {
+                if (active) void recentSessions.refetch()
+              }, delay),
+            )
+          }
+        }
         if (parsed.data.type === 'event' || parsed.data.type === 'replay') {
           socket?.send(
             JSON.stringify({
@@ -3451,6 +3462,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     return () => {
       active = false
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      for (const timer of titleRefreshTimers) clearTimeout(timer)
       socket?.close()
     }
   }, [session?.sessionId])

@@ -16,6 +16,7 @@ import {
   conversationFolderDisplayName,
   conversationFeed,
   conversationMessages,
+  conversationTitleRefreshDelaysMs,
   describeConversationWork,
   describeTimelineEvent,
   isNearScrollEnd,
@@ -70,6 +71,14 @@ describe('tenant-aware client cache namespace', () => {
       expect(
         snapshots.get(offlineConversationKey(nextNamespace, 'ses-a')),
       ).toBeUndefined()
+  })
+})
+
+describe('generated conversation title refresh', () => {
+  it('retries after turn completion while the background title is generated', () => {
+    expect(conversationTitleRefreshDelaysMs).toEqual([
+      1_000, 3_000, 10_000, 30_000,
+    ])
   })
 })
 
