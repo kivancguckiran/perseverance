@@ -9,6 +9,7 @@ import {
 } from '@perseverance/production-observability'
 import {
   createBillingPostgresRepository,
+  PrepaidCreditError,
   type BillingPostgresRepository,
 } from '@perseverance/billing-platform'
 import { codexV2 } from '@perseverance/codex-protocol-generated'
@@ -113,16 +114,30 @@ export async function settleTerminalRunBilling(
   runId: string,
   outcome: 'completed' | 'failed',
 ) {
-  await billing.settleOperation(scope, runId, {
-    idempotencyKey: `wp26:${runId}:${outcome}`,
-    usageDedupeKey: `wp26:${runId}:${outcome}`,
-    measuredCreditsMicros: 0,
-    usageStatus: 'measured',
-    outcome,
-    terminal: true,
-    runId,
-  })
-  await billing.completeOperation(scope, runId)
+  try {
+    await billing.settleOperation(scope, runId, {
+      idempotencyKey: `wp26:${runId}:${outcome}`,
+      usageDedupeKey: `wp26:${runId}:${outcome}`,
+      measuredCreditsMicros: 0,
+      usageStatus: 'measured',
+      outcome,
+      terminal: true,
+      runId,
+    })
+  } catch (error) {
+    // BYOK/self-hosted plans do not create prepaid credit reservations. A
+    // missing reservation is therefore a valid terminal path, not a failed
+    // Codex run. Other settlement failures must remain visible to recovery.
+    if (
+      !(error instanceof PrepaidCreditError) ||
+      error.code !== 'RESERVATION_NOT_FOUND'
+    )
+      throw error
+  } finally {
+    // Concurrency admission is independent from prepaid settlement and must
+    // always be released once the run is terminal.
+    await billing.completeOperation(scope, runId)
+  }
 }
 
 export class ProductionSchedulerWorker {
