@@ -3442,7 +3442,8 @@ button:disabled {
 }
 
 .chat-message:hover .message-copy-button,
-.message-copy-button:focus-visible {
+.message-copy-button:focus-visible,
+.message-copy-button.is-copied {
   opacity: 1;
 }
 
