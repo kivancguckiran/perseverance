@@ -691,6 +691,39 @@ export async function buildProductionControlPlane(
         archivedAt: folder.archivedAt,
       })
 
+    const mutateConversationWorkspace = async (
+      method: 'POST' | 'DELETE',
+      identity: FolderIdentity,
+      folderId: string,
+    ) => {
+      if (!options.internalRuntimeToken)
+        return {
+          ok: false as const,
+          status: 503,
+          code: 'WORKSPACE_MUTATION_UNAVAILABLE',
+        }
+      const endpoint = new URL(
+        `/internal/v1/conversation-workspaces/${encodeURIComponent(folderId)}`,
+        options.runtimeControlReadinessUrl,
+      )
+      endpoint.searchParams.set('tenantId', identity.tenantId)
+      endpoint.searchParams.set('organizationId', identity.organizationId)
+      endpoint.searchParams.set('workspaceId', identity.workspaceId)
+      const response = await fetch(endpoint, {
+        method,
+        headers: { authorization: `Bearer ${options.internalRuntimeToken}` },
+      })
+      if (response.ok) return { ok: true as const }
+      const body = (await response.json().catch(() => null)) as {
+        code?: string
+      } | null
+      return {
+        ok: false as const,
+        status: response.status,
+        code: body?.code ?? 'WORKSPACE_MUTATION_FAILED',
+      }
+    }
+
     app.get('/v1/folders', async (request, reply) => {
       const identity = folderIdentity(request)
       if (!identity) return reply.code(400).send({ code: 'MISSING_SCOPE' })
@@ -746,8 +779,61 @@ export async function buildProductionControlPlane(
         ...identity,
         name: body.data.name,
       })
+      const workspace = await mutateConversationWorkspace(
+        'POST',
+        identity,
+        created.folder.folderId,
+      )
+      if (!workspace.ok) {
+        await options
+          .sharedFolders!.deleteFolder({
+            ...identity,
+            folderId: created.folder.folderId,
+          })
+          .catch(() => undefined)
+        return reply.code(workspace.status).send({ code: workspace.code })
+      }
       return reply.code(201).send(legacyFolder(created.folder))
     })
+
+    app.delete<{ Params: { folderId: string } }>(
+      '/v1/conversation-folders/:folderId',
+      async (request, reply) => {
+        const identity = folderIdentity(request)
+        if (!identity) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+        if (request.params.folderId === DEFAULT_CONVERSATION_FOLDER_ID)
+          return reply
+            .code(409)
+            .send({ code: 'DEFAULT_CONVERSATION_FOLDER_PROTECTED' })
+        try {
+          await options.sharedFolders!.getFolder(
+            identity,
+            request.params.folderId,
+            'manage',
+          )
+        } catch {
+          return reply.code(404).send({ code: 'FOLDER_NOT_FOUND' })
+        }
+        const sessionCount = await options.repository.countSessionsInFolder(
+          identity,
+          request.params.folderId,
+        )
+        if (sessionCount > 0)
+          return reply.code(409).send({ code: 'FOLDER_NOT_EMPTY' })
+        const workspace = await mutateConversationWorkspace(
+          'DELETE',
+          identity,
+          request.params.folderId,
+        )
+        if (!workspace.ok)
+          return reply.code(workspace.status).send({ code: workspace.code })
+        await options.sharedFolders!.deleteFolder({
+          ...identity,
+          folderId: request.params.folderId,
+        })
+        return reply.code(204).send()
+      },
+    )
   }
 
   app.get<{ Params: { workspaceId: string } }>(

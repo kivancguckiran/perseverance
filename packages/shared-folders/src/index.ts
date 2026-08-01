@@ -31,6 +31,7 @@ export interface FolderResourceBinding extends FolderScope {
 
 export type FolderAuditAction =
   | 'folder.created'
+  | 'folder.deleted'
   | 'invitation.created'
   | 'invitation.accepted'
   | 'invitation.revoked'
@@ -182,6 +183,24 @@ class InMemorySharedFolderCore {
     )
     this.#appendAudit(input, folder, 'folder.created', 'success', 'CREATED')
     return clone({ folder, membership })
+  }
+
+  deleteFolder(input: FolderIdentity & { folderId: string; now?: Date }) {
+    const folder = this.getFolder(input, input.folderId, 'manage')
+    const now = input.now ?? new Date()
+    const changed = this.#bump(input, input.folderId, 'revoked', null, now)
+    this.#appendAudit(input, changed, 'folder.deleted', 'success', 'DELETED')
+    const prefix = `${folderKey(input, input.folderId)}:`
+    for (const [key, membership] of this.#memberships.entries()) {
+      if (!key.startsWith(prefix) || membership.status !== 'active') continue
+      membership.status = 'revoked'
+      membership.revokedAt = now.toISOString()
+      membership.updatedAt = now.toISOString()
+      membership.version++
+    }
+    const stored = this.#folders.get(folderKey(input, input.folderId))!
+    stored.archivedAt = now.toISOString()
+    return clone({ ...folder, ...stored })
   }
 
   listFolders(identity: FolderIdentity) {
@@ -924,6 +943,9 @@ export interface SharedFolderRepository {
   createFolder(
     input: Parameters<Core['createFolder']>[0],
   ): Promise<ReturnType<Core['createFolder']>>
+  deleteFolder(
+    input: Parameters<Core['deleteFolder']>[0],
+  ): Promise<SharedFolder>
   listFolders(
     identity: FolderIdentity,
   ): Promise<ReturnType<Core['listFolders']>>
@@ -1032,6 +1054,9 @@ export class InMemorySharedFolderRepository implements SharedFolderRepository {
 
   async createFolder(input: Parameters<Core['createFolder']>[0]) {
     return this.#core.createFolder(input)
+  }
+  async deleteFolder(input: Parameters<Core['deleteFolder']>[0]) {
+    return this.#core.deleteFolder(input)
   }
   async listFolders(identity: FolderIdentity) {
     return this.#core.listFolders(identity)

@@ -455,6 +455,10 @@ select {
 .history-folder > summary:focus-within .history-folder-actions {
   opacity: 1;
 }
+.history-folder > summary button.danger:hover {
+  color: #ffb4ab;
+  background: #3a1f1d;
+}
 .history-conversations {
   display: grid;
   gap: 3px;

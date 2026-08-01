@@ -372,6 +372,19 @@ export class ProductionPostgresRepository {
     })
   }
 
+  async countSessionsInFolder(scope: ProductionScope, folderId: string) {
+    return this.#tx(scope, async (client) => {
+      const result = await client.query(
+        `SELECT count(*)::integer AS count
+         FROM persistent_codex.ha_sessions
+         WHERE tenant_id=$1 AND organization_id=$2 AND workspace_id=$3
+           AND folder_id=$4 AND deleted_at IS NULL`,
+        [scope.tenantId, scope.organizationId, scope.workspaceId, folderId],
+      )
+      return Number(result.rows[0]?.count ?? 0)
+    })
+  }
+
   async updateConversation(
     scope: ProductionScope,
     sessionId: string,

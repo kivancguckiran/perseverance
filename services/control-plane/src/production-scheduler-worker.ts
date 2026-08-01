@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { isAbsolute, relative, resolve } from 'node:path'
 import {
@@ -154,6 +154,50 @@ export async function ensureConversationWorkspaceRoot(
   if (scoped.startsWith('..') || isAbsolute(scoped))
     throw new Error('CONVERSATION_WORKSPACE_ESCAPE')
   return physical
+}
+
+export async function deleteConversationWorkspaceRoot(
+  workspaceCwd: string,
+  scope: ProductionScope,
+  folderId: string,
+) {
+  if (folderId === 'fol_default')
+    throw new Error('DEFAULT_CONVERSATION_FOLDER_PROTECTED')
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(folderId))
+    throw new Error('INVALID_CONVERSATION_FOLDER_ID')
+  const root = await realpath(workspaceCwd)
+  const scopeKey = createHash('sha256')
+    .update(
+      `${scope.tenantId}\0${scope.organizationId}\0${scope.workspaceId}`,
+      'utf8',
+    )
+    .digest('hex')
+  const requested = resolve(
+    root,
+    '.perseverance',
+    'conversation-homes',
+    scopeKey,
+    folderId,
+  )
+  let physical: string
+  try {
+    physical = await realpath(requested)
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error as NodeJS.ErrnoException).code === 'ENOENT'
+    )
+      return false
+    throw error
+  }
+  if (physical !== requested)
+    throw new Error('CONVERSATION_WORKSPACE_SYMLINK_REJECTED')
+  const scoped = relative(root, physical)
+  if (scoped.startsWith('..') || isAbsolute(scoped))
+    throw new Error('CONVERSATION_WORKSPACE_ESCAPE')
+  await rm(physical, { recursive: true })
+  return true
 }
 
 export function productionWorkspaceSandboxArgs(input: {
@@ -406,7 +450,14 @@ export class ProductionSchedulerWorker {
   #running = false
   #healthServer: Server | null = null
   #activeClient: CodexAppServerClient | null = null
-  #activeTurn: { runId: string; threadId: string; turnId: string } | undefined
+  #activeTurn:
+    | {
+        runId: string
+        threadId: string
+        turnId: string
+        physicalWorkspace: string
+      }
+    | undefined
   #telemetryTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(options: ProductionSchedulerWorkerOptions) {
@@ -458,6 +509,89 @@ export class ProductionSchedulerWorker {
             )
             response.writeHead(202)
             response.end(JSON.stringify({ status: 'accepted' }))
+            return
+          }
+          const workspaceMatch = url.pathname.match(
+            /^\/internal\/v1\/conversation-workspaces\/([^/]+)$/,
+          )
+          if (workspaceMatch) {
+            if (
+              !authorizedInternalRequest(
+                request.headers.authorization,
+                this.options.internalRuntimeToken,
+              )
+            ) {
+              response.writeHead(401)
+              response.end(JSON.stringify({ code: 'UNAUTHORIZED' }))
+              return
+            }
+            try {
+              const scope = {
+                tenantId: url.searchParams.get('tenantId') ?? '',
+                organizationId: url.searchParams.get('organizationId') ?? '',
+                workspaceId: url.searchParams.get('workspaceId') ?? '',
+              }
+              if (
+                !scope.tenantId ||
+                !scope.organizationId ||
+                !scope.workspaceId
+              )
+                throw new Error('INVALID_WORKSPACE_SCOPE')
+              const folderId = decodeURIComponent(workspaceMatch[1]!)
+              if (request.method === 'POST') {
+                await ensureConversationWorkspaceRoot(
+                  this.options.workspaceCwd,
+                  scope,
+                  folderId,
+                )
+                response.writeHead(201)
+                response.end(JSON.stringify({ status: 'created' }))
+                return
+              }
+              if (request.method === 'DELETE') {
+                const root = await realpath(this.options.workspaceCwd)
+                const scopeKey = createHash('sha256')
+                  .update(
+                    `${scope.tenantId}\0${scope.organizationId}\0${scope.workspaceId}`,
+                    'utf8',
+                  )
+                  .digest('hex')
+                const requestedWorkspace = resolve(
+                  root,
+                  '.perseverance',
+                  'conversation-homes',
+                  scopeKey,
+                  folderId,
+                )
+                if (
+                  this.#activeTurn?.physicalWorkspace === requestedWorkspace
+                ) {
+                  response.writeHead(409)
+                  response.end(JSON.stringify({ code: 'FOLDER_RUN_ACTIVE' }))
+                  return
+                }
+                const deleted = await deleteConversationWorkspaceRoot(
+                  this.options.workspaceCwd,
+                  scope,
+                  folderId,
+                )
+                response.writeHead(200)
+                response.end(JSON.stringify({ status: 'deleted', deleted }))
+                return
+              }
+              response.writeHead(405)
+              response.end(JSON.stringify({ code: 'METHOD_NOT_ALLOWED' }))
+            } catch (error) {
+              response.writeHead(400)
+              response.end(
+                JSON.stringify({
+                  code:
+                    error instanceof Error
+                      ? error.message
+                      : 'WORKSPACE_MUTATION_FAILED',
+                }),
+              )
+            }
             return
           }
           if (url.pathname === '/internal/v1/workspace-files') {
@@ -939,6 +1073,7 @@ export class ProductionSchedulerWorker {
           runId: stored.runId,
           threadId: thread.thread.id,
           turnId: turn.turn.id,
+          physicalWorkspace,
         }
         const marked = await this.options.repository.markRunRunning({
           ...scope,

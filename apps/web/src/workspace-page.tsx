@@ -2507,7 +2507,7 @@ export function ConversationHistory({
         {onClose ? (
           <button
             type="button"
-            aria-label={t('Close folder drawer', "Folder drawer'ı kapat")}
+            aria-label={t('Close folder drawer', 'Klasör çekmecesini kapat')}
             onClick={onClose}
           >
             ×
@@ -2531,7 +2531,7 @@ export function ConversationHistory({
           aria-expanded={creatingFolder}
           onClick={() => setCreatingFolder((open) => !open)}
         >
-          <span aria-hidden="true">▱</span> {t('New folder', 'Yeni folder')}
+          <span aria-hidden="true">▱</span> {t('New folder', 'Yeni klasör')}
         </button>
       </div>
       {tools ? <div className="history-tools">{tools}</div> : null}
@@ -2547,17 +2547,17 @@ export function ConversationHistory({
         >
           <input
             autoFocus
-            aria-label={t('New folder name', 'Yeni folder adı')}
+            aria-label={t('New folder name', 'Yeni klasör adı')}
             value={folderName}
             onChange={(event) => onFolderNameChange(event.target.value)}
-            placeholder={t('Folder name', 'Folder adı')}
+            placeholder={t('Folder name', 'Klasör adı')}
             maxLength={80}
             disabled={readOnly}
           />
           <button
             type="submit"
             disabled={readOnly || !folderName.trim() || folderPending}
-            aria-label={t('Create folder', 'Folder oluştur')}
+            aria-label={t('Create folder', 'Klasör oluştur')}
           >
             {folderPending ? '…' : t('Add', 'Ekle')}
           </button>
@@ -2599,26 +2599,49 @@ export function ConversationHistory({
                       +
                     </button>
                     {group.folderId !== DEFAULT_CONVERSATION_FOLDER_ID ? (
-                      <button
-                        type="button"
-                        disabled={
-                          readOnly || folderActionPending === group.folderId
-                        }
-                        aria-label={t(
-                          `Archive ${group.name} folder`,
-                          `${group.name} folder'ını arşivle`,
-                        )}
-                        title={t('Archive', 'Arşivle')}
-                        onClick={(event) => {
-                          event.preventDefault()
-                          const folder = activeFolders.find(
-                            (item) => item.folderId === group.folderId,
-                          )
-                          if (folder) onArchiveFolder(folder)
-                        }}
-                      >
-                        ↓
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          disabled={
+                            readOnly || folderActionPending === group.folderId
+                          }
+                          aria-label={t(
+                            `Archive ${group.name} folder`,
+                            `${group.name} klasörünü arşivle`,
+                          )}
+                          title={t('Archive', 'Arşivle')}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            const folder = activeFolders.find(
+                              (item) => item.folderId === group.folderId,
+                            )
+                            if (folder) onArchiveFolder(folder)
+                          }}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          className="danger"
+                          type="button"
+                          disabled={
+                            readOnly || folderActionPending === group.folderId
+                          }
+                          aria-label={t(
+                            `Delete ${group.name} folder`,
+                            `${group.name} klasörünü sil`,
+                          )}
+                          title={t('Delete folder', 'Klasörü sil')}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            const folder = activeFolders.find(
+                              (item) => item.folderId === group.folderId,
+                            )
+                            if (folder) onDeleteFolder(folder)
+                          }}
+                        >
+                          ×
+                        </button>
+                      </>
                     ) : null}
                   </span>
                 ) : null}
@@ -4033,10 +4056,26 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
 
   async function deleteFolder(folder: ConversationFolder) {
     if (
+      historySessions.some(
+        (conversation) => conversation.folderId === folder.folderId,
+      ) ||
+      archivedHistorySessions.some(
+        (conversation) => conversation.folderId === folder.folderId,
+      )
+    ) {
+      setError(
+        t(
+          'This folder still contains conversations. Move or delete them before deleting the folder.',
+          'Bu klasör hâlâ sohbet içeriyor. Klasörü silmeden önce sohbetleri taşıyın veya silin.',
+        ),
+      )
+      return
+    }
+    if (
       !window.confirm(
         t(
-          `Delete the “${folder.name}” folder? Its conversations will be preserved and moved to “No folder”.`,
-          `“${folder.name}” folder'ı silinsin mi? İçindeki sohbetler korunup “Folder yok” grubuna taşınacak.`,
+          `Permanently delete the “${folder.name}” folder and all files in its workspace?`,
+          `“${folder.name}” klasörü ve çalışma alanındaki tüm dosyalar kalıcı olarak silinsin mi?`,
         ),
       )
     )
@@ -4046,14 +4085,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     try {
       const response = await fetch(
         `${apiBaseUrl}/v1/conversation-folders/${encodeURIComponent(folder.folderId)}`,
-        { method: 'DELETE', headers: scopeHeaders },
+        { method: 'DELETE', headers: scopeHeaders, body: '{}' },
       )
       if (!response.ok) throw await apiError(response)
-      if (selectedFolderId === folder.folderId) setSelectedFolderId(null)
-      if (session?.folderId === folder.folderId)
-        setSession((current) =>
-          current ? { ...current, folderId: null } : current,
-        )
+      if (selectedFolderId === folder.folderId)
+        setSelectedFolderId(DEFAULT_CONVERSATION_FOLDER_ID)
       await Promise.all([
         conversationFolders.refetch(),
         recentSessions.refetch(),
@@ -5135,7 +5171,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               </details>
             ) : null}
             <label>
-              <span>Folder</span>
+              <span>{t('Folder', 'Klasör')}</span>
               <select
                 value={folderPicker.value}
                 disabled={folderPicker.disabled}

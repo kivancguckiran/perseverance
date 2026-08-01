@@ -34,6 +34,20 @@ async function shared(
 }
 
 describe('async shared folder repository contract', () => {
+  it('tombstones a folder and revokes access when its owner deletes it', async () => {
+    const repository = new InMemorySharedFolderRepository()
+    const { created } = await shared(repository)
+    await repository.deleteFolder({
+      ...owner,
+      folderId: created.folder.folderId,
+    })
+    expect(await repository.listFolders(owner)).toEqual([])
+    expect(await repository.listFolders(friend)).toEqual([])
+    await expect(
+      repository.getFolder(owner, created.folder.folderId),
+    ).rejects.toMatchObject({ code: 'FOLDER_ACCESS_DENIED' })
+  })
+
   it('is private by default and binds an idempotent invitation to one principal', async () => {
     const repository = new InMemorySharedFolderRepository()
     const { created, issued, accepted } = await shared(repository)

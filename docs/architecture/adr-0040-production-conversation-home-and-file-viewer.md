@@ -42,6 +42,18 @@ volume. The mapping uses a hash of tenant, organization, and workspace identity
 plus the validated folder ID; folder display names never become filesystem paths.
 `fol_default` therefore has the same persistent semantics as a named folder.
 
+Creating a named folder is a control-plane/data-plane operation: after the
+durable private folder aggregate is created, the control-plane asks the private
+workspace-agent listener to create its physical home immediately. If that step
+fails, the new aggregate is tombstoned and the public request fails. Deleting a
+folder is intentionally narrower and destructive: `fol_default` cannot be
+deleted, a folder with any non-deleted conversation cannot be deleted, and a
+folder serving an active turn returns a conflict. Once authorized, the private
+listener recursively removes only that canonical physical home; the shared
+folder aggregate is then archived, all active memberships are revoked, and a
+`folder.deleted` audit record is retained. This preserves immutable audit and
+foreign-key history without leaving the deleted folder visible or accessible.
+
 The production worker launches the real Codex app-server inside an outer
 Bubblewrap namespace. It contains only read-only OS/runtime trees, the Codex
 binary, and the single authentication file required by app-server; the container
@@ -70,14 +82,17 @@ paths, `..`, symlink escape, binary files, and files over 2 MiB are rejected.
 - Generated titles do not contaminate the main Codex thread or delay its start.
 - The control-plane still has no workspace volume mount or direct filesystem
   access.
+- Named folder creation allocates its home immediately; deleting an empty named
+  folder removes its files permanently while retaining a tombstoned audit trail.
 - The internal file endpoint can read text files and bounded directory listings;
   editing, binary preview, and downloads remain separate future capabilities.
 
 ## Verification and rollback
 
 Contract tests cover production session mapping, Default-folder creation/listing,
-conversation mutation, title normalization, and traversal/symlink rejection. Web
-tests cover workspace link rewriting and nullable production history metadata.
+physical named-folder creation/deletion, empty-folder enforcement, conversation
+mutation, title normalization, and traversal/symlink rejection. Web tests cover
+workspace link rewriting and nullable production history metadata.
 
 Rollback removes the new routes and worker endpoint, then stops writing the added
 columns. The columns and migrated `fol_default` values may remain in place during

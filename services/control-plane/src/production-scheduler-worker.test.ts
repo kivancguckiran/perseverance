@@ -1,10 +1,11 @@
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { PrepaidCreditError } from '@perseverance/billing-platform'
 import {
   settleTerminalRunBilling,
+  deleteConversationWorkspaceRoot,
   ensureConversationWorkspaceRoot,
   productionWorkspaceSandboxArgs,
   productionThreadStartParams,
@@ -50,6 +51,31 @@ describe('production scheduler Codex boundary', () => {
     await expect(
       ensureConversationWorkspaceRoot(root, scope, '../escape'),
     ).rejects.toThrow('INVALID_CONVERSATION_FOLDER_ID')
+  })
+
+  it('deletes only a named conversation home and protects Default', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'perseverance-delete-home-'))
+    const scope = {
+      tenantId: 'tenant-a',
+      organizationId: 'organization-a',
+      workspaceId: 'workspace-a',
+    }
+    const named = await ensureConversationWorkspaceRoot(
+      root,
+      scope,
+      'fld_writing',
+    )
+    await writeFile(join(named, 'draft.md'), '# Draft')
+    await expect(
+      deleteConversationWorkspaceRoot(root, scope, 'fld_writing'),
+    ).resolves.toBe(true)
+    await expect(stat(named)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      deleteConversationWorkspaceRoot(root, scope, 'fld_writing'),
+    ).resolves.toBe(false)
+    await expect(
+      deleteConversationWorkspaceRoot(root, scope, 'fol_default'),
+    ).rejects.toThrow('DEFAULT_CONVERSATION_FOLDER_PROTECTED')
   })
 
   it('masks the shared root and binds only the selected folder', () => {
