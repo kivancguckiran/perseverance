@@ -1522,6 +1522,7 @@ function isHousekeepingCard(card: TimelineCard): boolean {
 
 export function conversationFeed(
   events: TimelineEvent[],
+  optimisticTurnId?: string,
 ): ConversationFeedItem[] {
   const messages = conversationMessages(events)
   const cards = reconcile(events).filter((card) => !isMessageCard(card))
@@ -1542,6 +1543,17 @@ export function conversationFeed(
       turnIsActive = false
       activeTurnId = undefined
     }
+  }
+  if (
+    optimisticTurnId &&
+    !events.some(
+      (event) =>
+        event.type === 'turn.completed' &&
+        event.codexTurnId === optimisticTurnId,
+    )
+  ) {
+    turnIsActive = true
+    activeTurnId = optimisticTurnId
   }
   const nextWorkKey = (segment: TimelineCard[]) => {
     const base = workKey(segment)
@@ -2957,6 +2969,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [events, setEvents] = useState<Map<string, TimelineEvent>>(new Map())
   const [sessionPending, setSessionPending] = useState(false)
   const [turnPending, setTurnPending] = useState(false)
+  const [turnPendingAction, setTurnPendingAction] = useState<
+    'submit' | 'steer' | 'interrupt' | null
+  >(null)
+  const [acceptedTurn, setAcceptedTurn] = useState<{
+    runId: string
+    turnId: string
+  }>()
   const [gitRefreshPending, setGitRefreshPending] = useState(false)
   const [gitError, setGitError] = useState<string>()
   const [error, setError] = useState<string>()
@@ -3183,6 +3202,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       previousChatScrollTopRef.current = null
       setSession(undefined)
       setEvents(new Map())
+      setAcceptedTurn(undefined)
       setApprovals(new Map())
       setError(undefined)
       setRealtimeState('kapalı')
@@ -3407,8 +3427,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     () =>
       conversationFeed(
         [...events.values()].sort((a, b) => a.sequence - b.sequence),
+        acceptedTurn?.turnId,
       ),
-    [events],
+    [acceptedTurn?.turnId, events],
   )
   const displayedChatFeed =
     chatFeed.length > 0 || online ? chatFeed : offlineMessages
@@ -3456,11 +3477,25 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
     return (
       active ||
+      acceptedTurn !== undefined ||
       session?.activeRun?.status === 'queued' ||
       session?.activeRun?.status === 'running' ||
       session?.activeRun?.status === 'interrupting'
     )
-  }, [events, session?.activeRun?.status])
+  }, [acceptedTurn, events, session?.activeRun?.status])
+
+  useEffect(() => {
+    if (!acceptedTurn) return
+    const completedByEvent = [...events.values()].some(
+      (event) =>
+        event.type === 'turn.completed' &&
+        event.codexTurnId === acceptedTurn.turnId,
+    )
+    const completedBySnapshot =
+      session?.latestRun?.runId === acceptedTurn.runId &&
+      session.latestRun.terminalOutcome !== null
+    if (completedByEvent || completedBySnapshot) setAcceptedTurn(undefined)
+  }, [acceptedTurn, events, session?.latestRun])
   const usage = useQuery({
     queryKey: ['session-usage', cacheNamespace, sessionId],
     queryFn: () => readUsage(sessionId!),
@@ -3917,14 +3952,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       )
         current = undefined
     }
-    return current ?? session?.activeRun?.turnId ?? undefined
-  }, [events, session?.activeRun?.turnId])
+    return (
+      current ?? session?.activeRun?.turnId ?? acceptedTurn?.turnId ?? undefined
+    )
+  }, [acceptedTurn?.turnId, events, session?.activeRun?.turnId])
 
   async function steerOrInterrupt(action: 'steer' | 'interrupt') {
     if (!session || !activeTurnId) return
     const trimmed = prompt.trim()
     if (action === 'steer' && !trimmed) return
     setTurnPending(true)
+    setTurnPendingAction(action)
     setError(undefined)
     try {
       const response = await fetch(
@@ -3943,12 +3981,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         },
       )
       if (!response.ok) throw await apiError(response)
-      turnActionResponseSchema.parse(await response.json())
+      const result = turnActionResponseSchema.parse(await response.json())
       if (action === 'steer') setPrompt('')
+      if (action === 'interrupt' && result.status === 'interrupted')
+        setAcceptedTurn(undefined)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setTurnPending(false)
+      setTurnPendingAction(null)
     }
   }
 
@@ -3976,6 +4017,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         surface.scrollTo({ top: surface.scrollHeight, behavior: 'smooth' })
     })
     setTurnPending(true)
+    setTurnPendingAction('submit')
     setError(undefined)
     try {
       const activeSession = session ?? (await provisionSession())
@@ -3993,7 +4035,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         },
       )
       if (!response.ok) throw await apiError(response)
-      turnAcceptedResponseSchema.parse(await response.json())
+      const accepted = turnAcceptedResponseSchema.parse(await response.json())
+      setAcceptedTurn({
+        runId: accepted.runId,
+        turnId: accepted.codexTurnId,
+      })
       void recentSessions.refetch()
       if (!sessionId)
         await navigate({
@@ -4012,6 +4058,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         void contentKeySession.refetch()
     } finally {
       setTurnPending(false)
+      setTurnPendingAction(null)
     }
   }
 
@@ -5319,20 +5366,30 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           {readOnly ? (
             <p className="read-only-banner">Read-only timeline modu</p>
           ) : null}
-          {turnActive ? (
-            <div className="running-status" role="status">
+          {turnActive || turnPendingAction === 'submit' ? (
+            <div className="running-status" role="status" aria-live="polite">
               <span aria-hidden="true" />
               <small>
-                {t('Running on the server', 'Server üzerinde çalışıyor')} ·
-                sequence {String(lastSequence.current).padStart(4, '0')}
+                {turnPendingAction === 'submit' && !activeTurnId
+                  ? t('Sending task to Codex…', 'Görev Codex’e gönderiliyor…')
+                  : turnPendingAction === 'interrupt'
+                    ? t('Stopping Codex…', 'Codex durduruluyor…')
+                    : t(
+                        'Codex is working on the server',
+                        'Codex server üzerinde çalışıyor',
+                      )}{' '}
+                · sequence {String(lastSequence.current).padStart(4, '0')}
               </small>
-              <button
-                type="button"
-                disabled={turnPending}
-                onClick={() => void steerOrInterrupt('interrupt')}
-              >
-                DURDUR
-              </button>
+              {activeTurnId ? (
+                <button
+                  type="button"
+                  disabled={turnPending}
+                  aria-label={t('Stop Codex', 'Codex’i durdur')}
+                  onClick={() => void steerOrInterrupt('interrupt')}
+                >
+                  {t('STOP', 'DURDUR')}
+                </button>
+              ) : null}
             </div>
           ) : null}
           <form

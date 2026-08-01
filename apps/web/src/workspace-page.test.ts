@@ -587,6 +587,16 @@ describe('Codex-style timeline presentation', () => {
 })
 
 describe('conversation projection', () => {
+  it('shows pending work immediately for an accepted turn', () => {
+    expect(conversationFeed([], 'turn_accepted')).toEqual([
+      expect.objectContaining({
+        key: 'work:turn_accepted:pending',
+        role: 'work',
+        running: true,
+      }),
+    ])
+  })
+
   it('projects upstream user items and normalized assistant messages into chat', () => {
     const user = parseTimelineEvent({
       ...base,
