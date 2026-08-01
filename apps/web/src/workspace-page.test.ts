@@ -8,9 +8,11 @@ import {
 import {
   boundedTail,
   attachmentMediaType,
+  attachmentUploadPercent,
   sourceMediaType,
   chatFollowStateAfterScroll,
   coalesceTimelineEvents,
+  ComposerAttachmentList,
   ConversationHistory,
   conversationFolderPickerState,
   conversationFolderDisplayName,
@@ -1136,6 +1138,54 @@ describe('attachment selection', () => {
     expect(
       attachmentMediaType({ name: 'archive.zip', type: 'application/zip' }),
     ).toBe('application/zip')
+  })
+
+  it('shows a selected file immediately with its upload progress', () => {
+    const html = renderToStaticMarkup(
+      createElement(ComposerAttachmentList, {
+        items: [
+          {
+            localId: 'upload-1',
+            status: 'uploading',
+            name: 'archive.zip',
+            byteLength: 8_192,
+            kind: 'file',
+            progress: 37,
+          },
+        ],
+        onRemove: () => undefined,
+        onDismissFailed: () => undefined,
+      }),
+    )
+
+    expect(html).toContain('archive.zip')
+    expect(html).toContain('Uploading archive.zip')
+    expect(html).toContain('value="37"')
+    expect(html).toContain('37%')
+  })
+
+  it('bounds computable upload progress and keeps unknown totals at zero', () => {
+    expect(
+      attachmentUploadPercent({
+        loaded: 25,
+        total: 100,
+        lengthComputable: true,
+      }),
+    ).toBe(25)
+    expect(
+      attachmentUploadPercent({
+        loaded: 150,
+        total: 100,
+        lengthComputable: true,
+      }),
+    ).toBe(100)
+    expect(
+      attachmentUploadPercent({
+        loaded: 25,
+        total: 0,
+        lengthComputable: false,
+      }),
+    ).toBe(0)
   })
 })
 

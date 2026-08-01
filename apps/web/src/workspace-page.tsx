@@ -218,6 +218,157 @@ export function attachmentMediaType(file: Pick<File, 'name' | 'type'>) {
   )
 }
 
+export type ComposerAttachmentItem =
+  | {
+      localId: string
+      status: 'uploading' | 'failed'
+      name: string
+      byteLength: number
+      kind: 'image' | 'file'
+      progress: number
+    }
+  | {
+      localId: string
+      status: 'ready'
+      attachment: ConversationAttachment
+    }
+
+export function attachmentUploadPercent(input: {
+  loaded: number
+  total: number
+  lengthComputable: boolean
+}) {
+  if (!input.lengthComputable || input.total <= 0) return 0
+  return Math.min(
+    100,
+    Math.max(0, Math.round((input.loaded / input.total) * 100)),
+  )
+}
+
+function uploadConversationAttachment(
+  url: string,
+  headers: Record<string, string>,
+  file: File,
+  onProgress: (progress: number) => void,
+): Promise<ConversationAttachment> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('POST', url)
+    request.responseType = 'json'
+    for (const [name, value] of Object.entries(headers))
+      request.setRequestHeader(name, value)
+    request.upload.addEventListener('progress', (event) => {
+      onProgress(attachmentUploadPercent(event))
+    })
+    request.addEventListener('error', () => {
+      reject(
+        new Error(
+          localize(
+            `${file.name}: upload connection failed`,
+            `${file.name}: yükleme bağlantısı başarısız oldu`,
+          ),
+        ),
+      )
+    })
+    request.addEventListener('load', () => {
+      if (request.status < 200 || request.status >= 300) {
+        const parsed = apiErrorResponseSchema.safeParse(request.response)
+        reject(
+          new Error(
+            userFacingApiError(
+              parsed.success ? parsed.data : null,
+              request.status,
+            ),
+          ),
+        )
+        return
+      }
+      try {
+        resolve(conversationAttachmentSchema.parse(request.response))
+      } catch (cause) {
+        reject(cause)
+      }
+    })
+    request.send(file)
+  })
+}
+
+export function ComposerAttachmentList({
+  items,
+  onRemove,
+  onDismissFailed,
+}: {
+  items: ComposerAttachmentItem[]
+  onRemove: (attachment: ConversationAttachment) => void
+  onDismissFailed: (localId: string) => void
+}) {
+  const t = useTranslations()
+  if (items.length === 0) return null
+  return (
+    <div
+      className="composer-attachments"
+      aria-label={t('Attachments', 'Attachment’lar')}
+    >
+      {items.map((item) => {
+        const attachment = item.status === 'ready' ? item.attachment : item
+        return (
+          <span
+            className={`attachment-chip is-${item.status}`}
+            key={item.localId}
+            aria-busy={item.status === 'uploading'}
+          >
+            <span aria-hidden="true">
+              {attachment.kind === 'image' ? '▧' : '▤'}
+            </span>
+            <span>{attachment.name}</span>
+            {item.status === 'uploading' ? (
+              <span className="attachment-progress">
+                <progress
+                  max={100}
+                  value={item.progress}
+                  aria-label={t(
+                    `Uploading ${item.name}`,
+                    `${item.name} yükleniyor`,
+                  )}
+                />
+                <small>{item.progress}%</small>
+              </span>
+            ) : item.status === 'failed' ? (
+              <small className="attachment-failed">
+                {t('Upload failed', 'Yüklenemedi')}
+              </small>
+            ) : (
+              <small>{(attachment.byteLength / 1024).toFixed(1)} KB</small>
+            )}
+            {item.status !== 'uploading' ? (
+              <button
+                type="button"
+                aria-label={
+                  item.status === 'ready'
+                    ? t(
+                        `Remove ${attachment.name} attachment`,
+                        `${attachment.name} attachment’ını kaldır`,
+                      )
+                    : t(
+                        `Dismiss failed ${attachment.name} upload`,
+                        `Başarısız ${attachment.name} yüklemesini kapat`,
+                      )
+                }
+                onClick={() => {
+                  if (item.status === 'ready') onRemove(item.attachment)
+                  else onDismissFailed(item.localId)
+                }}
+              >
+                ×
+              </button>
+            ) : null}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 export function sourceMediaType(file: Pick<File, 'name' | 'type'>) {
   const extension = file.name.toLowerCase().split('.').pop()
   if (file.type === 'application/pdf' || extension === 'pdf')
@@ -3094,8 +3245,15 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [supportAccessOpen, setSupportAccessOpen] = useState(false)
-  const [attachments, setAttachments] = useState<ConversationAttachment[]>([])
-  const [attachmentPending, setAttachmentPending] = useState(false)
+  const [attachmentItems, setAttachmentItems] = useState<
+    ComposerAttachmentItem[]
+  >([])
+  const attachments = attachmentItems.flatMap((item) =>
+    item.status === 'ready' ? [item.attachment] : [],
+  )
+  const attachmentPending = attachmentItems.some(
+    (item) => item.status === 'uploading',
+  )
   const [sourcePending, setSourcePending] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<
     'codex' | 'claude' | 'gemini' | 'cursor'
@@ -3335,7 +3493,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       setError(undefined)
       setRealtimeState('kapalı')
       setMasterExpanded(true)
-      setAttachments([])
+      setAttachmentItems([])
     }
     readSessionDetail(sessionId)
       .then((loaded) => {
@@ -3752,7 +3910,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     setSession(undefined)
     setApprovals(new Map())
     setPrompt('')
-    setAttachments([])
+    setAttachmentItems([])
     setReadOnly(false)
     setError(undefined)
     void navigate({ to: '/' })
@@ -4269,7 +4427,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           params: { sessionId: activeSession.sessionId },
         })
       setPrompt('')
-      setAttachments([])
+      setAttachmentItems([])
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
       if (
@@ -4311,42 +4469,97 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   async function uploadAttachments(files: FileList | null) {
     if (!files?.length || attachmentPending) return
     const selected = [...files]
-    setAttachmentPending(true)
+    const queued = selected.map((file) => {
+      const mediaType = attachmentMediaType(file)
+      return {
+        localId: crypto.randomUUID(),
+        status: 'uploading' as const,
+        name: file.name,
+        byteLength: file.size,
+        kind: mediaType.startsWith('image/')
+          ? ('image' as const)
+          : ('file' as const),
+        progress: 0,
+      }
+    })
+    setAttachmentItems((current) => [...current, ...queued])
     setError(undefined)
     try {
       const activeSession = session ?? (await provisionSession())
-      const uploaded = await Promise.all(
-        selected.map(async (file) => {
+      await Promise.all(
+        selected.map(async (file, index) => {
+          const queuedItem = queued[index]
+          if (!queuedItem) return
           const mediaType = attachmentMediaType(file)
-          if (file.size < 1)
-            throw new Error(
-              t(
-                `${file.name}: file must not be empty`,
-                `${file.name}: dosya boş olmamalı`,
-              ),
-            )
-          const response = await fetch(
-            `${apiBaseUrl}/v1/sessions/${encodeURIComponent(activeSession.sessionId)}/attachments`,
-            {
-              method: 'POST',
-              headers: {
+          try {
+            if (file.size < 1)
+              throw new Error(
+                t(
+                  `${file.name}: file must not be empty`,
+                  `${file.name}: dosya boş olmamalı`,
+                ),
+              )
+            const uploaded = await uploadConversationAttachment(
+              `${apiBaseUrl}/v1/sessions/${encodeURIComponent(activeSession.sessionId)}/attachments`,
+              {
                 ...scopeHeaders,
                 'content-type': 'application/octet-stream',
                 'x-attachment-name': encodeURIComponent(file.name),
                 'x-attachment-media-type': mediaType,
               },
-              body: file,
-            },
-          )
-          if (!response.ok) throw await apiError(response)
-          return conversationAttachmentSchema.parse(await response.json())
+              file,
+              (progress) => {
+                setAttachmentItems((current) =>
+                  current.map((item) =>
+                    item.localId === queuedItem.localId &&
+                    item.status === 'uploading'
+                      ? { ...item, progress }
+                      : item,
+                  ),
+                )
+              },
+            )
+            setAttachmentItems((current) =>
+              current.map((item) =>
+                item.localId === queuedItem.localId
+                  ? {
+                      localId: queuedItem.localId,
+                      status: 'ready',
+                      attachment: uploaded,
+                    }
+                  : item,
+              ),
+            )
+          } catch (cause) {
+            setAttachmentItems((current) =>
+              current.map((item) =>
+                item.localId === queuedItem.localId &&
+                item.status === 'uploading'
+                  ? { ...item, status: 'failed' }
+                  : item,
+              ),
+            )
+            setError(
+              cause instanceof Error
+                ? cause.message
+                : t(
+                    `${file.name}: upload failed`,
+                    `${file.name}: yükleme başarısız oldu`,
+                  ),
+            )
+          }
         }),
       )
-      setAttachments((current) => [...current, ...uploaded])
     } catch (cause) {
+      setAttachmentItems((current) =>
+        current.map((item) =>
+          queued.some((queuedItem) => queuedItem.localId === item.localId) &&
+          item.status === 'uploading'
+            ? { ...item, status: 'failed' }
+            : item,
+        ),
+      )
       setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setAttachmentPending(false)
     }
   }
 
@@ -4359,12 +4572,24 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         { method: 'DELETE', headers: scopeHeaders },
       )
       if (!response.ok) throw await apiError(response)
-      setAttachments((current) =>
-        current.filter((item) => item.attachmentId !== attachment.attachmentId),
+      setAttachmentItems((current) =>
+        current.filter(
+          (item) =>
+            item.status !== 'ready' ||
+            item.attachment.attachmentId !== attachment.attachmentId,
+        ),
       )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     }
+  }
+
+  function dismissFailedAttachment(localId: string) {
+    setAttachmentItems((current) =>
+      current.filter(
+        (item) => item.localId !== localId || item.status !== 'failed',
+      ),
+    )
   }
 
   async function uploadSource(file: File) {
@@ -4895,12 +5120,21 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               )}
               onClick={() => setProviderSheetOpen(true)}
             >
-              <span aria-hidden="true" />
-              {(session?.provider ?? selectedProvider).toUpperCase()} ·{' '}
-              {session?.resolvedModel ??
-                selectedModel?.displayName ??
-                'Default'}{' '}
-              · {session?.reasoningEffort ?? selectedEffort}
+              <span className="provider-chip-status" aria-hidden="true" />
+              <span className="provider-chip-provider">
+                {(session?.provider ?? selectedProvider).toUpperCase()}
+              </span>
+              <span className="provider-chip-divider" aria-hidden="true">
+                ·
+              </span>
+              <span className="provider-chip-model">
+                {session?.resolvedModel ??
+                  selectedModel?.displayName ??
+                  'Default'}
+              </span>
+              <span className="provider-chip-effort">
+                · {session?.reasoningEffort ?? selectedEffort}
+              </span>
             </button>
             {sessionId ? (
               <details className="usage-summary">
@@ -5615,34 +5849,11 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             <label htmlFor="prompt">
               {t('Give Codex a task', 'Codex’e görev ver')}
             </label>
-            {attachments.length > 0 ? (
-              <div className="composer-attachments" aria-label="Attachment’lar">
-                {attachments.map((attachment) => (
-                  <span
-                    className="attachment-chip"
-                    key={attachment.attachmentId}
-                  >
-                    <span aria-hidden="true">
-                      {attachment.kind === 'image' ? '▧' : '▤'}
-                    </span>
-                    <span>{attachment.name}</span>
-                    <small>
-                      {(attachment.byteLength / 1024).toFixed(1)} KB
-                    </small>
-                    <button
-                      type="button"
-                      aria-label={t(
-                        `Remove ${attachment.name} attachment`,
-                        `${attachment.name} attachment’ını kaldır`,
-                      )}
-                      onClick={() => void removeAttachment(attachment)}
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            ) : null}
+            <ComposerAttachmentList
+              items={attachmentItems}
+              onRemove={(attachment) => void removeAttachment(attachment)}
+              onDismissFailed={dismissFailedAttachment}
+            />
             <div className="composer-row">
               <label
                 className="attachment-button"

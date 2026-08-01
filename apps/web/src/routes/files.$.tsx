@@ -1,7 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import MessageMarkdown from '../message-markdown'
-import { withBase } from '../base-path'
 import { apiBaseUrl, scopeHeaders } from '../workspace-page'
 import { useTranslations } from '../i18n'
 
@@ -45,7 +44,16 @@ function FilePage() {
   return (
     <main className="workspace-file-page">
       <header>
-        <a href={withBase('/')}>← {t('Conversations', 'Konuşmalar')}</a>
+        {search.sessionId ? (
+          <Link
+            to="/sessions/$sessionId"
+            params={{ sessionId: search.sessionId }}
+          >
+            ← {t('Back to conversation', 'Konuşmaya dön')}
+          </Link>
+        ) : (
+          <Link to="/">← {t('Conversations', 'Konuşmalar')}</Link>
+        )}
         <code>/{path}</code>
       </header>
       {error ? <p role="alert">{error}</p> : null}
@@ -62,21 +70,17 @@ function FilePage() {
       {entry?.kind === 'directory' ? (
         <ul className="workspace-directory-list">
           {entry.entries.map((item) => {
-            const baseHref = withBase(
-              `/files/${[path, item.name]
-                .filter(Boolean)
-                .map(encodeURIComponent)
-                .join('/')}`,
-            )
-            const href = search.sessionId
-              ? `${baseHref}?sessionId=${encodeURIComponent(search.sessionId)}`
-              : baseHref
+            const childPath = [path, item.name].filter(Boolean).join('/')
             return (
               <li key={item.name}>
-                <a href={href}>
+                <Link
+                  to="/files/$"
+                  params={{ _splat: childPath }}
+                  search={{ sessionId: search.sessionId }}
+                >
                   {item.directory ? '▸ ' : ''}
                   {item.name}
-                </a>
+                </Link>
               </li>
             )
           })}

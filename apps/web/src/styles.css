@@ -1221,6 +1221,27 @@ select {
   color: #71857d;
   font-size: 0.62rem;
 }
+.attachment-chip.is-uploading {
+  border-color: #4d806c;
+}
+.attachment-progress {
+  display: grid;
+  min-width: 104px;
+  align-items: center;
+  grid-template-columns: minmax(64px, 1fr) auto;
+  gap: 6px;
+}
+.attachment-progress progress {
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 999px;
+  overflow: hidden;
+  accent-color: #70d7ae;
+}
+.attachment-failed {
+  color: #f3a6a6 !important;
+}
 .attachment-chip button {
   width: 22px;
   height: 22px;
@@ -3339,6 +3360,7 @@ button:disabled {
 
 .provider-chip {
   display: flex;
+  min-width: 0;
   max-width: 290px;
   padding: 6px 9px;
   border: 2px solid var(--color-text);
@@ -3355,7 +3377,7 @@ button:disabled {
   white-space: nowrap;
 }
 
-.provider-chip > span,
+.provider-chip-status,
 .running-status > span {
   width: 7px;
   height: 7px;
@@ -3363,10 +3385,22 @@ button:disabled {
   background: var(--color-neutral-500);
 }
 
-.provider-chip.is-running > span,
+.provider-chip.is-running > .provider-chip-status,
 .running-status > span {
   background: var(--color-accent);
   animation: modernist-pulse 1.2s infinite;
+}
+
+.provider-chip-provider,
+.provider-chip-divider,
+.provider-chip-effort {
+  flex: 0 0 auto;
+}
+
+.provider-chip-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .usage-summary,
@@ -4350,12 +4384,40 @@ button:disabled {
 }
 
 @media (max-width: 620px) {
+  .workspace-shell .chat-header {
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-left: max(6px, env(safe-area-inset-left));
+    grid-template-columns: 40px minmax(0, 1fr) minmax(88px, 34vw);
+    gap: 7px;
+  }
+
   .provider-chip {
-    max-width: 132px;
+    width: 100%;
+    max-width: none;
+  }
+
+  .provider-chip-effort {
+    display: none;
   }
 
   .approval-safety-summary {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .workspace-shell .chat-header {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+
+  .provider-chip {
+    width: auto;
+    max-width: 86px;
+  }
+
+  .provider-chip-divider,
+  .provider-chip-model {
+    display: none;
   }
 }
 

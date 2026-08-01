@@ -1,11 +1,9 @@
+import { Link } from '@tanstack/react-router'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { withBase } from './base-path'
 
-export function workspaceMarkdownHref(
-  href: string | undefined,
-  sessionId?: string,
-) {
+export function workspaceMarkdownPath(href: string | undefined) {
   if (!href || href.startsWith('#')) return null
   if (/^[a-z][a-z\d+.-]*:/i.test(href) || href.startsWith('//')) return null
   let decoded: string
@@ -25,13 +23,17 @@ export function workspaceMarkdownHref(
     workspacePath.split('/').includes('..')
   )
     return null
-  const target = withBase(
-    `/files/${workspacePath
-      .split('/')
-      .filter(Boolean)
-      .map(encodeURIComponent)
-      .join('/')}`,
-  )
+  return workspacePath.split('/').filter(Boolean).join('/')
+}
+
+export function workspaceMarkdownHref(
+  href: string | undefined,
+  sessionId?: string,
+) {
+  const workspacePath = workspaceMarkdownPath(href)
+  if (!workspacePath) return null
+  const encodedPath = workspacePath.split('/').map(encodeURIComponent).join('/')
+  const target = withBase(`/files/${encodedPath}`)
   return sessionId
     ? `${target}?sessionId=${encodeURIComponent(sessionId)}`
     : target
@@ -39,12 +41,26 @@ export function workspaceMarkdownHref(
 
 function markdownComponents(sessionId?: string): Components {
   return {
-    a: ({ node: _node, href, ...props }) => {
-      const workspaceHref = workspaceMarkdownHref(href, sessionId)
-      return workspaceHref ? (
-        <a {...props} href={workspaceHref} />
+    a: ({ node: _node, href, children, title }) => {
+      const workspacePath = workspaceMarkdownPath(href)
+      return workspacePath ? (
+        <Link
+          to="/files/$"
+          params={{ _splat: workspacePath }}
+          search={{ sessionId }}
+          {...(title ? { title } : {})}
+        >
+          {children}
+        </Link>
       ) : (
-        <a {...props} href={href} target="_blank" rel="noreferrer noopener" />
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer noopener"
+          {...(title ? { title } : {})}
+        >
+          {children}
+        </a>
       )
     },
   }

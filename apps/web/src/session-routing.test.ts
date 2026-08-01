@@ -76,4 +76,20 @@ describe('session route integration', () => {
     await expect(readSessionDetail(undefined, fetcher)).resolves.toBeUndefined()
     expect(fetcher).not.toHaveBeenCalled()
   })
+
+  it('returns from a workspace file to the conversation that opened it', async () => {
+    const router = getRouter(
+      createMemoryHistory({
+        initialEntries: ['/files/notes/result.md?sessionId=ses-file-source'],
+      }),
+    )
+    await router.load()
+
+    const markup = renderToStaticMarkup(
+      createElement(RouterProvider, { router }),
+    )
+
+    expect(markup).toContain('href="/sessions/ses-file-source"')
+    expect(markup).toContain('Back to conversation')
+  })
 })
