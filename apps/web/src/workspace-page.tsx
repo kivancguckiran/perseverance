@@ -1502,8 +1502,10 @@ export function conversationFeed(
     const segment = cards.filter(
       (card) =>
         !claimedCards.has(card.key) &&
-        card.event.sequence > afterSequence &&
-        card.event.sequence <= assistant.sequence,
+        card.event.sequence <= assistant.sequence &&
+        (assistant.turnId
+          ? card.event.codexTurnId === assistant.turnId
+          : card.event.sequence > afterSequence),
     )
     if (segment.length) {
       for (const card of segment) claimedCards.add(card.key)
@@ -1517,19 +1519,30 @@ export function conversationFeed(
     }
     afterSequence = assistant.sequence
   }
-  const trailing = cards.filter(
-    (card) =>
-      card.event.sequence > afterSequence && !claimedCards.has(card.key),
-  )
-  if (trailing.length && trailing.some((card) => !isHousekeepingCard(card))) {
+  const trailingGroups = new Map<string, TimelineCard[]>()
+  for (const card of cards.filter(
+    (candidate) => !claimedCards.has(candidate.key),
+  )) {
+    const key = card.event.codexTurnId ?? 'legacy'
+    const group = trailingGroups.get(key) ?? []
+    group.push(card)
+    trailingGroups.set(key, group)
+  }
+  for (const trailing of trailingGroups.values()) {
+    if (!trailing.some((card) => !isHousekeepingCard(card))) continue
     const last = trailing.at(-1)!
-    const lastMessageSequence = messages.at(-1)?.sequence ?? -1
+    const groupTurnId = last.event.codexTurnId
+    const lastGroupMessageSequence = messages
+      .filter((message) => message.turnId === groupTurnId)
+      .reduce((maximum, message) => Math.max(maximum, message.sequence), -1)
     work.push({
       key: nextWorkKey(trailing),
       role: 'work',
       cards: trailing,
-      sequence: Math.max(last.event.sequence, lastMessageSequence) + 0.5,
-      running: turnIsActive,
+      sequence: Math.max(last.event.sequence, lastGroupMessageSequence) + 0.25,
+      running:
+        turnIsActive &&
+        (!groupTurnId || !activeTurnId || groupTurnId === activeTurnId),
     })
   }
   if (turnIsActive && !work.some((item) => item.running)) {

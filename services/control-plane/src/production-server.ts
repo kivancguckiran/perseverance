@@ -202,7 +202,7 @@ export function productionCodexNotificationEvent(
   stored: ProductionEvent,
   notification: unknown,
 ): TimelineEvent {
-  return adaptCodexNotification(notification as ServerNotification, {
+  const adapted = adaptCodexNotification(notification as ServerNotification, {
     tenantId: stored.tenantId,
     workspaceId: stored.workspaceId,
     sessionId: stored.sessionId,
@@ -210,6 +210,10 @@ export function productionCodexNotificationEvent(
     nextSequence: () => stored.sequence,
     now: () => new Date(stored.occurredAt),
     nextEventId: () => stored.eventId,
+  })
+  return timelineEventSchema.parse({
+    ...adapted,
+    ...(stored.runId ? { codexTurnId: stored.runId } : {}),
   })
 }
 

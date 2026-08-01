@@ -174,6 +174,7 @@ describe('production session API contract', () => {
     expect(event).toMatchObject({
       eventId: 'event-a',
       sequence: 9,
+      codexTurnId: 'run-a',
       type: 'reasoning.summary.delta',
       payload: { text: 'Inspecting the workspace' },
     })
