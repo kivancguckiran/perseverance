@@ -201,6 +201,16 @@ services:
   workspace-agent:
     <<: *product
     command: ['node', '/app/workspace-agent.mjs']
+    # Codex workspace-write uses bubblewrap as the per-command sandbox. Docker's
+    # default seccomp profile blocks the nested user namespace it requires.
+    # Keep the supervisor non-root, capability-free and unable to gain privilege;
+    # relax only the outer syscall filter so bubblewrap can enforce the inner
+    # filesystem boundary. See ADR-0039.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=unconfined
     environment:
       TOPOLOGY_DATABASE_URL: postgresql://self_hosted_runtime:${SELF_HOSTED_POSTGRES_RUNTIME_PASSWORD}@postgres:5432/persistent_codex
       OBJECT_STORAGE_ENDPOINT: http://object-storage:9000

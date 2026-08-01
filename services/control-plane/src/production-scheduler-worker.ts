@@ -140,6 +140,21 @@ export function shouldPersistProductionActivityNotification(
   return typeof item?.type === 'string' && ACTIVITY_ITEM_TYPES.has(item.type)
 }
 
+/**
+ * Self-hosted turns may modify their mounted workspace, but they must never
+ * pause on an escalation request that this background worker cannot present.
+ * `never` keeps denied operations denied; it does not widen the sandbox.
+ */
+export function productionThreadStartParams(
+  workspaceCwd: string,
+): codexV2.ThreadStartParams {
+  return {
+    cwd: workspaceCwd,
+    approvalPolicy: 'never',
+    sandbox: 'workspace-write',
+  }
+}
+
 export function productionTurnCompletion(
   input: unknown,
   latestAgentMessage?: string,
@@ -464,9 +479,7 @@ export class ProductionSchedulerWorker {
         await fence()
         const thread = await client.request<codexV2.ThreadStartResponse>(
           'thread/start',
-          {
-            cwd: this.options.workspaceCwd,
-          } satisfies codexV2.ThreadStartParams,
+          productionThreadStartParams(this.options.workspaceCwd),
         )
         let resolveFinal!: (message: { text: string; itemId?: string }) => void
         let rejectFinal!: (error: Error) => void

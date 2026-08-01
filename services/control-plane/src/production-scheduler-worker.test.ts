@@ -2,9 +2,20 @@ import { describe, expect, it, vi } from 'vitest'
 import { PrepaidCreditError } from '@perseverance/billing-platform'
 import {
   settleTerminalRunBilling,
+  productionThreadStartParams,
   productionTurnCompletion,
   shouldPersistProductionActivityNotification,
 } from './production-scheduler-worker'
+
+describe('production scheduler Codex boundary', () => {
+  it('permits workspace writes without approval escalation', () => {
+    expect(productionThreadStartParams('/workspace')).toEqual({
+      cwd: '/workspace',
+      approvalPolicy: 'never',
+      sandbox: 'workspace-write',
+    })
+  })
+})
 
 describe('production scheduler activity capture', () => {
   it('keeps explicit summaries and command lifecycle events', () => {
