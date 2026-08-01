@@ -17,12 +17,14 @@ import {
   createSharedFolderRequestSchema,
   folderListResponseSchema,
   folderMembershipSchema,
+  interruptTurnRequestSchema,
   sessionResponseSchema,
   sessionListResponseSchema,
   sharedFolderSchema,
   subscribeMessageSchema,
   updateConversationRequestSchema,
   updateSessionArchiveRequestSchema,
+  turnActionResponseSchema,
   type AuthPrincipal,
   type SessionResponse,
 } from '@perseverance/control-plane-contracts'
@@ -781,18 +783,24 @@ export async function buildProductionControlPlane(
     },
   )
 
-  app.get<{ Querystring: { path?: string } }>(
+  app.get<{ Querystring: { path?: string; sessionId?: string } }>(
     '/v1/workspace-files',
     async (request, reply) => {
       const requestScope = scope(request.headers)
       if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
       if (!options.internalRuntimeToken)
         return reply.code(503).send({ code: 'WORKSPACE_FILES_UNAVAILABLE' })
+      if (!request.query.sessionId)
+        return reply.code(400).send({ code: 'SESSION_ID_REQUIRED' })
       const endpoint = new URL(
         '/internal/v1/workspace-files',
         options.runtimeControlReadinessUrl,
       )
       endpoint.searchParams.set('path', request.query.path ?? '')
+      endpoint.searchParams.set('tenantId', requestScope.tenantId)
+      endpoint.searchParams.set('organizationId', requestScope.organizationId)
+      endpoint.searchParams.set('workspaceId', requestScope.workspaceId)
+      endpoint.searchParams.set('sessionId', request.query.sessionId)
       const response = await fetch(endpoint, {
         headers: { authorization: `Bearer ${options.internalRuntimeToken}` },
       })
@@ -1266,6 +1274,69 @@ export async function buildProductionControlPlane(
       throw error
     }
   })
+
+  app.post<{
+    Params: { sessionId: string; turnId: string }
+    Body: unknown
+  }>(
+    '/v1/sessions/:sessionId/turns/:turnId/interrupt',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      if (!interruptTurnRequestSchema.safeParse(request.body ?? {}).success)
+        return reply.code(400).send({ code: 'VALIDATION_ERROR' })
+      if (!header(request.headers['idempotency-key']))
+        return reply.code(400).send({ code: 'IDEMPOTENCY_KEY_REQUIRED' })
+      if (!options.internalRuntimeToken)
+        return reply.code(503).send({ code: 'RUNTIME_CONTROL_UNAVAILABLE' })
+      const [session, run] = await Promise.all([
+        options.repository.getSession(requestScope, request.params.sessionId),
+        options.repository.getRun(requestScope, request.params.turnId),
+      ])
+      if (!session || !run || run.sessionId !== session.sessionId)
+        return reply.code(404).send({ code: 'TURN_NOT_FOUND' })
+      if (run.terminalAt)
+        return turnActionResponseSchema.parse({
+          ...requestScope,
+          runId: run.runId,
+          codexThreadId: run.codexThreadId ?? session.sessionId,
+          codexTurnId: run.runId,
+          status: 'interrupted',
+        })
+
+      const endpoint = new URL(
+        `/internal/v1/runs/${encodeURIComponent(run.runId)}/interrupt`,
+        options.runtimeControlReadinessUrl,
+      )
+      let runtimeResponse: Response | undefined
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        runtimeResponse = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${options.internalRuntimeToken}`,
+          },
+          body: '{}',
+        })
+        if (runtimeResponse.status !== 409) break
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      if (!runtimeResponse?.ok) {
+        const body = await runtimeResponse?.json().catch(() => null)
+        return reply
+          .code(runtimeResponse?.status ?? 503)
+          .send(body ?? { code: 'RUNTIME_CONTROL_UNAVAILABLE' })
+      }
+      return reply.code(202).send(
+        turnActionResponseSchema.parse({
+          ...requestScope,
+          runId: run.runId,
+          codexThreadId: run.codexThreadId ?? session.sessionId,
+          codexTurnId: run.runId,
+          status: 'accepted',
+        }),
+      )
+    },
+  )
 
   app.get<{ Querystring: { status?: string } }>(
     '/v1/approvals',

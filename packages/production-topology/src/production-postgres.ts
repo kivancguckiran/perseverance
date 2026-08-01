@@ -42,6 +42,7 @@ export interface ProductionRun extends ProductionScope {
     | 'running'
     | 'completed'
     | 'failed'
+    | 'interrupted'
     | 'poisoned'
     | 'recovery_required'
     | 'outcome_unknown'
@@ -1029,7 +1030,7 @@ export class ProductionPostgresRepository {
     input: ProductionScope & {
       runId: string
       fencingToken: number
-      outcome: 'completed' | 'failed' | 'outcome_unknown'
+      outcome: 'completed' | 'failed' | 'interrupted' | 'outcome_unknown'
       outputObjectKey?: string | null
     },
   ) {

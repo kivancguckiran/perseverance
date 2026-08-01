@@ -15,6 +15,7 @@ type WorkspaceEntry =
 
 function FilePage() {
   const params = Route.useParams()
+  const search = Route.useSearch()
   const path = params._splat ?? ''
   const t = useTranslations()
   const [entry, setEntry] = useState<WorkspaceEntry>()
@@ -25,7 +26,7 @@ function FilePage() {
     setEntry(undefined)
     setError(undefined)
     void fetch(
-      `${apiBaseUrl}/v1/workspace-files?path=${encodeURIComponent(path)}`,
+      `${apiBaseUrl}/v1/workspace-files?path=${encodeURIComponent(path)}&sessionId=${encodeURIComponent(search.sessionId ?? '')}`,
       { headers: scopeHeaders, signal: controller.signal },
     )
       .then(async (response) => {
@@ -39,7 +40,7 @@ function FilePage() {
           setError(cause instanceof Error ? cause.message : String(cause))
       })
     return () => controller.abort()
-  }, [path, t])
+  }, [path, search.sessionId, t])
 
   return (
     <main className="workspace-file-page">
@@ -51,7 +52,9 @@ function FilePage() {
       {!entry && !error ? <p>{t('Loading…', 'Yükleniyor…')}</p> : null}
       {entry?.kind === 'file' ? (
         path.toLowerCase().endsWith('.md') ? (
-          <MessageMarkdown>{entry.content}</MessageMarkdown>
+          <MessageMarkdown sessionId={search.sessionId}>
+            {entry.content}
+          </MessageMarkdown>
         ) : (
           <pre className="workspace-file-plain">{entry.content}</pre>
         )
@@ -59,12 +62,15 @@ function FilePage() {
       {entry?.kind === 'directory' ? (
         <ul className="workspace-directory-list">
           {entry.entries.map((item) => {
-            const href = withBase(
+            const baseHref = withBase(
               `/files/${[path, item.name]
                 .filter(Boolean)
                 .map(encodeURIComponent)
                 .join('/')}`,
             )
+            const href = search.sessionId
+              ? `${baseHref}?sessionId=${encodeURIComponent(search.sessionId)}`
+              : baseHref
             return (
               <li key={item.name}>
                 <a href={href}>
@@ -80,4 +86,10 @@ function FilePage() {
   )
 }
 
-export const Route = createFileRoute('/files/$')({ component: FilePage })
+export const Route = createFileRoute('/files/$')({
+  validateSearch: (search: Record<string, unknown>) => ({
+    sessionId:
+      typeof search.sessionId === 'string' ? search.sessionId : undefined,
+  }),
+  component: FilePage,
+})

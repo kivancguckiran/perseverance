@@ -53,10 +53,13 @@ RUN addgroup -S workspace && adduser -S -G workspace -u 10001 workspace
 # Aynı kural workspace-data volume'u için de geçerlidir: /workspace imajda
 # önceden 10001 sahipliğiyle bulunmazsa boş named volume root:root oluşur ve
 # gerçek agent turn'leri dosya yazamaz.
-RUN mkdir -p /codex-home /workspace \
- && chown 10001:10001 /codex-home /workspace
+RUN mkdir -p /codex-home/runtime /workspace /scoped-workspace \
+ && chown -R 10001:10001 /codex-home /workspace /scoped-workspace
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out ./
+RUN bwrap_path="$(find /app/codex/vendor -path '*/codex-resources/bwrap' -type f | head -n 1)" \
+ && test -n "$bwrap_path" \
+ && ln -s "$bwrap_path" /app/codex/bwrap
 COPY --chown=10001:10001 infra/self-hosted/web/self-hosted-web-server.mjs ./self-hosted-web-server.mjs
 USER 10001:10001
 ENV WP26_CODEX_BIN=/app/codex/bin/codex.js

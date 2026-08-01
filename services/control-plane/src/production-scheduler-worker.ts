@@ -1,6 +1,6 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { readFile, readdir, realpath, stat } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { isAbsolute, relative, resolve } from 'node:path'
 import {
@@ -97,6 +97,7 @@ export interface ProductionSchedulerWorkerOptions {
   pollMs: number
   runtimeHoldMs: number
   codexBin: string
+  workspaceSandboxBin?: string
   codexProvisioningSource?: string
   workspaceCwd: string
   healthPort?: number
@@ -108,6 +109,109 @@ export interface ProductionSchedulerWorkerOptions {
   contentKeys?: ContentKeyResolver
   titleModelId?: string
   internalRuntimeToken?: string
+}
+
+export const CODEX_SCOPED_WORKSPACE_CWD = '/scoped-workspace'
+export const CODEX_SCOPED_HOME = '/codex-session'
+
+function safeWorkspaceEnvironment(codexHome: string): NodeJS.ProcessEnv {
+  return {
+    CODEX_HOME: codexHome,
+    HOME: process.env.HOME ?? '/home/workspace',
+    PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    LANG: process.env.LANG ?? 'C.UTF-8',
+    ...(process.env.TERM ? { TERM: process.env.TERM } : {}),
+    ...(process.env.SSL_CERT_FILE
+      ? { SSL_CERT_FILE: process.env.SSL_CERT_FILE }
+      : {}),
+  }
+}
+
+export async function ensureConversationWorkspaceRoot(
+  workspaceCwd: string,
+  scope: ProductionScope,
+  folderId: string,
+) {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(folderId))
+    throw new Error('INVALID_CONVERSATION_FOLDER_ID')
+  const root = await realpath(workspaceCwd)
+  const scopeKey = createHash('sha256')
+    .update(
+      `${scope.tenantId}\0${scope.organizationId}\0${scope.workspaceId}`,
+      'utf8',
+    )
+    .digest('hex')
+  const requested = resolve(
+    root,
+    '.perseverance',
+    'conversation-homes',
+    scopeKey,
+    folderId,
+  )
+  await mkdir(requested, { recursive: true, mode: 0o700 })
+  const physical = await realpath(requested)
+  const scoped = relative(root, physical)
+  if (scoped.startsWith('..') || isAbsolute(scoped))
+    throw new Error('CONVERSATION_WORKSPACE_ESCAPE')
+  return physical
+}
+
+export function productionWorkspaceSandboxArgs(input: {
+  codexBin: string
+  physicalWorkspace: string
+  isolatedCodexHome: string
+  sourceAuthFile: string
+  codexArgs?: string[]
+}) {
+  return [
+    '--die-with-parent',
+    '--new-session',
+    '--unshare-all',
+    '--share-net',
+    '--dir',
+    '/app',
+    '--ro-bind',
+    '/app/codex',
+    '/app/codex',
+    '--ro-bind',
+    '/usr',
+    '/usr',
+    '--ro-bind',
+    '/bin',
+    '/bin',
+    '--ro-bind',
+    '/lib',
+    '/lib',
+    '--ro-bind',
+    '/etc',
+    '/etc',
+    '--dev',
+    '/dev',
+    '--proc',
+    '/proc',
+    '--tmpfs',
+    '/tmp',
+    '--dir',
+    '/home',
+    '--dir',
+    '/home/workspace',
+    '--dir',
+    '/codex-home',
+    '--ro-bind-try',
+    input.sourceAuthFile,
+    '/codex-home/auth.json',
+    '--bind',
+    input.physicalWorkspace,
+    CODEX_SCOPED_WORKSPACE_CWD,
+    '--bind',
+    input.isolatedCodexHome,
+    CODEX_SCOPED_HOME,
+    '--chdir',
+    CODEX_SCOPED_WORKSPACE_CWD,
+    '--',
+    input.codexBin,
+    ...(input.codexArgs ?? ['app-server']),
+  ]
 }
 
 export const DEFAULT_LUNA_TITLE_MODEL_ID = 'gpt-5.6-terra'
@@ -230,13 +334,11 @@ export function productionTurnCompletion(
   const turn = params?.turn as Record<string, unknown> | undefined
   const status = typeof turn?.status === 'string' ? turn.status : 'failed'
   if (status !== 'completed') {
+    if (status === 'interrupted') return { error: 'CODEX_TURN_INTERRUPTED' }
     const turnError = turn?.error as Record<string, unknown> | undefined
     return {
       error: String(
-        turnError?.message ??
-          (status === 'interrupted'
-            ? 'CODEX_TURN_INTERRUPTED'
-            : 'CODEX_TURN_FAILED'),
+        turnError?.message ?? 'CODEX_TURN_FAILED',
       ),
     }
   }
@@ -304,6 +406,7 @@ export class ProductionSchedulerWorker {
   #running = false
   #healthServer: Server | null = null
   #activeClient: CodexAppServerClient | null = null
+  #activeTurn: { runId: string; threadId: string; turnId: string } | undefined
   #telemetryTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(options: ProductionSchedulerWorkerOptions) {
@@ -326,6 +429,37 @@ export class ProductionSchedulerWorker {
         void (async () => {
           const url = new URL(request.url ?? '/', 'http://workspace-agent')
           response.setHeader('content-type', 'application/json')
+          const interruptMatch = url.pathname.match(
+            /^\/internal\/v1\/runs\/([^/]+)\/interrupt$/,
+          )
+          if (interruptMatch) {
+            if (
+              !authorizedInternalRequest(
+                request.headers.authorization,
+                this.options.internalRuntimeToken,
+              )
+            ) {
+              response.writeHead(401)
+              response.end(JSON.stringify({ code: 'UNAUTHORIZED' }))
+              return
+            }
+            const runId = decodeURIComponent(interruptMatch[1]!)
+            if (!this.#activeClient || this.#activeTurn?.runId !== runId) {
+              response.writeHead(409)
+              response.end(JSON.stringify({ code: 'RUN_NOT_ACTIVE' }))
+              return
+            }
+            await this.#activeClient.request<codexV2.TurnInterruptResponse>(
+              'turn/interrupt',
+              {
+                threadId: this.#activeTurn.threadId,
+                turnId: this.#activeTurn.turnId,
+              } satisfies codexV2.TurnInterruptParams,
+            )
+            response.writeHead(202)
+            response.end(JSON.stringify({ status: 'accepted' }))
+            return
+          }
           if (url.pathname === '/internal/v1/workspace-files') {
             if (
               !authorizedInternalRequest(
@@ -338,8 +472,31 @@ export class ProductionSchedulerWorker {
               return
             }
             try {
-              const entry = await readWorkspaceEntry(
+              const scope = {
+                tenantId: url.searchParams.get('tenantId') ?? '',
+                organizationId: url.searchParams.get('organizationId') ?? '',
+                workspaceId: url.searchParams.get('workspaceId') ?? '',
+              }
+              const sessionId = url.searchParams.get('sessionId') ?? ''
+              if (
+                !scope.tenantId ||
+                !scope.organizationId ||
+                !scope.workspaceId ||
+                !sessionId
+              )
+                throw new Error('INVALID_WORKSPACE_SCOPE')
+              const session = await this.options.repository.getSession(
+                scope,
+                sessionId,
+              )
+              if (!session) throw new Error('SESSION_NOT_FOUND')
+              const workspaceRoot = await ensureConversationWorkspaceRoot(
                 this.options.workspaceCwd,
+                scope,
+                session.folderId,
+              )
+              const entry = await readWorkspaceEntry(
+                workspaceRoot,
                 url.searchParams.get('path') ?? '',
               )
               response.writeHead(200)
@@ -405,6 +562,7 @@ export class ProductionSchedulerWorker {
     await this.options.telemetryExporter?.flush().catch(() => 0)
     await this.#activeClient?.stop().catch(() => undefined)
     this.#activeClient = null
+    this.#activeTurn = undefined
     if (this.#healthServer)
       await new Promise<void>((resolve) =>
         this.#healthServer!.close(() => resolve()),
@@ -560,6 +718,18 @@ export class ProductionSchedulerWorker {
         scope,
         stored.sessionId,
       )
+      if (!currentSession) throw new Error('SESSION_NOT_FOUND')
+      const physicalWorkspace = await ensureConversationWorkspaceRoot(
+        this.options.workspaceCwd,
+        scope,
+        currentSession.folderId,
+      )
+      const sandboxed = Boolean(this.options.workspaceSandboxBin)
+      const isolatedHomeRoot = resolve(
+        this.options.codexProvisioningSource ?? '/codex-home',
+        'runtime',
+      )
+      await mkdir(isolatedHomeRoot, { recursive: true, mode: 0o700 })
       const titleHome =
         currentSession?.title === 'Yeni konuşma' &&
         currentSession.titleGeneratedAt === null
@@ -567,54 +737,84 @@ export class ProductionSchedulerWorker {
               ...(this.options.codexProvisioningSource
                 ? { sourceHome: this.options.codexProvisioningSource }
                 : {}),
+              temporaryRoot: isolatedHomeRoot,
               includeConfig: false,
             })
           : null
       const titlePromise = titleHome
-        ? new CodexTitleProcessRunner()
-            .run({
-              binary: this.options.codexBin,
-              args: [
-                'exec',
-                '--json',
-                '--skip-git-repo-check',
-                '--sandbox',
-                'read-only',
-                '--model',
-                this.options.titleModelId ?? DEFAULT_LUNA_TITLE_MODEL_ID,
-                '--config',
-                'model_reasoning_effort="none"',
-                [
-                  'Produce only a short, safe, single-line Turkish conversation title (maximum 8 words).',
-                  'Do not use tools. Do not include quotes, markdown, or explanation.',
-                  `Message 1: ${prompt.slice(0, 2_000)}`,
-                ].join('\n'),
-              ],
-              codexHome: titleHome.path,
-              requestId: `title:${stored.sessionId}`,
-            })
-            .then(async ({ title }) => {
-              const normalized = normalizeGeneratedConversationTitle(title)
-              if (normalized)
-                await this.options.repository.setGeneratedTitle(
-                  scope,
-                  stored.sessionId,
-                  normalized,
-                )
-            })
-            .catch(() => undefined)
-            .finally(() => titleHome.cleanup())
+        ? (() => {
+            const titleArgs = [
+              'exec',
+              '--json',
+              '--skip-git-repo-check',
+              '--sandbox',
+              'read-only',
+              '--model',
+              this.options.titleModelId ?? DEFAULT_LUNA_TITLE_MODEL_ID,
+              '--config',
+              'model_reasoning_effort="none"',
+              [
+                'Produce only a short, safe, single-line Turkish conversation title (maximum 8 words).',
+                'Do not use tools. Do not include quotes, markdown, or explanation.',
+                `Message 1: ${prompt.slice(0, 2_000)}`,
+              ].join('\n'),
+            ]
+            return new CodexTitleProcessRunner()
+              .run({
+                binary:
+                  this.options.workspaceSandboxBin ?? this.options.codexBin,
+                args: sandboxed
+                  ? productionWorkspaceSandboxArgs({
+                      codexBin: this.options.codexBin,
+                      physicalWorkspace,
+                      isolatedCodexHome: titleHome.path,
+                      sourceAuthFile: resolve(
+                        titleHome.sourceHome,
+                        'auth.json',
+                      ),
+                      codexArgs: titleArgs,
+                    })
+                  : titleArgs,
+                codexHome: sandboxed ? CODEX_SCOPED_HOME : titleHome.path,
+                cwd: physicalWorkspace,
+                requestId: `title:${stored.sessionId}`,
+              })
+              .then(async ({ title }) => {
+                const normalized = normalizeGeneratedConversationTitle(title)
+                if (normalized)
+                  await this.options.repository.setGeneratedTitle(
+                    scope,
+                    stored.sessionId,
+                    normalized,
+                  )
+              })
+              .catch(() => undefined)
+              .finally(() => titleHome.cleanup())
+          })()
         : Promise.resolve()
       const isolatedHome = createIsolatedCodexHome({
         ...(this.options.codexProvisioningSource
           ? { sourceHome: this.options.codexProvisioningSource }
           : {}),
+        temporaryRoot: isolatedHomeRoot,
         includeConfig: false,
       })
       const client = new CodexAppServerClient({
-        command: this.options.codexBin,
-        cwd: this.options.workspaceCwd,
-        env: { ...process.env, CODEX_HOME: isolatedHome.path },
+        command: this.options.workspaceSandboxBin ?? this.options.codexBin,
+        ...(sandboxed
+          ? {
+              args: productionWorkspaceSandboxArgs({
+                codexBin: this.options.codexBin,
+                physicalWorkspace,
+                isolatedCodexHome: isolatedHome.path,
+                sourceAuthFile: resolve(isolatedHome.sourceHome, 'auth.json'),
+              }),
+            }
+          : {}),
+        cwd: physicalWorkspace,
+        env: safeWorkspaceEnvironment(
+          sandboxed ? CODEX_SCOPED_HOME : isolatedHome.path,
+        ),
         requestTimeoutMs: this.options.runtimeTimeoutMs ?? 180_000,
         restart: { maxRestarts: 0 },
       })
@@ -629,7 +829,9 @@ export class ProductionSchedulerWorker {
         await fence()
         const thread = await client.request<codexV2.ThreadStartResponse>(
           'thread/start',
-          productionThreadStartParams(this.options.workspaceCwd),
+          productionThreadStartParams(
+            sandboxed ? CODEX_SCOPED_WORKSPACE_CWD : physicalWorkspace,
+          ),
         )
         let resolveFinal!: (message: { text: string; itemId?: string }) => void
         let rejectFinal!: (error: Error) => void
@@ -733,6 +935,11 @@ export class ProductionSchedulerWorker {
             input: [{ type: 'text', text: prompt, text_elements: [] }],
           } satisfies codexV2.TurnStartParams,
         )
+        this.#activeTurn = {
+          runId: stored.runId,
+          threadId: thread.thread.id,
+          turnId: turn.turn.id,
+        }
         const marked = await this.options.repository.markRunRunning({
           ...scope,
           runId: stored.runId,
@@ -826,6 +1033,7 @@ export class ProductionSchedulerWorker {
         if (timeout) clearTimeout(timeout)
         await client.stop().catch(() => undefined)
         this.#activeClient = null
+        this.#activeTurn = undefined
         isolatedHome.cleanup()
       }
     } catch (error) {
@@ -838,6 +1046,45 @@ export class ProductionSchedulerWorker {
       if (!(
         error instanceof Error && error.message === 'STALE_FENCING_TOKEN'
       )) {
+        if (
+          error instanceof Error &&
+          error.message === 'CODEX_TURN_INTERRUPTED'
+        ) {
+          await append(
+            'turn.completed',
+            {
+              runId: claimed.item.runId,
+              outcome: 'interrupted',
+              reconciled: true,
+            },
+            'interrupted',
+          ).catch(() => undefined)
+          const terminal = await this.options.repository
+            .completeRun({
+              ...scope,
+              runId: claimed.item.runId,
+              fencingToken: claimed.lease.fencingToken,
+              outcome: 'interrupted',
+            })
+            .catch(() => false)
+          if (terminal)
+            await settleTerminalRunBilling(
+              this.options.billing,
+              scope,
+              claimed.item.runId,
+              'failed',
+            ).catch(() => undefined)
+          await this.options.topology
+            .releaseLease({
+              ...scope,
+              leaseId: claimed.lease.leaseId,
+              ownerId: this.options.ownerId,
+              fencingToken: claimed.lease.fencingToken,
+              terminalState: 'completed',
+            })
+            .catch(() => false)
+          return
+        }
         const errorCode =
           error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message)
             ? error.message
@@ -960,6 +1207,7 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
     pollMs: Number(env.SCHEDULER_POLL_MS ?? 100),
     runtimeHoldMs: Number(env.SCHEDULER_RUNTIME_HOLD_MS ?? 0),
     codexBin: required('WP26_CODEX_BIN'),
+    workspaceSandboxBin: required('WP26_BWRAP_BIN'),
     ...(env.CODEX_PROVISIONING_SOURCE
       ? { codexProvisioningSource: env.CODEX_PROVISIONING_SOURCE }
       : {}),

@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { PrepaidCreditError } from '@perseverance/billing-platform'
 import {
   settleTerminalRunBilling,
+  ensureConversationWorkspaceRoot,
+  productionWorkspaceSandboxArgs,
   productionThreadStartParams,
   productionTurnCompletion,
   normalizeGeneratedConversationTitle,
@@ -19,6 +21,59 @@ describe('production scheduler Codex boundary', () => {
       approvalPolicy: 'never',
       sandbox: 'workspace-write',
     })
+  })
+
+  it('maps folders to separate tenant-scoped homes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'perseverance-homes-'))
+    const scope = {
+      tenantId: 'tenant-a',
+      organizationId: 'organization-a',
+      workspaceId: 'workspace-a',
+    }
+    const first = await ensureConversationWorkspaceRoot(
+      root,
+      scope,
+      'fol_default',
+    )
+    const second = await ensureConversationWorkspaceRoot(
+      root,
+      scope,
+      'fld_writing',
+    )
+    const otherTenant = await ensureConversationWorkspaceRoot(
+      root,
+      { ...scope, tenantId: 'tenant-b' },
+      'fol_default',
+    )
+    expect(first).not.toBe(second)
+    expect(first).not.toBe(otherTenant)
+    await expect(
+      ensureConversationWorkspaceRoot(root, scope, '../escape'),
+    ).rejects.toThrow('INVALID_CONVERSATION_FOLDER_ID')
+  })
+
+  it('masks the shared root and binds only the selected folder', () => {
+    const args = productionWorkspaceSandboxArgs({
+      codexBin: '/app/codex/bin/codex.js',
+      physicalWorkspace: '/workspace/.perseverance/home/fld_a',
+      isolatedCodexHome: '/codex-home/runtime/run-a',
+      sourceAuthFile: '/codex-home/auth.json',
+    })
+    expect(args).toContain('/scoped-workspace')
+    expect(args).not.toContain('/workspace')
+    expect(args).not.toContain('/')
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--ro-bind',
+        '/app/codex',
+        '/app/codex',
+        '--bind',
+        '/workspace/.perseverance/home/fld_a',
+        '/scoped-workspace',
+      ]),
+    )
+    expect(args.at(-2)).toBe('/app/codex/bin/codex.js')
+    expect(args.at(-1)).toBe('app-server')
   })
 })
 
@@ -126,7 +181,13 @@ describe('production scheduler activity capture', () => {
       productionTurnCompletion(
         {
           method: 'turn/completed',
-          params: { turn: { status: 'interrupted', items: [] } },
+          params: {
+            turn: {
+              status: 'interrupted',
+              error: { message: 'Turn interrupted by user' },
+              items: [],
+            },
+          },
         },
         'Working…',
       ),

@@ -3024,6 +3024,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     runId: string
     turnId: string
   }>()
+  const stopAfterSubmitRef = useRef(false)
   const [gitRefreshPending, setGitRefreshPending] = useState(false)
   const [gitError, setGitError] = useState<string>()
   const [error, setError] = useState<string>()
@@ -3556,9 +3557,12 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     () =>
       conversationFeed(
         [...events.values()].sort((a, b) => a.sequence - b.sequence),
-        acceptedTurn?.turnId,
+        acceptedTurn?.turnId ??
+          (turnPendingAction === 'submit' || turnPendingAction === 'interrupt'
+            ? 'optimistic_turn'
+            : undefined),
       ),
-    [acceptedTurn?.turnId, events],
+    [acceptedTurn?.turnId, events, turnPendingAction],
   )
   const displayedChatFeed =
     chatFeed.length > 0 || online ? chatFeed : offlineMessages
@@ -4123,6 +4127,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       current ?? session?.activeRun?.turnId ?? acceptedTurn?.turnId ?? undefined
     )
   }, [acceptedTurn?.turnId, events, session?.activeRun?.turnId])
+  const composerBusy =
+    turnActive ||
+    turnPendingAction === 'submit' ||
+    turnPendingAction === 'interrupt'
 
   async function steerOrInterrupt(action: 'steer' | 'interrupt') {
     if (!session || !activeTurnId) return
@@ -4160,6 +4168,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
   }
 
+  function requestStop() {
+    if (activeTurnId) {
+      void steerOrInterrupt('interrupt')
+      return
+    }
+    if (turnPendingAction === 'submit') {
+      stopAfterSubmitRef.current = true
+      setTurnPendingAction('interrupt')
+    }
+  }
+
   async function submitTurn() {
     const trimmed = prompt.trim()
     if (contentKeyLocked) return
@@ -4185,6 +4204,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     })
     setTurnPending(true)
     setTurnPendingAction('submit')
+    stopAfterSubmitRef.current = false
     setError(undefined)
     try {
       const activeSession = session ?? (await provisionSession())
@@ -4207,6 +4227,20 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         runId: accepted.runId,
         turnId: accepted.codexTurnId,
       })
+      if (stopAfterSubmitRef.current) {
+        const interrupted = await fetch(
+          `${apiBaseUrl}/v1/sessions/${activeSession.sessionId}/turns/${accepted.codexTurnId}/interrupt`,
+          {
+            method: 'POST',
+            headers: {
+              ...scopeHeaders,
+              'idempotency-key': crypto.randomUUID(),
+            },
+            body: '{}',
+          },
+        )
+        if (!interrupted.ok) throw await apiError(interrupted)
+      }
       void recentSessions.refetch()
       if (!sessionId)
         await navigate({
@@ -4224,6 +4258,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       )
         void contentKeySession.refetch()
     } finally {
+      stopAfterSubmitRef.current = false
       setTurnPending(false)
       setTurnPendingAction(null)
     }
@@ -5206,7 +5241,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                           />
                           <Suspense fallback={<p>{item.text}</p>}>
                             {item.text ? (
-                              <MessageMarkdown>{item.text}</MessageMarkdown>
+                              <MessageMarkdown sessionId={session?.sessionId}>
+                                {item.text}
+                              </MessageMarkdown>
                             ) : null}
                           </Suspense>
                           {item.attachments?.length ? (
@@ -5552,16 +5589,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                       )}{' '}
                 · sequence {String(lastSequence.current).padStart(4, '0')}
               </small>
-              {activeTurnId ? (
-                <button
-                  type="button"
-                  disabled={turnPending}
-                  aria-label={t('Stop Codex', 'Codex’i durdur')}
-                  onClick={() => void steerOrInterrupt('interrupt')}
-                >
-                  {t('STOP', 'DURDUR')}
-                </button>
-              ) : null}
             </div>
           ) : null}
           <form
@@ -5662,39 +5689,37 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 }
               />
               <button
-                type="submit"
+                type={composerBusy ? 'button' : 'submit'}
+                className={composerBusy ? 'composer-stop' : undefined}
+                aria-label={
+                  composerBusy
+                    ? t('Stop Codex', 'Codex’i durdur')
+                    : t('Send message', 'Mesajı gönder')
+                }
+                onClick={composerBusy ? requestStop : undefined}
                 disabled={
                   (session !== undefined && session.status !== 'active') ||
                   !online ||
-                  (!prompt.trim() && attachments.length === 0) ||
-                  turnPending ||
+                  (!composerBusy &&
+                    !prompt.trim() &&
+                    attachments.length === 0) ||
                   attachmentPending ||
-                  turnActive ||
                   readOnly ||
                   contentKeyLocked ||
                   (!authReady &&
                     (session?.provider ?? selectedProvider) === 'codex')
                 }
               >
-                {turnPending ? '…' : '↑'}
+                {composerBusy ? '■' : '↑'}
               </button>
               {turnActive && !readOnly && online ? (
-                <>
-                  <button
-                    type="button"
-                    disabled={!prompt.trim() || turnPending}
-                    onClick={() => void steerOrInterrupt('steer')}
-                  >
-                    {t('Steer', 'Yönlendir')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={turnPending}
-                    onClick={() => void steerOrInterrupt('interrupt')}
-                  >
-                    Durdur
-                  </button>
-                </>
+                <button
+                  type="button"
+                  disabled={!prompt.trim() || turnPending}
+                  onClick={() => void steerOrInterrupt('steer')}
+                >
+                  {t('Steer', 'Yönlendir')}
+                </button>
               ) : null}
             </div>
           </form>

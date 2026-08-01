@@ -37,16 +37,35 @@ title model and `reasoningEffort: none`. The title call receives only a bounded
 prefix of the user's first prompt, runs concurrently with the main turn, and
 updates the row only while its title is still the untouched default.
 
+Each durable folder maps to a tenant-scoped physical home below the workspace
+volume. The mapping uses a hash of tenant, organization, and workspace identity
+plus the validated folder ID; folder display names never become filesystem paths.
+`fol_default` therefore has the same persistent semantics as a named folder.
+
+The production worker launches the real Codex app-server inside an outer
+Bubblewrap namespace. It contains only read-only OS/runtime trees, the Codex
+binary, and the single authentication file required by app-server; the container
+root, `/workspace`, service secrets, and product source are absent. Only the
+selected physical home is rebound read-write at `/scoped-workspace`. The
+disposable Codex home is the only other writable bind.
+The child receives a minimal environment without database, object-store, or
+internal-runtime credentials. Codex retains its inner `workspace-write` sandbox
+for commands. This makes a folder an execution boundary rather than merely a
+`cwd` hint: sibling homes and the product checkout are not visible to the agent.
+
 Workspace file reads remain in the workspace-agent. It exposes a bounded internal
 JSON endpoint on the existing private runtime listener. The control-plane calls it
 with the existing internal runtime token and exposes the result only through the
-authenticated tenant-scoped API. Paths are canonicalized with `realpath`; absolute
+authenticated tenant- and session-scoped API. The session selects the same
+physical folder home used for execution. Paths are canonicalized with `realpath`; absolute
 paths, `..`, symlink escape, binary files, and files over 2 MiB are rejected.
 
 ## Consequences
 
 - Conversations consistently appear under a durable folder after reload and on
   another browser.
+- A folderless conversation has full access to its persistent Default home but
+  cannot see the product root or another conversation folder.
 - Legacy folderless rows remain visible under `Default`.
 - Generated titles do not contaminate the main Codex thread or delay its start.
 - The control-plane still has no workspace volume mount or direct filesystem

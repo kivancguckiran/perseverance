@@ -7,6 +7,7 @@ export interface CodexTitleProcessInput {
   binary: string
   args: string[]
   codexHome: string
+  cwd?: string
   requestId: string
 }
 
@@ -34,8 +35,16 @@ export class CodexTitleProcessRunner {
   ): Promise<{ title: string; usage?: UsageReport }> {
     return await new Promise((resolve, reject) => {
       const child = spawn(input.binary, input.args, {
-        cwd: tmpdir(),
-        env: { ...process.env, CODEX_HOME: input.codexHome },
+        cwd: input.cwd ?? tmpdir(),
+        env: {
+          CODEX_HOME: input.codexHome,
+          HOME: process.env.HOME ?? '/home/workspace',
+          PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+          LANG: process.env.LANG ?? 'C.UTF-8',
+          ...(process.env.SSL_CERT_FILE
+            ? { SSL_CERT_FILE: process.env.SSL_CERT_FILE }
+            : {}),
+        },
         stdio: ['ignore', 'pipe', 'ignore'],
       })
       let settled = false

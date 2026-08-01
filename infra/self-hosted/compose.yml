@@ -227,6 +227,7 @@ services:
       WORKSPACE_CWD: /workspace
       CODEX_HOME: /codex-home
       WP26_CODEX_BIN: /app/codex/bin/codex.js
+      WP26_BWRAP_BIN: /app/codex/bwrap
       # WP37: envelope-şifreli prompt'lar için content key lease'i iç
       # listener'dan alınır; anahtar diske yazılmaz.
       CONTENT_KEY_SERVICE_URL: http://control-plane:3304

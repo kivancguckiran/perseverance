@@ -3826,7 +3826,8 @@ button:disabled {
   font-size: 14px;
 }
 
-.composer-row > button[type='submit'] {
+.composer-row > button[type='submit'],
+.composer-row > button.composer-stop {
   width: 42px;
   height: 42px;
   padding: 0;
@@ -3838,13 +3839,21 @@ button:disabled {
   line-height: 1;
 }
 
-.composer-row > button[type='submit']:disabled {
+.composer-row > button[type='submit']:disabled,
+.composer-row > button.composer-stop:disabled {
   border-color: var(--color-neutral-400);
   background: var(--color-neutral-400);
 }
 
-.composer-row > button:not([type='submit']) {
+.composer-row > button:not([type='submit']):not(.composer-stop) {
   display: none;
+}
+
+.composer-row > button.composer-stop {
+  border-color: var(--color-text);
+  color: var(--color-text);
+  background: transparent;
+  font-size: 13px;
 }
 
 /* Conversation drawer */
