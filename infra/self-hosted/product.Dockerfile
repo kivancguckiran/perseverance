@@ -45,7 +45,9 @@ RUN apk add --no-cache \
       bash=5.3.9-r1 \
       git=2.54.0-r0 \
       openssh-client-default=10.3_p1-r0 \
-      ripgrep=15.1.0-r0
+      poppler-utils=25.12.0-r1 \
+      ripgrep=15.1.0-r0 \
+      util-linux-misc=2.42.1-r0
 RUN addgroup -S workspace && adduser -S -G workspace -u 10001 workspace
 # gerçek-ortam bulgusu: codex-home named volume'u ilk mount'ta imajdaki
 # dizin sahipliğini devralır. Dizin imajda yokken root sahipliğiyle oluşuyor ve

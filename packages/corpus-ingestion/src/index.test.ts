@@ -100,6 +100,30 @@ describe('golden extraction', () => {
     ).rejects.toMatchObject({ code: 'MIME_MISMATCH' })
   })
 
+  it('reports a missing PDF parser executable as unavailable', async () => {
+    const toolRoot = mkdtempSync(join(tmpdir(), 'fixture-pdf-tools-'))
+    roots.push(toolRoot)
+    const executable = process.platform === 'linux' ? 'prlimit' : 'pdfinfo'
+    writeFileSync(
+      join(toolRoot, executable),
+      "#!/bin/sh\nprintf '%s\\n' 'failed to execute PDF parser: No such file or directory' >&2\nexit 127\n",
+      { mode: 0o700 },
+    )
+    const previousPath = process.env.PATH
+    process.env.PATH = toolRoot
+    try {
+      await expect(
+        extractDocumentBounded({
+          mediaType: 'application/pdf',
+          bytes: fixture('golden.pdf'),
+        }),
+      ).rejects.toMatchObject({ code: 'PDF_PARSER_UNAVAILABLE' })
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+    }
+  })
+
   it('handles multipage/compressed/Unicode PDFs and returns typed unsupported outcomes', async () => {
     const multipage = await extractDocumentBounded({
       mediaType: 'application/pdf',

@@ -93,6 +93,11 @@ function command(
 
 function typedPdfFailure(result: CommandResult): CorpusError {
   const diagnostic = result.stderr.toString('utf8').toLowerCase()
+  if (result.exitCode === 126 || result.exitCode === 127)
+    return new CorpusError(
+      'PDF_PARSER_UNAVAILABLE',
+      'PDF parser is unavailable',
+    )
   if (
     diagnostic.includes('incorrect password') ||
     diagnostic.includes('encrypted')
