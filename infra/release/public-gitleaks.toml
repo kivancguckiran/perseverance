@@ -64,12 +64,3 @@ regexes = [
   '''self_hosted_runtime_password''',
   '''\$\{RUNTIME_PASSWORD\}''',
 ]
-
-[[allowlists]]
-description = "Git history daha sonra yeniden yazılana kadar silinmiş acceptance harness'larındaki açıkça sentetik loopback parolaları için dar geçiş istisnası; bu yollar mevcut working tree'de bulunmaz."
-paths = [
-  '''^infra/wp30-local/init\.sql$''',
-  '''^scripts/wp26-production-stack\.ts$''',
-  '''^scripts/wp27-restore\.ts$''',
-  '''^scripts/wp28-keycloak-identity\.ts$''',
-]
