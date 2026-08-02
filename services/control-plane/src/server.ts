@@ -3553,7 +3553,15 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           .code(416)
           .send({ code: 'RANGE_NOT_GRANTED', message: 'Range was not granted' })
       try {
+        const metadata = store.getArtifact(grant, grant.artifactId)
         if (grant.folderId) {
+          const session = store.getSession({
+            tenantId: grant.tenantId,
+            workspaceId: grant.workspaceId,
+            sessionId: metadata.sessionId,
+          })
+          if (session.folderId !== grant.folderId)
+            throw new SharedFolderError('DOWNLOAD_GRANT_STALE')
           const current = await sharedFolders.getFolder(
             {
               tenantId: grant.tenantId,
@@ -3567,7 +3575,6 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
           if (current.cacheEpoch !== grant.cacheEpoch)
             throw new SharedFolderError('DOWNLOAD_GRANT_STALE')
         }
-        const metadata = store.getArtifact(grant, grant.artifactId)
         store.appendAudit({
           ...metadata,
           actor: 'user',

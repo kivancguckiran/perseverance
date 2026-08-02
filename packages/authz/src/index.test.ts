@@ -110,6 +110,18 @@ describe('OIDC authentication', () => {
       'TOKEN_ISSUER_INVALID',
     ],
     ['wrong audience', token({ aud: 'other' }), 'TOKEN_AUDIENCE_INVALID'],
+    ['ID token type', token({}, { typ: 'id+jwt' }), 'TOKEN_TYPE_INVALID'],
+    ['ID token use', token({ token_use: 'id' }), 'TOKEN_TYPE_INVALID'],
+    [
+      'ID-token-only claims on a legacy token',
+      token({ nonce: 'nonce-1' }),
+      'TOKEN_TYPE_INVALID',
+    ],
+    [
+      'foreign authorized party',
+      token({ aud: [audience, 'other-client'], azp: 'other-client' }),
+      'TOKEN_AUTHORIZED_PARTY_INVALID',
+    ],
     ['expired', token({ exp: 1 }), 'TOKEN_EXPIRED'],
     ['future nbf', token({ nbf: 4_102_444_800 }), 'TOKEN_NOT_ACTIVE'],
     [
@@ -124,6 +136,18 @@ describe('OIDC authentication', () => {
         headers: {},
       }),
     ).rejects.toMatchObject({ code })
+  })
+
+  it('accepts explicit access-token typing', async () => {
+    await expect(
+      fixture().adapter.authenticate({
+        authorization: `Bearer ${token(
+          { token_use: 'access' },
+          { typ: 'at+jwt' },
+        )}`,
+        headers: {},
+      }),
+    ).resolves.toMatchObject({ subject: 'user-1' })
   })
 
   it('rejects invalid signatures and unknown keys without fail-open', async () => {

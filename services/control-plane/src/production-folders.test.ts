@@ -10,12 +10,35 @@ const headers = {
   'x-workspace-id': 'workspace-a',
 }
 
-async function productionApi(sessionCount = 0) {
+async function productionApi(
+  sessionCount = 0,
+  allowedWorkspaceIds: string[] | null = null,
+) {
   return buildProductionControlPlane({
     instanceId: 'production-folder-test',
     repository: {
       pool: {
-        query: async () => ({ rowCount: 1, rows: [{ role: 'admin' }] }),
+        query: async (sql: string, values?: unknown[]) => {
+          if (sql.includes('workspace_membership_overrides denied')) {
+            const workspaceId = values?.[3]
+            const allowed =
+              allowedWorkspaceIds === null ||
+              (typeof workspaceId === 'string' &&
+                allowedWorkspaceIds.includes(workspaceId))
+            return {
+              rowCount: allowed ? 1 : 0,
+              rows: allowed
+                ? [
+                    {
+                      role: 'admin',
+                      workspace_ids: allowedWorkspaceIds ?? [],
+                    },
+                  ]
+                : [],
+            }
+          }
+          return { rowCount: 1, rows: [{ role: 'admin' }] }
+        },
       },
       listOutbox: async () => [],
       markOutboxPublished: async () => {},
@@ -166,6 +189,18 @@ describe('production folder compatibility routes', () => {
       code: 'DEFAULT_CONVERSATION_FOLDER_PROTECTED',
     })
     expect(runtimeFetch).toHaveBeenCalledTimes(1)
+    await app.close()
+  })
+
+  it('rejects a caller-selected workspace outside the membership scope', async () => {
+    const app = await productionApi(0, ['workspace-a'])
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/v1/folders',
+      headers: { ...headers, 'x-workspace-id': 'workspace-b' },
+    })
+    expect(denied.statusCode).toBe(403)
+    expect(denied.json()).toEqual({ code: 'AUTHORIZATION_DENIED' })
     await app.close()
   })
 })

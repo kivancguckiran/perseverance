@@ -38,12 +38,13 @@ if (mode === 'mint') {
   const privateKey = createPrivateKey(readFileSync(privateKeyPath, 'utf8'))
   const now = Math.floor(Date.now() / 1000)
   const unsigned = `${base64url(
-    JSON.stringify({ alg: 'RS256', kid: keyId, typ: 'JWT' }),
+    JSON.stringify({ alg: 'RS256', kid: keyId, typ: 'at+jwt' }),
   )}.${base64url(
     JSON.stringify({
       iss: issuer,
       aud: audience,
       sub: subject,
+      token_use: 'access',
       iat: now,
       auth_time: now,
       exp: now + ttl,

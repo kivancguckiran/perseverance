@@ -389,6 +389,10 @@ export class OidcAuthenticationAdapter implements AuthenticationAdapter {
       !this.#options.algorithms?.includes(header.alg as never)
     )
       throw new AuthenticationError('TOKEN_ALGORITHM_REJECTED')
+    const tokenType =
+      typeof header.typ === 'string' ? header.typ.toLowerCase() : undefined
+    if (tokenType === 'id+jwt')
+      throw new AuthenticationError('TOKEN_TYPE_INVALID')
     const kid = claimString(header.kid, 'TOKEN_KEY_ID_MISSING')
     const now = request.now ?? new Date()
     let cache = await this.#keys(now.getTime())
@@ -413,6 +417,20 @@ export class OidcAuthenticationAdapter implements AuthenticationAdapter {
       throw new AuthenticationError('TOKEN_ISSUER_INVALID')
     if (!audienceMatches(claims.aud, this.#options.audience))
       throw new AuthenticationError('TOKEN_AUDIENCE_INVALID')
+    if (claims.token_use !== undefined && claims.token_use !== 'access')
+      throw new AuthenticationError('TOKEN_TYPE_INVALID')
+    if (
+      claims.token_use === undefined &&
+      (claims.nonce !== undefined ||
+        claims.at_hash !== undefined ||
+        claims.c_hash !== undefined)
+    )
+      throw new AuthenticationError('TOKEN_TYPE_INVALID')
+    const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
+    if (claims.azp !== undefined && claims.azp !== this.#options.audience)
+      throw new AuthenticationError('TOKEN_AUTHORIZED_PARTY_INVALID')
+    if (audiences.length > 1 && claims.azp !== this.#options.audience)
+      throw new AuthenticationError('TOKEN_AUTHORIZED_PARTY_INVALID')
     const exp = Number(claims.exp)
     const nbf = claims.nbf === undefined ? undefined : Number(claims.nbf)
     const authTime =
@@ -435,7 +453,7 @@ export class OidcAuthenticationAdapter implements AuthenticationAdapter {
       kind: 'end_user',
       subject,
       issuer: this.#options.issuer,
-      audience: Array.isArray(claims.aud) ? claims.aud : [claims.aud],
+      audience: audiences,
       authenticatedAt: new Date(authTime * 1000).toISOString(),
       expiresAt: new Date(exp * 1000).toISOString(),
       assurance: {

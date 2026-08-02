@@ -136,6 +136,14 @@ export async function provisionWorkspace(
     [input.organizationId, input.workspaceId, input.workspaceName],
   )
   await client.query(
+    `INSERT INTO persistent_codex.workspace_membership_overrides
+       (organization_id,workspace_id,issuer,subject,access)
+     VALUES ($1,$2,$3,$4,'allow')
+     ON CONFLICT (organization_id,workspace_id,issuer,subject)
+     DO UPDATE SET access='allow', updated_at=now()`,
+    [input.organizationId, input.workspaceId, input.issuer, input.subject],
+  )
+  await client.query(
     `INSERT INTO persistent_codex.tenant_scheduling_policies
        (tenant_id,organization_id,policy_version,algorithm,weight,tenant_concurrency,workspace_concurrency,provider_concurrency,provider_requests_per_minute,starvation_age_ms,retry_policy,effective_at)
      VALUES ($1,$2,$3,'weighted-fair-v1',1,2,1,'{"codex":2}','{"codex":120}',5000,'{"maxAttempts":4,"initialBackoffMs":100,"maxBackoffMs":1000,"poisonAfterAttempts":4}',now())

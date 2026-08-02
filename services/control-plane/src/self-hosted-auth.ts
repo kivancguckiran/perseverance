@@ -152,13 +152,14 @@ export function mintRs256AccessToken(input: {
 }): { token: string; expiresAt: Date } {
   const now = Math.floor(input.now.getTime() / 1000)
   const header = base64url(
-    JSON.stringify({ alg: 'RS256', kid: input.keyId, typ: 'JWT' }),
+    JSON.stringify({ alg: 'RS256', kid: input.keyId, typ: 'at+jwt' }),
   )
   const payload = base64url(
     JSON.stringify({
       iss: input.issuer,
       aud: input.audience,
       sub: input.subject,
+      token_use: 'access',
       iat: now,
       auth_time: now,
       exp: now + input.ttlSeconds,
@@ -739,8 +740,9 @@ export class SelfHostedAuthService {
       username: result.user.username,
       scope: this.#scopeOf(result.user),
       session: result.session,
-      contentKeyUnlocked:
-        this.#options.leases.acquire(result.user.workspaceId) !== null,
+      contentKeyUnlocked: this.#options.leases.hasActiveLease(
+        result.user.workspaceId,
+      ),
     }
   }
 
