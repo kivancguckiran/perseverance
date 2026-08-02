@@ -1,5 +1,9 @@
 import { withBase } from './base-path'
 import { localize } from './i18n'
+import {
+  selfHostedSessionTokensSchema,
+  type SelfHostedSessionTokens,
+} from '@perseverance/control-plane-contracts'
 // WP37 — self-hosted oturum saklama ve yenileme yardımcıları (ADR-0037).
 // Access/refresh token ve scope tarayıcı storage'ında tutulur; parola ve
 // content key HİÇBİR ZAMAN saklanmaz. sessionStorage 'persistent.auth'
@@ -9,7 +13,7 @@ export interface StoredAuthSession {
   accessToken: string
   accessTokenExpiresAt: string
   refreshToken?: string | undefined
-  refreshTokenExpiresAt?: string | undefined
+  refreshTokenExpiresAt?: string | null | undefined
   subject?: string | undefined
   username?: string | undefined
   tenantId?: string | undefined
@@ -19,6 +23,8 @@ export interface StoredAuthSession {
 
 export const AUTH_SESSION_KEY = 'persistent.auth'
 const AUTH_PERSISTENT_KEY = 'persistent.auth.wp37'
+type RefreshResult = 'refreshed' | 'none' | 'failed'
+let refreshInFlight: Promise<RefreshResult> | null = null
 
 const parse = (raw: string | null): StoredAuthSession | null => {
   if (!raw) return null
@@ -51,12 +57,21 @@ export function clearStoredAuth(): void {
   window.localStorage.removeItem(AUTH_PERSISTENT_KEY)
 }
 
-export interface AuthSessionResponse {
-  accessToken: string
-  accessTokenExpiresAt: string
-  refreshToken: string
-  refreshTokenExpiresAt: string
+function clearStoredAuthToken(refreshToken: string): void {
+  if (typeof window === 'undefined') return
+  if (
+    parse(window.sessionStorage.getItem(AUTH_SESSION_KEY))?.refreshToken ===
+    refreshToken
+  )
+    window.sessionStorage.removeItem(AUTH_SESSION_KEY)
+  if (
+    parse(window.localStorage.getItem(AUTH_PERSISTENT_KEY))?.refreshToken ===
+    refreshToken
+  )
+    window.localStorage.removeItem(AUTH_PERSISTENT_KEY)
 }
+
+export type AuthSessionResponse = SelfHostedSessionTokens
 
 export function storeAuthResponse(input: {
   session: AuthSessionResponse
@@ -64,11 +79,12 @@ export function storeAuthResponse(input: {
   scope?: { tenantId: string; organizationId: string; workspaceId: string }
 }): void {
   const previous = readStoredAuth()
+  const session = selfHostedSessionTokensSchema.parse(input.session)
   writeStoredAuth({
-    accessToken: input.session.accessToken,
-    accessTokenExpiresAt: input.session.accessTokenExpiresAt,
-    refreshToken: input.session.refreshToken,
-    refreshTokenExpiresAt: input.session.refreshTokenExpiresAt,
+    accessToken: session.accessToken,
+    accessTokenExpiresAt: session.accessTokenExpiresAt,
+    refreshToken: session.refreshToken,
+    refreshTokenExpiresAt: session.refreshTokenExpiresAt,
     subject: input.username
       ? `user:${input.username}`
       : (previous?.subject ?? undefined),
@@ -81,11 +97,11 @@ export function storeAuthResponse(input: {
 }
 
 // Access token'ın süresi yaklaştıysa refresh token ile sessizce yeniler.
-// 'refreshed' dönerse çağıran sayfayı yeniden yüklemelidir (modül-scope
-// header'lar yeni token'ı görür).
-export async function refreshStoredSession(
+// Eşzamanlı sorgular aynı refresh token'ı yarış halinde döndürmesin diye
+// yenileme, sekme içinde tek uçuş olarak yürütülür.
+async function performStoredSessionRefresh(
   apiBaseUrl: string,
-): Promise<'refreshed' | 'none' | 'failed'> {
+): Promise<RefreshResult> {
   const auth = readStoredAuth()
   if (!auth?.refreshToken) return 'none'
   const remaining = Date.parse(auth.accessTokenExpiresAt) - Date.now()
@@ -97,7 +113,7 @@ export async function refreshStoredSession(
       body: JSON.stringify({ refreshToken: auth.refreshToken }),
     })
     if (!response.ok) {
-      if (response.status === 401) clearStoredAuth()
+      if (response.status === 401) clearStoredAuthToken(auth.refreshToken)
       return 'failed'
     }
     const body = (await response.json()) as {
@@ -110,6 +126,16 @@ export async function refreshStoredSession(
   } catch {
     return 'failed'
   }
+}
+
+export function refreshStoredSession(
+  apiBaseUrl: string,
+): Promise<RefreshResult> {
+  if (refreshInFlight) return refreshInFlight
+  refreshInFlight = performStoredSessionRefresh(apiBaseUrl).finally(() => {
+    refreshInFlight = null
+  })
+  return refreshInFlight
 }
 
 export interface ContentKeySessionStatus {

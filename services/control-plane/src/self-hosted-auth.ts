@@ -13,6 +13,7 @@ import {
   type KeyObject,
 } from 'node:crypto'
 import type pg from 'pg'
+import type { SelfHostedSessionTokens as ContractSelfHostedSessionTokens } from '@perseverance/control-plane-contracts'
 import {
   ContentKeyLeaseManager,
   RECOVERY_KEK_HKDF_INFO,
@@ -119,12 +120,7 @@ export interface SelfHostedAuthScope {
   workspaceId: string
 }
 
-export interface SelfHostedSessionTokens {
-  accessToken: string
-  accessTokenExpiresAt: string
-  refreshToken: string
-  refreshTokenExpiresAt: string
-}
+export type SelfHostedSessionTokens = ContractSelfHostedSessionTokens
 
 export interface SelfHostedAuthOptions {
   pool: pg.Pool
@@ -136,7 +132,6 @@ export interface SelfHostedAuthOptions {
   signingKeyId: string
   leases: ContentKeyLeaseManager
   accessTokenTtlSeconds?: number
-  refreshTokenTtlSeconds?: number
   limiter?: AuthAttemptLimiter
   now?: () => Date
 }
@@ -355,9 +350,6 @@ export class SelfHostedAuthService {
   ): Promise<SelfHostedSessionTokens> {
     const access = this.#mintAccessToken(this.subjectFor(user.username))
     const refreshToken = `rt1_${randomBytes(32).toString('base64url')}`
-    const refreshTtlMs =
-      (this.#options.refreshTokenTtlSeconds ?? 30 * 24 * 3600) * 1000
-    const refreshExpires = new Date(this.#now().getTime() + refreshTtlMs)
     await client.query(
       `INSERT INTO persistent_codex.user_refresh_tokens(tenant_id,user_id,token_hash,expires_at)
        VALUES ($1,$2,$3,$4)`,
@@ -365,14 +357,14 @@ export class SelfHostedAuthService {
         user.organizationId,
         user.userId,
         createHash('sha256').update(refreshToken).digest('hex'),
-        refreshExpires.toISOString(),
+        null,
       ],
     )
     return {
       accessToken: access.token,
       accessTokenExpiresAt: access.expiresAt.toISOString(),
       refreshToken,
-      refreshTokenExpiresAt: refreshExpires.toISOString(),
+      refreshTokenExpiresAt: null,
     }
   }
 
@@ -713,7 +705,7 @@ export class SelfHostedAuthService {
       .digest('hex')
     const result = await this.#withAuthFlow(async (client) => {
       const stored = await client.query(
-        `SELECT t.user_id,t.expires_at,t.revoked_at,u.username,u.status,u.organization_id,u.workspace_id,u.password_hash,u.recovery_key_hash
+        `SELECT t.user_id,t.revoked_at,u.username,u.status,u.organization_id,u.workspace_id,u.password_hash,u.recovery_key_hash
          FROM persistent_codex.user_refresh_tokens t
          JOIN persistent_codex.users u ON u.user_id=t.user_id
          WHERE t.token_hash=$1`,
@@ -724,8 +716,6 @@ export class SelfHostedAuthService {
       const row = stored.rows[0] as Record<string, string | null>
       if (row.revoked_at)
         throw new SelfHostedAuthError('REFRESH_TOKEN_REVOKED', 401)
-      if (new Date(String(row.expires_at)) <= this.#now())
-        throw new SelfHostedAuthError('REFRESH_TOKEN_EXPIRED', 401)
       if (row.status !== 'approved')
         throw new SelfHostedAuthError('USER_DISABLED', 403)
       await client.query(

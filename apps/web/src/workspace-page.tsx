@@ -76,6 +76,7 @@ import './content-key-unlock.css'
 import {
   readContentKeySession,
   readStoredAuth,
+  refreshStoredSession,
   signOut,
   unlockStoredContentKey,
 } from './self-hosted-auth'
@@ -407,11 +408,73 @@ async function readPlatformMeta(): Promise<PlatformMeta> {
   return response.json() as Promise<PlatformMeta>
 }
 
+export function shouldRetryIdentityAfterRefresh(input: {
+  accessTokenBeforeRequest: string | undefined
+  accessTokenAfterRefresh: string | undefined
+  refreshResult: 'refreshed' | 'none' | 'failed'
+}): boolean {
+  return (
+    input.refreshResult === 'refreshed' ||
+    Boolean(
+      input.accessTokenAfterRefresh &&
+      input.accessTokenAfterRefresh !== input.accessTokenBeforeRequest,
+    )
+  )
+}
+
+export class IdentityRequestError extends Error {
+  readonly retryable: boolean
+
+  constructor(message: string, retryable: boolean) {
+    super(message)
+    this.name = 'IdentityRequestError'
+    this.retryable = retryable
+  }
+}
+
+export function identityRetryInterval(error: unknown): number | false {
+  return error instanceof IdentityRequestError && error.retryable
+    ? 2_000
+    : false
+}
+
+async function requestIdentity(): Promise<Response> {
+  try {
+    return await fetch(`${apiBaseUrl}/v1/me`, { headers: scopeHeaders })
+  } catch {
+    throw new IdentityRequestError(
+      localize(
+        'The service is restarting; reconnecting without signing you out.',
+        'Servis yeniden başlatılıyor; oturumunuz kapatılmadan bağlanılıyor.',
+      ),
+      true,
+    )
+  }
+}
+
 async function readMe(): Promise<MeResponse> {
-  const response = await fetch(`${apiBaseUrl}/v1/me`, {
-    headers: scopeHeaders,
-  })
-  if (!response.ok) throw await apiError(response)
+  const accessTokenBeforeRequest = runtimeAccessToken()
+  let response = await requestIdentity()
+  if (response.status === 401) {
+    const refreshResult = await refreshStoredSession(apiBaseUrl)
+    if (
+      shouldRetryIdentityAfterRefresh({
+        accessTokenBeforeRequest,
+        accessTokenAfterRefresh: runtimeAccessToken(),
+        refreshResult,
+      })
+    )
+      response = await requestIdentity()
+  }
+  if (!response.ok) {
+    const error = await apiError(response)
+    throw new IdentityRequestError(
+      error.message,
+      response.status === 408 ||
+        response.status === 429 ||
+        response.status >= 500,
+    )
+  }
   return meResponseSchema.parse(await response.json())
 }
 
@@ -3083,6 +3146,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     queryFn: readMe,
     enabled: online,
     retry: false,
+    refetchInterval: (query) => identityRetryInterval(query.state.error),
   })
   const readiness = useQuery({
     queryKey: ['readiness', cacheNamespace],
@@ -3092,6 +3156,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       query.state.data?.status === 'ready' ? false : 5_000,
   })
   const authReady = readiness.data?.status === 'ready'
+  const identityReconnecting =
+    identity.isError && identityRetryInterval(identity.error) !== false
   const contentKeySession = useQuery({
     queryKey: ['content-key-session', cacheNamespace],
     queryFn: () => readContentKeySession(apiBaseUrl, scopeHeaders),
@@ -4637,11 +4703,19 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           )}
         </p>
       ) : null}
-      {identity.isError && online ? (
+      {identityReconnecting && online ? (
+        <p className="offline-banner" role="status">
+          {t(
+            'The service is restarting; reconnecting without signing you out…',
+            'Servis yeniden başlatılıyor; oturumunuz kapatılmadan bağlanılıyor…',
+          )}
+        </p>
+      ) : null}
+      {identity.isError && !identityReconnecting && online ? (
         <p className="offline-banner" role="alert">
           {t(
-            'Your session has expired or access to this organization was denied.',
-            'Oturum süresi dolmuş veya bu organization için erişim yasaklanmış.',
+            'Your identity could not be verified or access to this organization was denied.',
+            'Kimliğiniz doğrulanamadı veya bu organization için erişim reddedildi.',
           )}{' '}
           <a href={withBase('/login')}>
             {t('Sign in again', 'Yeniden giriş yapın')}

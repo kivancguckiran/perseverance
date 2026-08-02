@@ -766,6 +766,17 @@ select {
   text-align: center;
   font-size: 0.72rem;
 }
+.offline-banner a,
+.offline-banner a:visited {
+  color: #fff0c2;
+  font-weight: 700;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+.offline-banner a:hover,
+.offline-banner a:focus-visible {
+  color: #ffffff;
+}
 .pwa-update-banner {
   position: fixed;
   inset: auto 16px 16px auto;

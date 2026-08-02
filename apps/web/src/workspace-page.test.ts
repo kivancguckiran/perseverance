@@ -27,12 +27,15 @@ import {
   providerPickerSelection,
   providerAuthMessage,
   formatUsageCost,
+  IdentityRequestError,
+  identityRetryInterval,
   MessageCopyButton,
   parseOfflineConversation,
   parseOfflineHistory,
   parseStoredProviderSelection,
   sessionScopedCursor,
   serverOwnedRunLabel,
+  shouldRetryIdentityAfterRefresh,
   supportGrantStatusLabel,
   shouldSubmitComposer,
   turnSubmitBlocked,
@@ -73,6 +76,47 @@ describe('tenant-aware client cache namespace', () => {
       expect(
         snapshots.get(offlineConversationKey(nextNamespace, 'ses-a')),
       ).toBeUndefined()
+  })
+})
+
+describe('identity refresh retry', () => {
+  it('retries after this request refreshes the access token', () => {
+    expect(
+      shouldRetryIdentityAfterRefresh({
+        accessTokenBeforeRequest: 'old',
+        accessTokenAfterRefresh: 'new',
+        refreshResult: 'refreshed',
+      }),
+    ).toBe(true)
+  })
+
+  it('retries when a concurrent PWA refresh already replaced the token', () => {
+    expect(
+      shouldRetryIdentityAfterRefresh({
+        accessTokenBeforeRequest: 'old',
+        accessTokenAfterRefresh: 'new',
+        refreshResult: 'none',
+      }),
+    ).toBe(true)
+  })
+
+  it('does not retry an authorization failure with the same token', () => {
+    expect(
+      shouldRetryIdentityAfterRefresh({
+        accessTokenBeforeRequest: 'same',
+        accessTokenAfterRefresh: 'same',
+        refreshResult: 'none',
+      }),
+    ).toBe(false)
+  })
+
+  it('keeps retrying while a restarted service is temporarily unavailable', () => {
+    expect(
+      identityRetryInterval(new IdentityRequestError('restart', true)),
+    ).toBe(2_000)
+    expect(
+      identityRetryInterval(new IdentityRequestError('denied', false)),
+    ).toBe(false)
   })
 })
 

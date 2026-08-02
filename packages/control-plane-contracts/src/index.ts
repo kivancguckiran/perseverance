@@ -121,6 +121,14 @@ export const meResponseSchema = authPrincipalSchema
     activeOrganizationId: identifierSchema,
     activeWorkspaceId: identifierSchema,
   })
+export const selfHostedSessionTokensSchema = z.object({
+  accessToken: z.string().min(1),
+  accessTokenExpiresAt: z.iso.datetime(),
+  refreshToken: z.string().min(8),
+  // New self-hosted sessions do not expire. The datetime variant keeps the
+  // client compatible during a rolling upgrade from the former 30-day model.
+  refreshTokenExpiresAt: z.iso.datetime().nullable(),
+})
 export const authorizationActionSchema = z.enum([
   'session.read',
   'session.create',
@@ -1554,6 +1562,9 @@ export type Organization = z.infer<typeof organizationSchema>
 export type PrincipalIdentity = z.infer<typeof principalIdentitySchema>
 export type AuthPrincipal = z.infer<typeof authPrincipalSchema>
 export type MeResponse = z.infer<typeof meResponseSchema>
+export type SelfHostedSessionTokens = z.infer<
+  typeof selfHostedSessionTokensSchema
+>
 export type AuthorizationAction = z.infer<typeof authorizationActionSchema>
 export type AuthorizationDecision = z.infer<typeof authorizationDecisionSchema>
 export type CorpusLifecycleStatus = z.infer<typeof corpusLifecycleStatusSchema>

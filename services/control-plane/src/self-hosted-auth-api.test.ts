@@ -2,6 +2,7 @@
 // fastify inject üzerinden doğrulanır; tam DB'li akış wp37:privacy gate'inde.
 import Fastify from 'fastify'
 import { describe, expect, it } from 'vitest'
+import { selfHostedSessionTokensSchema } from '@perseverance/control-plane-contracts'
 import {
   SELF_HOSTED_AUTH_PUBLIC_PATHS,
   registerSelfHostedAuthRoutes,
@@ -54,8 +55,8 @@ describe('wp37 auth API sözleşmesi', () => {
         session: {
           accessToken: 'token',
           accessTokenExpiresAt: '2026-07-28T01:00:00.000Z',
-          refreshToken: 'rt1_x',
-          refreshTokenExpiresAt: '2026-08-27T00:00:00.000Z',
+          refreshToken: 'rt1_test_token',
+          refreshTokenExpiresAt: null,
         },
       }),
     })
@@ -65,8 +66,14 @@ describe('wp37 auth API sözleşmesi', () => {
       payload: { username: 'alice', password: 'long-enough-pass' },
     })
     expect(created.statusCode).toBe(201)
-    const body = created.json() as { recoveryKey: string }
+    const body = created.json() as {
+      recoveryKey: string
+      session: unknown
+    }
     expect(body.recoveryKey).toBe('RK1-TEST')
+    expect(selfHostedSessionTokensSchema.parse(body.session)).toMatchObject({
+      refreshTokenExpiresAt: null,
+    })
     await app.close()
   })
 
