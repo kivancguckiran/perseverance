@@ -57,6 +57,13 @@ bash infra/self-hosted/self-hosted.sh set-allowed-users "your-user"
 workspace volume. It never modifies the host repository directly. See the
 [self-hosted guide](infra/self-hosted/README.md) for lifecycle commands.
 
+The portable SSH release flow is documented in the
+[remote deployment runbook](docs/operations/remote-deploy.md). Machine-specific
+coordinates are loaded from the ignored `config/local/` directory; sanitized
+templates live in `config/local.example/`. The repository-wide boundary is
+described in the
+[local configuration policy](docs/operations/local-configuration.md).
+
 ## Local development
 
 Requirements: Node.js 24, pnpm 9.15.3 through Corepack, and Codex CLI 0.144.2.

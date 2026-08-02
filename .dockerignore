@@ -1,6 +1,16 @@
 .git
-.wp29
+.env
+.env.*
+!.env.example
+.wp*
 node_modules
 **/node_modules
 **/dist
 docs/acceptance
+config/local
+.codex-home
+.runtime
+artifacts
+tmp
+*.log
+_to_delete

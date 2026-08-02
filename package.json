@@ -15,6 +15,7 @@
     "alpha:soak": "tsx scripts/alpha-soak.ts",
     "alpha:lifecycle": "tsx scripts/alpha-lifecycle.ts",
     "dev": "pnpm --parallel --filter @perseverance/control-plane --filter @perseverance/web dev",
+    "deploy:remote": "bash scripts/deploy-self-hosted-remote.sh",
     "demo:smoke": "pnpm test -- --run services/control-plane/src/server.test.ts packages/codex-event-adapter/src/index.test.ts && pnpm --filter @perseverance/workspace-agent smoke:unknown-replay && pnpm --filter @perseverance/workspace-agent smoke:real-recovery",
     "provider:smoke:claude": "tsx scripts/provider-smoke.ts claude",
     "provider:smoke:gemini": "tsx scripts/provider-smoke.ts gemini",

@@ -61,3 +61,28 @@ it could not run. State skipped verification explicitly.
 - Do not scaffold unrelated billing, mobile, corpus, or production infrastructure.
 - Keep unresolved product decisions visible; use an ADR draft instead of deciding
   them arbitrarily.
+
+## Local configuration hygiene
+
+- Keep tracked configuration portable and anonymous. Machine-, operator-,
+  tenant-, and installation-specific values belong under the ignored
+  `config/local/` directory; track sanitized counterparts under
+  `config/local.example/`. Follow `docs/operations/local-configuration.md`.
+- Local configuration is not a secret store. Credentials and tokens still
+  belong in ignored env files or the documented secret provider, and must not
+  enter logs, images, fixtures, or snapshots.
+- Public maintainer metadata and attributed corpus provenance are source data,
+  not local runtime configuration; preserve them unless their owning document
+  is intentionally changed.
+
+## Remote deployment
+
+- Use `pnpm deploy:remote -- <pushed-ref>` and follow
+  `docs/operations/remote-deploy.md`.
+- The deployment target is reached over the operator-configured SSH transport.
+  The wrapper owns clean detached release creation, mandatory backup
+  verification, the canonical `self-hosted.sh upgrade`, container health
+  checks, and public `<base-path>/readyz` validation.
+- Do not deploy from a mutable or dirty remote checkout, bypass the encrypted
+  backup, copy secrets into a release, or replace the canonical self-hosted
+  lifecycle with ad hoc `docker compose` commands.
