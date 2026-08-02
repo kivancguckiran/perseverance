@@ -470,13 +470,19 @@ describe('fixture user content key chain', () => {
     const held = leases.acquire(scope.workspaceId)
     expect(held?.contentKey.equals(contentKey)).toBe(true)
     now += 99
+    expect(leases.hasActiveLease(scope.workspaceId)).toBe(true)
+    now += 2
+    expect(leases.hasActiveLease(scope.workspaceId)).toBe(false)
+    leases.issue({ scope, userId: 'usr_1', keyVersion: '1', contentKey })
     expect(leases.acquire(scope.workspaceId)).not.toBeNull()
     now += 101
-    expect(leases.acquire(scope.workspaceId)).toBeNull()
+    expect(leases.hasActiveLease(scope.workspaceId)).toBe(false)
     leases.issue({ scope, userId: 'usr_1', keyVersion: '1', contentKey })
     expect(leases.revoke(scope.workspaceId)).toBe(true)
     expect(leases.acquire(scope.workspaceId)).toBeNull()
     expect(audits).toEqual([
+      'secret.lease_issued',
+      'secret.lease_revoked',
       'secret.lease_issued',
       'secret.lease_revoked',
       'secret.lease_issued',

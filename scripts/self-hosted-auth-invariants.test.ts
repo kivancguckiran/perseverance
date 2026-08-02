@@ -114,13 +114,14 @@ describe('self-hosted-auth access token mint', () => {
     const [header, payload, signature] = minted.token.split('.')
     expect(
       JSON.parse(Buffer.from(String(header), 'base64url').toString()),
-    ).toEqual({ alg: 'RS256', kid: 'self-hosted', typ: 'JWT' })
+    ).toEqual({ alg: 'RS256', kid: 'self-hosted', typ: 'at+jwt' })
     const claims = JSON.parse(
       Buffer.from(String(payload), 'base64url').toString(),
     ) as Record<string, unknown>
     expect(claims.iss).toBe('http://identity:3303')
     expect(claims.aud).toBe('persistent-codex-self-hosted')
     expect(claims.sub).toBe('user:alice')
+    expect(claims.token_use).toBe('access')
     expect(claims.amr).toEqual(['pwd'])
     expect(claims.exp).toBe(Number(claims.iat) + 3600)
     expect(claims.auth_time).toBe(claims.iat)

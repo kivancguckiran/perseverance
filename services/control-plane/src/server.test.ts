@@ -1348,6 +1348,50 @@ describe('artifact API', () => {
           })
         ).statusCode,
       ).toBe(416)
+
+      const sharedFolder = await app.inject({
+        method: 'POST',
+        url: '/v1/folders',
+        headers,
+        payload: { schemaVersion: 1, name: 'Artifact access' },
+      })
+      expect(sharedFolder.statusCode).toBe(201)
+      const folderId = sharedFolder.json().folder.folderId as string
+      expect(
+        (
+          await app.inject({
+            method: 'PATCH',
+            url: `/v1/sessions/${scope.sessionId}/conversation`,
+            headers,
+            payload: { folderId },
+          })
+        ).statusCode,
+      ).toBe(200)
+      const staleGrant = await app.inject({
+        method: 'POST',
+        url: `/v1/artifacts/${created.artifactId}/download-token`,
+        headers,
+      })
+      expect(staleGrant.statusCode).toBe(200)
+      expect(
+        (
+          await app.inject({
+            method: 'PATCH',
+            url: `/v1/sessions/${scope.sessionId}/conversation`,
+            headers,
+            payload: { folderId: null },
+          })
+        ).statusCode,
+      ).toBe(200)
+      expect(
+        (
+          await app.inject({
+            method: 'GET',
+            url: staleGrant.json().downloadUrl,
+          })
+        ).statusCode,
+      ).toBe(404)
+
       const expiringGrant = await app.inject({
         method: 'POST',
         url: `/v1/artifacts/${created.artifactId}/download-token`,

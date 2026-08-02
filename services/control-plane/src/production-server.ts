@@ -395,6 +395,50 @@ export async function buildProductionControlPlane(
   const rolloutAuthority = new ProductionRolloutAuthority(
     options.repository.pool,
   )
+  const authorizedMembership = (
+    principal: AuthPrincipal,
+    requestScope: ProductionScope,
+  ) =>
+    options.repository.pool.query(
+      `SELECT m.role,
+              ARRAY(SELECT o.workspace_id
+                    FROM persistent_codex.workspace_membership_overrides o
+                    WHERE o.organization_id=m.organization_id
+                      AND o.issuer=m.issuer AND o.subject=m.subject
+                      AND o.access='allow'
+                    ORDER BY o.workspace_id) AS workspace_ids
+       FROM persistent_codex.principal_identities p
+       JOIN persistent_codex.organization_memberships m
+         ON m.issuer=p.issuer AND m.subject=p.subject
+       WHERE p.issuer=$1 AND p.subject=$2 AND p.status='active'
+         AND m.organization_id=$3 AND m.status='active'
+         AND NOT EXISTS (
+           SELECT 1 FROM persistent_codex.workspace_membership_overrides denied
+           WHERE denied.organization_id=m.organization_id
+             AND denied.issuer=m.issuer AND denied.subject=m.subject
+             AND denied.workspace_id=$4 AND denied.access='deny'
+         )
+         AND (
+           NOT EXISTS (
+             SELECT 1 FROM persistent_codex.workspace_membership_overrides scoped
+             WHERE scoped.organization_id=m.organization_id
+               AND scoped.issuer=m.issuer AND scoped.subject=m.subject
+               AND scoped.access='allow'
+           )
+           OR EXISTS (
+             SELECT 1 FROM persistent_codex.workspace_membership_overrides allowed
+             WHERE allowed.organization_id=m.organization_id
+               AND allowed.issuer=m.issuer AND allowed.subject=m.subject
+               AND allowed.workspace_id=$4 AND allowed.access='allow'
+           )
+         )`,
+      [
+        principal.issuer,
+        principal.subject,
+        requestScope.organizationId,
+        requestScope.workspaceId,
+      ],
+    )
 
   const attachmentContentKey = async (requestScope: ProductionScope) => {
     if (
@@ -518,14 +562,7 @@ export async function buildProductionControlPlane(
       })
       const requestScope = scope(request.headers)
       if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
-      const membership = await options.repository.pool.query(
-        `SELECT m.role FROM persistent_codex.principal_identities p
-         JOIN persistent_codex.organization_memberships m
-           ON m.issuer=p.issuer AND m.subject=p.subject
-         WHERE p.issuer=$1 AND p.subject=$2 AND p.status='active'
-           AND m.organization_id=$3 AND m.status='active'`,
-        [principal.issuer, principal.subject, requestScope.organizationId],
-      )
+      const membership = await authorizedMembership(principal, requestScope)
       if (!membership.rowCount)
         return reply.code(403).send({ code: 'AUTHORIZATION_DENIED' })
       requestPrincipals.set(request, principal)
@@ -675,9 +712,9 @@ export async function buildProductionControlPlane(
       return reply.code(200).send({
         subject: principal?.subject ?? null,
         ...requestScope,
-        contentKeyUnlocked:
-          options.selfHostedAuth!.leases.acquire(requestScope.workspaceId) !==
-          null,
+        contentKeyUnlocked: options.selfHostedAuth!.leases.hasActiveLease(
+          requestScope.workspaceId,
+        ),
       })
     })
 
@@ -689,7 +726,13 @@ export async function buildProductionControlPlane(
       const principal = requestPrincipals.get(request)
       if (!principal) return reply.code(401).send({ code: 'AUTH_REQUIRED' })
       const memberships = await options.repository.pool.query(
-        `SELECT m.organization_id, m.role, m.status
+        `SELECT m.organization_id, m.role, m.status,
+                ARRAY(SELECT o.workspace_id
+                      FROM persistent_codex.workspace_membership_overrides o
+                      WHERE o.organization_id=m.organization_id
+                        AND o.issuer=m.issuer AND o.subject=m.subject
+                        AND o.access='allow'
+                      ORDER BY o.workspace_id) AS workspace_ids
          FROM persistent_codex.organization_memberships m
          WHERE m.issuer=$1 AND m.subject=$2 AND m.status='active'`,
         [principal.issuer, principal.subject],
@@ -697,14 +740,24 @@ export async function buildProductionControlPlane(
       return reply.code(200).send({
         ...principal,
         memberships: memberships.rows.map(
-          (row: { organization_id: string; role: string; status: string }) => ({
+          (row: {
+            organization_id: string
+            role: string
+            status: string
+            workspace_ids?: unknown
+          }) => ({
             version: 1,
             subject: principal.subject,
             issuer: principal.issuer,
             organizationId: row.organization_id,
             role: row.role,
             status: row.status,
-            workspaceIds: [],
+            workspaceIds: Array.isArray(row.workspace_ids)
+              ? row.workspace_ids.filter(
+                  (workspaceId): workspaceId is string =>
+                    typeof workspaceId === 'string',
+                )
+              : [],
             updatedAt: now().toISOString(),
           }),
         ),
@@ -1997,12 +2050,7 @@ export async function buildProductionControlPlane(
           headers: request.headers,
         })
         const requestScope = subscription.scope
-        const membership = await options.repository.pool.query(
-          `SELECT 1 FROM persistent_codex.organization_memberships m
-           WHERE m.issuer=$1 AND m.subject=$2 AND m.organization_id=$3
-             AND m.status='active'`,
-          [principal.issuer, principal.subject, requestScope.organizationId],
-        )
+        const membership = await authorizedMembership(principal, requestScope)
         if (!membership.rowCount) return socket.close(4403)
         const storedSession = await options.repository.getSession(
           requestScope,

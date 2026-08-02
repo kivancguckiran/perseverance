@@ -1846,6 +1846,16 @@ export class ContentKeyLeaseManager {
     return lease
   }
 
+  hasActiveLease(workspaceId: string): boolean {
+    const lease = this.#leases.get(workspaceId)
+    if (!lease) return false
+    if (lease.expiresAt <= this.#now()) {
+      this.revoke(workspaceId)
+      return false
+    }
+    return true
+  }
+
   revoke(workspaceId: string): boolean {
     const lease = this.#leases.get(workspaceId)
     if (!lease) return false
