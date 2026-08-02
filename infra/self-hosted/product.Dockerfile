@@ -13,6 +13,7 @@ ARG SELF_HOSTED_BASE_PATH=
 WORKDIR /src
 RUN corepack enable && corepack prepare pnpm@9.15.3 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY tokens.css ./
 COPY apps apps
 COPY agents agents
 COPY packages packages
