@@ -215,8 +215,17 @@ base_path="$(read_env SELF_HOSTED_BASE_PATH)"
 ready_url="${public_origin}${base_path}/readyz"
 curl_args=(-fsS --max-time 20)
 [[ "$(read_env SELF_HOSTED_TLS_MODE)" = "acme" ]] || curl_args+=(-k)
-ready_body="$(curl "${curl_args[@]}" "${ready_url}")"
-printf '%s' "${ready_body}" | grep -Eq '"ready"[[:space:]]*:[[:space:]]*true' ||
+ready_ok=0
+for ((attempt = 1; attempt <= 10; attempt++)); do
+  if ready_body="$(curl "${curl_args[@]}" "${ready_url}" 2>/dev/null)" &&
+    printf '%s' "${ready_body}" |
+      grep -Eq '"ready"[[:space:]]*:[[:space:]]*true'; then
+    ready_ok=1
+    break
+  fi
+  sleep 2
+done
+[[ "${ready_ok}" -eq 1 ]] ||
   fail "public readiness ready=true dönmedi: ${ready_url}"
 
 deploy_state_dir="${state_home}/state"
