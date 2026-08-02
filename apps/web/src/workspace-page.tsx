@@ -60,7 +60,7 @@ import {
   type ApiErrorResponse,
 } from '@perseverance/control-plane-contracts'
 import type { TimelineEvent } from '@perseverance/domain-events'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
   lazy,
@@ -2488,6 +2488,15 @@ function ConversationWorkBlock({ work }: { work: ConversationWork }) {
   )
 }
 
+export function approvalRiskLevel(
+  kind: Approval['kind'],
+  context: Approval['context'],
+): 'high' | 'medium' | 'standard' {
+  if (context.networkApprovalContext) return 'high'
+  if (kind === 'file_change') return 'medium'
+  return 'standard'
+}
+
 function ApprovalCard({
   approval,
   onDecision,
@@ -2507,43 +2516,57 @@ function ApprovalCard({
     ? context.commandActions
     : []
   const networkContext = context.networkApprovalContext
+  const riskLevel = approvalRiskLevel(approval.kind, context)
+  const approvalTitleId = `approval-${approval.approvalId}-title`
   return (
     <aside
       id={`approval-${approval.approvalId}`}
       tabIndex={-1}
       className={`approval-card approval-${approval.status}`}
-      aria-live="assertive"
+      data-kind={approval.kind}
+      data-risk={riskLevel}
+      aria-labelledby={approvalTitleId}
+      aria-live={approval.status === 'pending' ? 'assertive' : 'polite'}
     >
-      <div className="card-heading">
-        <strong>
-          {approval.kind === 'command_execution'
-            ? t('Command approval', 'Komut onayı')
-            : t('File change approval', 'Dosya değişikliği onayı')}
-        </strong>
-        <span>
+      <header className="approval-heading">
+        <span className="approval-kind" aria-hidden="true">
+          {approval.kind === 'command_execution' ? '$' : '±'}
+        </span>
+        <div>
+          <strong id={approvalTitleId}>
+            {approval.kind === 'command_execution'
+              ? t('Review command access', 'Komut erişimini incele')
+              : t('Review file changes', 'Dosya değişikliklerini incele')}
+          </strong>
+          <small>
+            {t(
+              'Codex is waiting for an explicit security decision.',
+              'Codex açık bir güvenlik kararı bekliyor.',
+            )}
+          </small>
+        </div>
+        <span className="approval-status">
           {approval.status === 'pending'
             ? t('awaiting approval', 'onay bekliyor')
             : approval.status === 'resolved'
               ? t('resolved', 'çözüldü')
               : approval.status}
         </span>
-      </div>
-      {context.command ? <pre>$ {String(context.command)}</pre> : null}
-      {context.cwd ? (
-        <p>
-          <b>cwd</b> {String(context.cwd)}
-        </p>
+      </header>
+      {context.command ? (
+        <div className="approval-request">
+          <span>{t('Command requested', 'İstenen komut')}</span>
+          <pre>$ {String(context.command)}</pre>
+        </div>
       ) : null}
-      {context.grantRoot ? (
-        <p>
-          <b>grant root</b> {String(context.grantRoot)}
-        </p>
+      {context.reason ? (
+        <p className="approval-reason">{String(context.reason)}</p>
       ) : null}
-      {context.reason ? <p>{String(context.reason)}</p> : null}
       <dl className="approval-safety-summary">
         <div>
           <dt>Risk</dt>
-          <dd>
+          <dd data-level={riskLevel}>
+            <span className="approval-risk-mark" aria-hidden="true" />
             {String(
               context.risk ??
                 (networkContext
@@ -2579,20 +2602,41 @@ function ApprovalCard({
           </dd>
         </div>
       </dl>
+      {context.cwd || context.grantRoot ? (
+        <dl className="approval-paths">
+          {context.cwd ? (
+            <div>
+              <dt>Working directory</dt>
+              <dd>{String(context.cwd)}</dd>
+            </div>
+          ) : null}
+          {context.grantRoot ? (
+            <div>
+              <dt>Grant root</dt>
+              <dd>{String(context.grantRoot)}</dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
       {commandActions.length ? (
-        <div className="approval-context">
-          <b>Command actions</b>
+        <details className="approval-context">
+          <summary>
+            {t('Inspect command actions', 'Komut eylemlerini incele')}
+          </summary>
           <pre>{JSON.stringify(commandActions, null, 2)}</pre>
-        </div>
+        </details>
       ) : null}
       {networkContext ? (
-        <div className="approval-context">
-          <b>Network context</b>
+        <details className="approval-context" open>
+          <summary>
+            {t('Inspect network context', 'Ağ bağlamını incele')}
+          </summary>
           <pre>{JSON.stringify(networkContext, null, 2)}</pre>
-        </div>
+        </details>
       ) : null}
       {approval.kind === 'file_change' ? (
-        <div className="approval-context">
+        <details className="approval-context" open>
+          <summary>{t('Inspect file diff', 'Dosya diff’ini incele')}</summary>
           {context.filePath ? (
             <p>
               <b>file</b> {String(context.filePath)}
@@ -2603,7 +2647,7 @@ function ApprovalCard({
               ? String(context.diff)
               : t('No diff available', 'Diff mevcut değil')}
           </pre>
-        </div>
+        </details>
       ) : null}
       {error ? <p className="form-error">{error}</p> : null}
       {approval.status === 'resolving' ? (
@@ -2612,22 +2656,49 @@ function ApprovalCard({
         </p>
       ) : null}
       {approval.status === 'pending' && !readOnly ? (
-        <div className="approval-actions">
-          <button disabled={pending} onClick={() => onDecision('accept')}>
-            {t('Approve once', 'Bir kez onayla')}
-          </button>
-          <button
-            disabled={pending}
-            onClick={() => onDecision('accept_for_session')}
-          >
-            {t('Approve for session', 'Oturum için onayla')}
-          </button>
-          <button disabled={pending} onClick={() => onDecision('decline')}>
-            {t('Decline', 'Reddet')}
-          </button>
-          <button disabled={pending} onClick={() => onDecision('cancel')}>
-            {t('Cancel', 'İptal')}
-          </button>
+        <div className="approval-decision-zone">
+          <p>
+            {t(
+              'Approve only the narrowest scope you have reviewed.',
+              'Yalnızca incelediğin en dar kapsamı onayla.',
+            )}
+          </p>
+          <div className="approval-actions">
+            <button
+              className="approval-once"
+              disabled={pending}
+              onClick={() => onDecision('accept')}
+            >
+              {t('Approve once', 'Bir kez onayla')}
+            </button>
+            <button
+              className="approval-session"
+              disabled={pending}
+              onClick={() => onDecision('accept_for_session')}
+            >
+              {t('Approve for session', 'Oturum için onayla')}
+            </button>
+            <button
+              className="approval-decline"
+              disabled={pending}
+              onClick={() => onDecision('decline')}
+            >
+              {t('Decline', 'Reddet')}
+            </button>
+            <button
+              className="approval-cancel"
+              disabled={pending}
+              onClick={() => onDecision('cancel')}
+            >
+              {t('Cancel', 'İptal')}
+            </button>
+          </div>
+          <small>
+            {t(
+              'Session approval is broader and lasts until the turn or runtime changes.',
+              'Oturum onayı daha geniştir; turn veya runtime değişene kadar sürer.',
+            )}
+          </small>
         </div>
       ) : null}
     </aside>
@@ -3307,6 +3378,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [conversationActionPending, setConversationActionPending] =
     useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [activityOpen, setActivityOpen] = useState(false)
   const [providerSheetOpen, setProviderSheetOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
@@ -5163,7 +5235,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           onClick={() => setHistoryOpen(false)}
         />
 
-        <section className="timeline-panel" aria-labelledby="chat-title">
+        <section
+          className={`timeline-panel ${activityOpen ? 'activity-is-open' : ''}`}
+          aria-labelledby="chat-title"
+        >
           <header className="chat-header">
             <button
               className="history-toggle"
@@ -5185,31 +5260,63 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               </h1>
               <p className="chat-context">{folderDisplayName} · main</p>
             </div>
-            <button
-              className={`provider-chip ${turnActive ? 'is-running' : ''}`}
-              type="button"
-              aria-label={t(
-                'Choose provider and model',
-                'Provider ve model seç',
-              )}
-              onClick={() => setProviderSheetOpen(true)}
+            <nav
+              className="workbench-actions"
+              aria-label={t('Workspace views', 'Workspace görünümleri')}
             >
-              <span className="provider-chip-status" aria-hidden="true" />
-              <span className="provider-chip-provider">
-                {(session?.provider ?? selectedProvider).toUpperCase()}
-              </span>
-              <span className="provider-chip-divider" aria-hidden="true">
-                ·
-              </span>
-              <span className="provider-chip-model">
-                {session?.resolvedModel ??
-                  selectedModel?.displayName ??
-                  'Default'}
-              </span>
-              <span className="provider-chip-effort">
-                · {session?.reasoningEffort ?? selectedEffort}
-              </span>
-            </button>
+              <button
+                className={`provider-chip ${turnActive ? 'is-running' : ''}`}
+                type="button"
+                aria-label={t(
+                  'Choose provider and model',
+                  'Provider ve model seç',
+                )}
+                onClick={() => setProviderSheetOpen(true)}
+              >
+                <span className="provider-chip-status" aria-hidden="true" />
+                <span className="provider-chip-provider">
+                  {(session?.provider ?? selectedProvider).toUpperCase()}
+                </span>
+                <span className="provider-chip-divider" aria-hidden="true">
+                  ·
+                </span>
+                <span className="provider-chip-model">
+                  {session?.resolvedModel ??
+                    selectedModel?.displayName ??
+                    'Default'}
+                </span>
+                <span className="provider-chip-effort">
+                  · {session?.reasoningEffort ?? selectedEffort}
+                </span>
+              </button>
+              {sessionId ? (
+                <Link
+                  className="workbench-view-link"
+                  to="/sessions/$sessionId/files/$"
+                  params={{ sessionId, _splat: '' }}
+                >
+                  {t('Files', 'Dosyalar')}
+                </Link>
+              ) : (
+                <Link
+                  className="workbench-view-link"
+                  to="/files/$"
+                  params={{ _splat: '' }}
+                  search={{ sessionId: undefined }}
+                >
+                  {t('Files', 'Dosyalar')}
+                </Link>
+              )}
+              <button
+                className="activity-toggle"
+                type="button"
+                aria-controls="workspace-activity"
+                aria-expanded={activityOpen}
+                onClick={() => setActivityOpen((open) => !open)}
+              >
+                {t('Activity', 'Faaliyet')}
+              </button>
+            </nav>
             {sessionId ? (
               <details className="usage-summary">
                 <summary aria-live="polite">
@@ -5601,201 +5708,191 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               )}
             </div>
           </section>
-          <section
-            className={`auth-readiness auth-${readiness.data?.status ?? 'checking'}`}
-            aria-live="polite"
+          <aside
+            id="workspace-activity"
+            className="activity-rail"
+            aria-label={t('Workspace activity', 'Workspace faaliyeti')}
           >
-            <div>
-              <strong>
-                {readiness.isPending
-                  ? 'Codex auth kontrol ediliyor…'
-                  : readiness.data?.status === 'ready'
-                    ? t('Codex authentication ready', 'Codex auth hazır')
-                    : readiness.data?.status === 'setup_required'
-                      ? 'Codex login gerekli'
-                      : t(
-                          'Codex readiness degraded',
-                          'Codex readiness bozulmuş',
-                        )}
-              </strong>
-              {readiness.data?.status === 'setup_required' ? (
-                <p>
-                  {t('Run', 'Terminalde')} <code>codex login</code>{' '}
-                  {t(
-                    'in a terminal. Do not enter an API key; then try again.',
-                    'çalıştırın. API key girmeyin; ardından yeniden deneyin.',
-                  )}
-                </p>
+            <section
+              className={`auth-readiness auth-${readiness.data?.status ?? 'checking'}`}
+              aria-live="polite"
+            >
+              <div>
+                <strong>
+                  {readiness.isPending
+                    ? 'Codex auth kontrol ediliyor…'
+                    : readiness.data?.status === 'ready'
+                      ? t('Codex authentication ready', 'Codex auth hazır')
+                      : readiness.data?.status === 'setup_required'
+                        ? 'Codex login gerekli'
+                        : t(
+                            'Codex readiness degraded',
+                            'Codex readiness bozulmuş',
+                          )}
+                </strong>
+                {readiness.data?.status === 'setup_required' ? (
+                  <p>
+                    {t('Run', 'Terminalde')} <code>codex login</code>{' '}
+                    {t(
+                      'in a terminal. Do not enter an API key; then try again.',
+                      'çalıştırın. API key girmeyin; ardından yeniden deneyin.',
+                    )}
+                  </p>
+                ) : null}
+              </div>
+              {readiness.data?.status !== 'ready' ? (
+                <button
+                  type="button"
+                  disabled={readiness.isFetching}
+                  onClick={() => void readiness.refetch()}
+                >
+                  {readiness.isFetching
+                    ? 'Kontrol ediliyor…'
+                    : 'Readiness yeniden dene'}
+                </button>
+              ) : null}
+            </section>
+            {session ? (
+              <>
+                <AuditPanel
+                  records={
+                    audit.data?.pages.flatMap((page) => page.records) ?? []
+                  }
+                  pending={audit.isPending}
+                  fetchingMore={audit.isFetchingNextPage}
+                  hasMore={Boolean(audit.hasNextPage)}
+                  stale={audit.isStale}
+                  {...(audit.error ? { error: audit.error.message } : {})}
+                  onMore={() => void audit.fetchNextPage()}
+                />
+                <GitPanel
+                  {...(gitSnapshots.data?.snapshots[0]
+                    ? { snapshot: gitSnapshots.data.snapshots[0] }
+                    : {})}
+                  pending={
+                    gitRefreshPending ||
+                    gitSnapshots.isPending ||
+                    gitSnapshots.isFetching
+                  }
+                  {...(gitError || gitSnapshots.error
+                    ? { error: gitError ?? gitSnapshots.error!.message }
+                    : {})}
+                  onRefresh={() => void refreshGit()}
+                />
+              </>
+            ) : null}
+            <div className="timeline-heading">
+              <div>
+                <p className="section-label">{t('Live task', 'Canlı görev')}</p>
+                <h2 id="timeline-title">Codex timeline</h2>
+              </div>
+              <span className="sequence-label">
+                sequence {String(lastSequence.current).padStart(4, '0')}
+              </span>
+              {cards.length > 20 ? (
+                <button
+                  className="timeline-end-button"
+                  type="button"
+                  onClick={() => {
+                    virtualizer.scrollToOffset(virtualizer.getTotalSize(), {
+                      align: 'end',
+                    })
+                    requestAnimationFrame(() =>
+                      timelineRef.current?.scrollTo({
+                        top: timelineRef.current.scrollHeight,
+                        behavior: 'auto',
+                      }),
+                    )
+                  }}
+                >
+                  Sona git
+                </button>
               ) : null}
             </div>
-            {readiness.data?.status !== 'ready' ? (
-              <button
-                type="button"
-                disabled={readiness.isFetching}
-                onClick={() => void readiness.refetch()}
-              >
-                {readiness.isFetching
-                  ? 'Kontrol ediliyor…'
-                  : 'Readiness yeniden dene'}
-              </button>
-            ) : null}
-          </section>
-          {session ? (
-            <>
-              <AuditPanel
-                records={
-                  audit.data?.pages.flatMap((page) => page.records) ?? []
-                }
-                pending={audit.isPending}
-                fetchingMore={audit.isFetchingNextPage}
-                hasMore={Boolean(audit.hasNextPage)}
-                stale={audit.isStale}
-                {...(audit.error ? { error: audit.error.message } : {})}
-                onMore={() => void audit.fetchNextPage()}
-              />
-              <GitPanel
-                {...(gitSnapshots.data?.snapshots[0]
-                  ? { snapshot: gitSnapshots.data.snapshots[0] }
-                  : {})}
-                pending={
-                  gitRefreshPending ||
-                  gitSnapshots.isPending ||
-                  gitSnapshots.isFetching
-                }
-                {...(gitError || gitSnapshots.error
-                  ? { error: gitError ?? gitSnapshots.error!.message }
-                  : {})}
-                onRefresh={() => void refreshGit()}
-              />
-            </>
-          ) : null}
-          <div className="timeline-heading">
-            <div>
-              <p className="section-label">{t('Live task', 'Canlı görev')}</p>
-              <h2 id="timeline-title">Codex timeline</h2>
-            </div>
-            <span className="sequence-label">
-              sequence {String(lastSequence.current).padStart(4, '0')}
-            </span>
-            {cards.length > 20 ? (
-              <button
-                className="timeline-end-button"
-                type="button"
-                onClick={() => {
-                  virtualizer.scrollToOffset(virtualizer.getTotalSize(), {
-                    align: 'end',
-                  })
-                  requestAnimationFrame(() =>
-                    timelineRef.current?.scrollTo({
-                      top: timelineRef.current.scrollHeight,
-                      behavior: 'auto',
-                    }),
-                  )
-                }}
-              >
-                Sona git
-              </button>
-            ) : null}
-          </div>
 
-          <div
-            className={`timeline-stream ${masterExpanded ? '' : 'is-collapsed'}`}
-            aria-live="polite"
-            aria-label={t('Timeline events', 'Timeline olayları')}
-            tabIndex={0}
-            ref={timelineRef}
-          >
-            {[...approvals.values()]
-              .filter((approval) => approval.sessionId === session?.sessionId)
-              .map((approval) => (
-                <ApprovalCard
-                  key={approval.approvalId}
-                  approval={approval}
-                  pending={approvalPending === approval.approvalId}
-                  readOnly={readOnly}
-                  {...(approvalErrors.get(approval.approvalId)
-                    ? { error: approvalErrors.get(approval.approvalId)! }
-                    : {})}
-                  onDecision={(decision) =>
-                    void decideApproval(approval, decision)
-                  }
-                />
-              ))}
-            {cards.length > 0 ? (
-              <section
-                className="timeline-master"
-                aria-label={t('Codex activity', 'Codex çalışması')}
-              >
-                <button
-                  className="timeline-master-toggle"
-                  type="button"
-                  aria-expanded={masterExpanded}
-                  aria-controls="timeline-master-events"
-                  onClick={() => setMasterExpanded((expanded) => !expanded)}
+            <div
+              className={`timeline-stream ${masterExpanded ? '' : 'is-collapsed'}`}
+              aria-live="polite"
+              aria-label={t('Timeline events', 'Timeline olayları')}
+              tabIndex={0}
+              ref={timelineRef}
+            >
+              {cards.length > 0 ? (
+                <section
+                  className="timeline-master"
+                  aria-label={t('Codex activity', 'Codex çalışması')}
                 >
-                  <span className="timeline-master-icon" aria-hidden="true">
-                    <span />
-                  </span>
-                  <span className="timeline-master-label">
-                    <strong>{t('Codex activity', 'Codex çalışması')}</strong>
-                    <span>
-                      {cards.length} {t('operations', 'işlem')} ·{' '}
-                      {turnActive
-                        ? t('running', 'çalışıyor')
-                        : t('ready', 'hazır')}
-                    </span>
-                  </span>
-                  <span
-                    className="timeline-master-chevron"
-                    aria-hidden="true"
-                  />
-                </button>
-                {masterExpanded ? (
-                  <div
-                    id="timeline-master-events"
-                    className="virtual-timeline timeline-master-events"
-                    style={{
-                      height: virtualizer.getTotalSize(),
-                      position: 'relative',
-                    }}
+                  <button
+                    className="timeline-master-toggle"
+                    type="button"
+                    aria-expanded={masterExpanded}
+                    aria-controls="timeline-master-events"
+                    onClick={() => setMasterExpanded((expanded) => !expanded)}
                   >
-                    {virtualizer.getVirtualItems().map((row) => (
-                      <div
-                        key={cards[row.index]!.key}
-                        ref={virtualizer.measureElement}
-                        data-index={row.index}
-                        style={{
-                          position: 'absolute',
-                          width: '100%',
-                          transform: `translateY(${row.start}px)`,
-                          paddingBottom: 4,
-                        }}
-                      >
-                        <TimelineEntry card={cards[row.index]!} />
-                      </div>
-                    ))}
+                    <span className="timeline-master-icon" aria-hidden="true">
+                      <span />
+                    </span>
+                    <span className="timeline-master-label">
+                      <strong>{t('Codex activity', 'Codex çalışması')}</strong>
+                      <span>
+                        {cards.length} {t('operations', 'işlem')} ·{' '}
+                        {turnActive
+                          ? t('running', 'çalışıyor')
+                          : t('ready', 'hazır')}
+                      </span>
+                    </span>
+                    <span
+                      className="timeline-master-chevron"
+                      aria-hidden="true"
+                    />
+                  </button>
+                  {masterExpanded ? (
+                    <div
+                      id="timeline-master-events"
+                      className="virtual-timeline timeline-master-events"
+                      style={{
+                        height: virtualizer.getTotalSize(),
+                        position: 'relative',
+                      }}
+                    >
+                      {virtualizer.getVirtualItems().map((row) => (
+                        <div
+                          key={cards[row.index]!.key}
+                          ref={virtualizer.measureElement}
+                          data-index={row.index}
+                          style={{
+                            position: 'absolute',
+                            width: '100%',
+                            transform: `translateY(${row.start}px)`,
+                            paddingBottom: 4,
+                          }}
+                        >
+                          <TimelineEntry card={cards[row.index]!} />
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+              ) : (
+                <div className="timeline-empty">
+                  <div className="terminal-mark" aria-hidden="true">
+                    &gt;_
                   </div>
-                ) : null}
-              </section>
-            ) : (
-              <div className="timeline-empty">
-                <div className="terminal-mark" aria-hidden="true">
-                  &gt;_
+                  <h3>
+                    {session
+                      ? t('Ready for the first turn', 'İlk turn için hazır')
+                      : t('Create a conversation first', 'Önce sohbet oluştur')}
+                  </h3>
+                  <p>
+                    {t(
+                      'Normalized events appear here live after the durable store commit.',
+                      'Normalize event’ler durable store commit’inden sonra burada canlı görünür.',
+                    )}
+                  </p>
                 </div>
-                <h3>
-                  {session
-                    ? t('Ready for the first turn', 'İlk turn için hazır')
-                    : t('Create a conversation first', 'Önce sohbet oluştur')}
-                </h3>
-                <p>
-                  {t(
-                    'Normalized events appear here live after the durable store commit.',
-                    'Normalize event’ler durable store commit’inden sonra burada canlı görünür.',
-                  )}
-                </p>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          </aside>
 
           {error ? (
             <section className="request-error" role="alert">

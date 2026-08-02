@@ -9,6 +9,7 @@ import {
   boundedTail,
   attachmentMediaType,
   attachmentUploadPercent,
+  approvalRiskLevel,
   sourceMediaType,
   chatFollowStateAfterScroll,
   coalesceTimelineEvents,
@@ -178,6 +179,18 @@ describe('support access presentation', () => {
     expect(supportGrantStatusLabel('active')).toBe('Active')
     expect(supportGrantStatusLabel('revoked')).toContain('Revoked')
     expect(supportGrantStatusLabel('expired')).toContain('Expired')
+  })
+})
+
+describe('approval security presentation', () => {
+  it('elevates network and file-write requests above standard commands', () => {
+    expect(
+      approvalRiskLevel('command_execution', {
+        networkApprovalContext: { host: 'example.invalid' },
+      }),
+    ).toBe('high')
+    expect(approvalRiskLevel('file_change', {})).toBe('medium')
+    expect(approvalRiskLevel('command_execution', {})).toBe('standard')
   })
 })
 

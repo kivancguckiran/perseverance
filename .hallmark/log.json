@@ -1,0 +1,10 @@
+[
+  {
+    "date": "2026-08-02",
+    "scope": "app",
+    "macrostructure": "Workbench",
+    "theme": "Coral Workbench",
+    "enrichment": "none",
+    "brief": "Unify the workspace UI into a security-first agent workbench"
+  }
+]

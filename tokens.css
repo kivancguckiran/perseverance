@@ -1,0 +1,77 @@
+/* Hallmark · design-system: Coral Workbench · genre: modern-minimal · macrostructure: Workbench
+ * Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4
+ */
+:root {
+  --color-paper: oklch(97% 0.008 48);
+  --color-paper-2: oklch(94.5% 0.011 48);
+  --color-paper-3: oklch(91.5% 0.014 48);
+  --color-ink: oklch(19% 0.014 42);
+  --color-ink-2: oklch(30% 0.016 42);
+  --color-rule: oklch(86% 0.014 48);
+  --color-rule-2: oklch(72% 0.018 48);
+  --color-muted: oklch(50% 0.018 44);
+  --color-neutral: oklch(39% 0.017 44);
+  --color-accent: oklch(57% 0.205 35);
+  --color-accent-soft: oklch(94% 0.035 35);
+  --color-accent-ink: oklch(98% 0.008 48);
+  --color-focus: oklch(52% 0.215 35);
+  --color-warning: oklch(66% 0.15 72);
+  --color-warning-soft: oklch(94% 0.04 72);
+  --color-danger: oklch(53% 0.2 25);
+  --color-danger-soft: oklch(94% 0.035 25);
+  --color-success: oklch(48% 0.125 155);
+  --color-success-soft: oklch(94% 0.032 155);
+  --color-info: oklch(49% 0.145 250);
+  --color-info-soft: oklch(94% 0.028 250);
+  --color-surface-inverse: oklch(22% 0.018 42);
+  --color-surface-inverse-ink: oklch(94% 0.01 48);
+  --color-overlay: oklch(19% 0.014 42 / 0.48);
+
+  --font-display:
+    'Archivo', 'Arial Narrow', ui-sans-serif, system-ui, sans-serif;
+  --font-body: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --font-outlier:
+    'IBM Plex Mono', 'SFMono-Regular', Consolas, ui-monospace, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --text-display: clamp(2.5rem, 4vw + 1rem, 4.75rem);
+
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --space-2xl: 4.5rem;
+  --space-3xl: 7rem;
+  --space-4xl: 11rem;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms;
+  --dur-short: 220ms;
+  --dur-long: 420ms;
+
+  --rule-hair: 1px;
+  --rule-fine: 2px;
+  --radius-card: 0.75rem;
+  --radius-pill: 999px;
+  --radius-input: 0.625rem;
+  --shadow-card: 0 1px 2px oklch(19% 0.014 42 / 0.06);
+
+  --z-base: 1;
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 400;
+  --z-toast: 500;
+  --z-tooltip: 600;
+}

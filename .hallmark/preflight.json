@@ -1,0 +1,13 @@
+{
+  "scannedAt": "2026-08-02",
+  "framework": "React 19 + TanStack Router/Query + Vite",
+  "fontStack": "Archivo with a conflicting legacy Inter/system declaration",
+  "palette": "Conflicting dark-green and light-coral roots in apps/web/src/styles.css",
+  "motion": "CSS transitions and keyframes; no motion library",
+  "spacing": "Raw values without a shared semantic scale",
+  "sourceFiles": [
+    "package.json",
+    "apps/web/package.json",
+    "apps/web/src/styles.css"
+  ]
+}
