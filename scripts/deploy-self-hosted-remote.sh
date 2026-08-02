@@ -202,12 +202,23 @@ if [[ "${current_sha}" != "${target_sha}" ]]; then
   [[ -s "${backup_after}" ]] || fail "otomatik yedek boş: ${backup_after}"
 fi
 
-container_rows="$(docker ps -a --filter label=persistent.self-hosted=true \
-  --format '{{.Names}}|{{.Image}}|{{.Status}}')"
-container_count="$(printf '%s\n' "${container_rows}" | sed '/^$/d' | wc -l | tr -d ' ')"
+container_count=0
+unhealthy=""
+for ((attempt = 1; attempt <= 30; attempt++)); do
+  # `compose run --rm` helper'ları `docker ps -a` altında kısa süreli exited
+  # görünebilir. Yalnız çalışan stack container'larını say; durmuş bir gerçek
+  # servis sekizli sayıyı düşürerek yine fail-closed kalır.
+  container_rows="$(docker ps --filter label=persistent.self-hosted=true \
+    --format '{{.Names}}|{{.Image}}|{{.Status}}')"
+  container_count="$(printf '%s\n' "${container_rows}" | sed '/^$/d' | wc -l | tr -d ' ')"
+  unhealthy="$(printf '%s\n' "${container_rows}" | awk 'index($0,"(healthy)")==0')"
+  if [[ "${container_count}" -ge 8 && -z "${unhealthy}" ]]; then
+    break
+  fi
+  sleep 2
+done
 [[ "${container_count}" -ge 8 ]] ||
-  fail "beklenen self-hosted container sayısı yok: ${container_count}"
-unhealthy="$(printf '%s\n' "${container_rows}" | awk 'index($0,"(healthy)")==0')"
+  fail "beklenen çalışan self-hosted container sayısı yok: ${container_count}"
 [[ -z "${unhealthy}" ]] || fail "healthy olmayan container var: ${unhealthy}"
 
 public_origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
