@@ -68,7 +68,7 @@ describe('bounded realtime sender', () => {
   })
 })
 
-describe('WP13 scoped usage and cost API', () => {
+describe('scoped usage and cost API', () => {
   it('returns session/turn usage without content or cross-tenant leakage', async () => {
     const store = new SqliteEventStore(':memory:')
     store.createSession({
@@ -238,7 +238,7 @@ describe('WP13 scoped usage and cost API', () => {
   })
 })
 
-describe('WP24 commercial admission and billing API', () => {
+describe('commercial admission and billing API', () => {
   it('audits soft warnings, denies hard quota before provider work, and exposes no credentials', async () => {
     const store = new SqliteEventStore(':memory:')
     store.createSession(scope)
@@ -475,9 +475,9 @@ describe('WP24 commercial admission and billing API', () => {
   })
 })
 
-describe('WP10 session navigation and Git API', () => {
+describe('session navigation and Git API', () => {
   it('paginates scoped sessions, persists refresh, and rejects Git operations', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp10-api-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-api-'))
     const repository = join(directory, 'repo')
     const databasePath = join(directory, 'events.sqlite')
     const artifactRoot = join(directory, 'artifacts')
@@ -685,9 +685,9 @@ describe('WP10 session navigation and Git API', () => {
   }, 30_000)
 })
 
-describe('WP11 health, readiness, metrics, and audit API', () => {
+describe('health, readiness, metrics, and audit API', () => {
   it('keeps liveness dependency-free and reports deterministic dependency recovery', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp11-health-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-health-'))
     const databaseRoot = join(directory, 'database')
     const artifactRoot = join(directory, 'artifacts')
     const workspace = join(directory, 'workspace')
@@ -785,7 +785,7 @@ describe('WP11 health, readiness, metrics, and audit API', () => {
   })
 
   it('produces ordered audit chains through real control-plane flows and survives reopen', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp11-audit-flow-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-audit-flow-'))
     const repository = join(directory, 'workspace')
     mkdirSync(repository)
     execFileSync('git', ['init', '-q'], { cwd: repository })
@@ -996,7 +996,7 @@ describe('WP11 health, readiness, metrics, and audit API', () => {
   }, 30_000)
 })
 
-describe('WP9 auth readiness and recovery', () => {
+describe('auth readiness and recovery', () => {
   it('blocks session creation before thread/start when account setup is required', async () => {
     class LoggedOutClient extends FakeRuntimeClient {
       override async request<TResult>(
@@ -1042,7 +1042,7 @@ describe('WP9 auth readiness and recovery', () => {
   })
 
   it('coalesces repeated 401 disconnects while retaining scoped raw evidence', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp9-auth-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-auth-'))
     const eventStore = new SqliteEventStore(join(directory, 'events.sqlite'))
     const client = new FakeRuntimeClient()
     const sessionId = 'ses_auth_recovery'
@@ -1142,7 +1142,7 @@ describe('WP9 auth readiness and recovery', () => {
         return super.request(method, params)
       }
     }
-    const directory = mkdtempSync(join(tmpdir(), 'wp9-retry-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-retry-'))
     const eventStore = new SqliteEventStore(join(directory, 'events.sqlite'))
     const client = new MutableAuthClient()
     const sessionId = 'ses_retry_same'
@@ -1384,7 +1384,7 @@ function ingest(store: SqliteEventStore, key: string): TimelineEvent {
   }).event
 }
 
-describe('WP15 provider selection API', () => {
+describe('provider selection API', () => {
   it('persists a direct provider/model/effort snapshot and rejects unsupported effort before start', async () => {
     const catalog: ProviderModelCatalog = {
       schemaVersion: 1,
@@ -2002,9 +2002,9 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
   }
 }
 
-describe('WP10 turn Git checkpoints', () => {
+describe('turn Git checkpoints', () => {
   it('links before/after snapshots, diff and HEAD to a file-changing turn', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp10-turn-git-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-turn-git-'))
     const repository = join(directory, 'repo')
     mkdirSync(repository)
     execFileSync('git', ['init', '-q'], { cwd: repository })
@@ -3014,7 +3014,7 @@ describe('control plane WebSocket replay/live stream', () => {
   })
 })
 
-describe('WP4 session, turn and live event flow', () => {
+describe('session, turn and live event flow', () => {
   const liveHeaders = {
     'content-type': 'application/json',
     'x-tenant-id': 'ten_live',
@@ -3041,7 +3041,7 @@ describe('WP4 session, turn and live event flow', () => {
   }
 
   it('streams a controlled 100 MiB command through adapter, SQLite and artifact metadata', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp7-e2e-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-e2e-'))
     const client = new FakeRuntimeClient()
     const current = await setup({
       workspaceCwd: '/workspace',
@@ -3146,7 +3146,7 @@ describe('WP4 session, turn and live event flow', () => {
     rmSync(directory, { recursive: true, force: true })
   }, 30_000)
   it('spills a completed-only 100 MiB snapshot without persisting it inline', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp7-completed-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-completed-'))
     const client = new FakeRuntimeClient()
     const current = await setup({
       workspaceCwd: '/workspace',
@@ -3335,7 +3335,7 @@ describe('WP4 session, turn and live event flow', () => {
   })
 
   it('reconciles a durable run after restart without submitting the prompt twice', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp14-run-recovery-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-run-recovery-'))
     const databasePath = join(directory, 'events.sqlite')
     class HoldingClient extends FakeRuntimeClient {
       override async request<TResult>(method: string, params: unknown) {
@@ -3798,7 +3798,7 @@ describe('WP4 session, turn and live event flow', () => {
   })
 })
 
-describe('WP6 session resume and recovery', () => {
+describe('session resume and recovery', () => {
   it('reads before resuming, coalesces concurrent calls, and keeps the same thread', async () => {
     const client = new FakeRuntimeClient({ threadId: 'thr_resume' })
     await setup({
@@ -4210,9 +4210,9 @@ describe('WP6 session resume and recovery', () => {
   })
 })
 
-describe('WP4 restart-safe ingest regression', () => {
+describe('restart-safe ingest regression', () => {
   it('keeps two control-plane instances and their authoritative finals isolated in one file DB', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wp4-restart-ingest-'))
+    const directory = mkdtempSync(join(tmpdir(), 'fixture-restart-ingest-'))
     const databasePath = join(directory, 'events.sqlite')
     const restartHeaders = {
       'content-type': 'application/json',

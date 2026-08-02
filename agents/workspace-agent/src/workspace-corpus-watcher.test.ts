@@ -13,7 +13,7 @@ afterEach(() => {
 })
 
 function watcher(maxBacklog = 8) {
-  const root = mkdtempSync(join(tmpdir(), 'wp22-watcher-'))
+  const root = mkdtempSync(join(tmpdir(), 'fixture-watcher-'))
   roots.push(root)
   return new WorkspaceCorpusWatcher({
     root,
@@ -32,7 +32,7 @@ function watcher(maxBacklog = 8) {
   })
 }
 
-describe('WP22 deterministic workspace watcher', () => {
+describe('deterministic workspace watcher', () => {
   it('debounces and idempotently emits create/update/rename/delete jobs', () => {
     const value = watcher()
     value.enqueue(

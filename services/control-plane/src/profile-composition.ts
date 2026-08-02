@@ -7,9 +7,7 @@ import {
   type ObservedProfileAdapters,
 } from '@perseverance/deployment-profiles'
 
-// WP33 — boot-time profil çözümleme ve cloud fail-closed sınırı (ADR-0033).
-// `local`/`self-hosted` davranışı değişmez; `cloud` profili development/local
-// production fallback'lerinde boot'ta fail-closed durur.
+// Boot-time profile resolution for local development and self-hosted runtime.
 
 export function observedAdaptersFromEnv(
   env: NodeJS.ProcessEnv,
@@ -48,9 +46,6 @@ export interface ResolvedBootProfile {
   contract: DeploymentProfileContract
 }
 
-// Boot profili: bilinmeyen profil fail-closed reddedilir; cloud profili tam
-// production adapter seti olmadan boot edemez. `self-hosted` için ADR-0026
-// `assertProductionStorage` sınırı (topology-composition) aynen geçerli kalır.
 export function resolveBootProfile(
   env: NodeJS.ProcessEnv,
 ): ResolvedBootProfile {
@@ -58,7 +53,7 @@ export function resolveBootProfile(
     PERSISTENT_DEPLOYMENT_PROFILE: env.PERSISTENT_DEPLOYMENT_PROFILE,
     PERSISTENT_CODEX_LOCAL_ALPHA: env.PERSISTENT_CODEX_LOCAL_ALPHA,
   })
-  if (profile === 'cloud')
-    assertProfileProductionAdapters('cloud', observedAdaptersFromEnv(env))
+  if (profile === 'self-hosted')
+    assertProfileProductionAdapters('self-hosted', observedAdaptersFromEnv(env))
   return { profile, contract: DEPLOYMENT_PROFILE_CONTRACTS[profile] }
 }

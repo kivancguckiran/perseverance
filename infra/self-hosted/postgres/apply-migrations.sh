@@ -1,5 +1,5 @@
 #!/bin/sh
-# WP32 — tracking tablolu, idempotent migration runner (ADR-0032).
+#  tracking tablolu, idempotent migration runner (ADR-0032).
 # `migrate` one-shot compose servisi olarak pinlenmiş postgres imajında koşar.
 # - Uygulanmamış migration'ları dosya adı sırasıyla ON_ERROR_STOP ile uygular.
 # - Uygulanmış bir dosyanın sha256'sı değişmişse fail-closed durur.

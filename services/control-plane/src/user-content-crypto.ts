@@ -1,4 +1,4 @@
-// WP37 — kullanıcı content key'i ile prompt/model_output şifreleme yardımcıları
+//  kullanıcı content key'i ile prompt/model_output şifreleme yardımcıları
 // (ADR-0037). Object storage'a yazılan içerik, kullanıcı workspace'lerinde
 // EnvelopeV1 JSON olarak durur; düz metin yalnız bellekte yaşar.
 import {

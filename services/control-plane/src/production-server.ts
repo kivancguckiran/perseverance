@@ -68,22 +68,6 @@ import {
 } from '@perseverance/production-topology/durable-dependencies'
 import { ProductionRolloutAuthority } from './production-rollout-authority'
 import {
-  registerManagedCloudRoutes,
-  type ManagedCloudAuthenticatedPrincipal,
-} from './managed-cloud-api'
-import { ManagedCloudError } from '@perseverance/managed-cloud'
-import { createManagedCloudProductionComposition } from './managed-cloud-production'
-import {
-  HttpAwsKmsClient,
-  HttpTenantRuntimeResources,
-} from './managed-cloud-infrastructure'
-import { AwsKmsProvider } from '@perseverance/workspace-security'
-import {
-  StaticProviderAuthCapabilitySource,
-  type ProviderAuthEvidence,
-  type ProviderAuthFeatureFlags,
-} from '@perseverance/provider-auth'
-import {
   SelfHostedAuthError,
   type SelfHostedAuthService,
 } from './self-hosted-auth'
@@ -124,7 +108,6 @@ export interface ProductionControlPlaneOptions {
   telemetryScopeSalt?: string
   authentication?: AuthenticationAdapter
   allowedWebOrigin?: string
-  managedCloud?: ReturnType<typeof createManagedCloudProductionComposition>
   selfHostedAuth?: SelfHostedAuthService
   sharedFolders?: SharedFolderRepository
   internalRuntimeToken?: string
@@ -396,7 +379,7 @@ export async function buildProductionControlPlane(
   const timeoutMs = options.dependencyTimeoutMs ?? 2_000
   const now = options.now ?? (() => new Date())
   const telemetry = options.telemetry ?? new ProductionTelemetry(now)
-  const telemetrySalt = options.telemetryScopeSalt ?? 'wp27-test-scope-salt'
+  const telemetrySalt = options.telemetryScopeSalt ?? 'fixture-test-scope-salt'
   const requestTelemetry = new WeakMap<
     object,
     {
@@ -518,7 +501,7 @@ export async function buildProductionControlPlane(
       request.url === '/readyz' ||
       request.url === '/v1/meta' ||
       request.url.startsWith('/v1/realtime') ||
-      // WP37: kayıt/giriş uçları pre-auth'tur; kendi doğrulama, rate-limit
+      // kayıt/giriş uçları pre-auth'tur; kendi doğrulama, rate-limit
       // ve audit denetimlerini self-hosted-auth-api içinde uygular.
       (options.selfHostedAuth &&
         (SELF_HOSTED_AUTH_PUBLIC_PATHS as readonly string[]).includes(
@@ -533,10 +516,6 @@ export async function buildProductionControlPlane(
           ? { authorization: header(request.headers.authorization)! }
           : {}),
       })
-      if (request.url.startsWith('/v1/managed-cloud')) {
-        requestPrincipals.set(request, principal)
-        return
-      }
       const requestScope = scope(request.headers)
       if (!requestScope) return reply.code(400).send({ code: 'MISSING_SCOPE' })
       const membership = await options.repository.pool.query(
@@ -567,21 +546,6 @@ export async function buildProductionControlPlane(
           : error.code.includes('PROTECTED') || error.code.includes('CONFLICT')
             ? 409
             : 400
-      return reply.code(status).send({ code: error.code })
-    }
-    if (error instanceof ManagedCloudError) {
-      const status =
-        error.code === 'AUTH_REQUIRED'
-          ? 401
-          : error.code.includes('DENIED') ||
-              error.code.includes('HALT') ||
-              error.code.includes('LIMIT')
-            ? 403
-            : error.code.includes('NOT_FOUND')
-              ? 404
-              : error.code.includes('CONFLICT')
-                ? 409
-                : 400
       return reply.code(status).send({ code: error.code })
     }
     throw error
@@ -673,16 +637,6 @@ export async function buildProductionControlPlane(
     instanceId: options.instanceId,
     codexVersion: '0.144.2',
   }))
-  if (options.managedCloud)
-    registerManagedCloudRoutes(app, {
-      ...options.managedCloud,
-      principalFor(request): ManagedCloudAuthenticatedPrincipal {
-        const value = requestPrincipals.get(request)
-        if (!value) throw new ManagedCloudError('AUTH_REQUIRED')
-        return { issuer: value.issuer, subject: value.subject }
-      },
-    })
-
   if (options.selfHostedAuth) {
     registerSelfHostedAuthRoutes(app, { service: options.selfHostedAuth })
     app.post('/v1/auth/unlock', async (request, reply) => {
@@ -847,7 +801,7 @@ export async function buildProductionControlPlane(
       })
     })
 
-    // The current conversation sidebar still consumes the pre-WP25 endpoint.
+    // The current conversation sidebar still consumes the pre-endpoint.
     // Back it with the same durable shared-folder aggregate so self-hosted
     // production does not fall back to the alpha-only SQLite event store.
     app.get('/v1/conversation-folders', async (request, reply) => {
@@ -1465,7 +1419,7 @@ export async function buildProductionControlPlane(
     )
     if (!storedSession)
       return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
-    // WP37: kullanıcı workspace'lerinde prompt düz metin yazılmaz. Content
+    // kullanıcı workspace'lerinde prompt düz metin yazılmaz. Content
     // key lease'i yoksa (login yok / süresi doldu) fail-closed 428 döner.
     let contentKeyLease: {
       contentKey: Buffer
@@ -1914,7 +1868,7 @@ export async function buildProductionControlPlane(
     }
   })
 
-  // WP37: kullanıcı workspace'lerinde object storage'daki içerik EnvelopeV1
+  // kullanıcı workspace'lerinde object storage'daki içerik EnvelopeV1
   // JSON'dur; yalnız geçerli content key lease'i ile çözülür. Lease yoksa
   // 428 CONTENT_KEY_LOCKED (yeniden login gerekir); crypto-erase sonrası
   // çözme kalıcı olarak başarısız olur ve 410 döner.
@@ -1989,20 +1943,6 @@ export async function buildProductionControlPlane(
         reply,
       )
     },
-  )
-
-  app.get('/wp26', async (_request, reply) =>
-    reply.type('text/html').send(`<!doctype html><meta charset="utf-8">
-      <title>WP26 Production HA</title><main><h1>WP26 Production HA</h1>
-      <div id="state">connecting</div><ol id="timeline"></ol><pre id="approval"></pre></main>
-      <script>
-      const q=new URLSearchParams(location.search),tenant=q.get('tenant'),workspace=q.get('workspace'),session=q.get('session');
-      const headers={'x-tenant-id':tenant,'x-organization-id':tenant,'x-workspace-id':workspace};let after=0;
-      function connect(){const protocol=location.protocol==='https:'?'wss:':'ws:';const socket=new WebSocket(protocol+'//'+location.host+'/v1/realtime?sessionId='+encodeURIComponent(session)+'&after='+after+'&tenant='+encodeURIComponent(tenant)+'&workspace='+encodeURIComponent(workspace));
-        socket.onmessage=message=>{const value=JSON.parse(message.data);if(value.type==='hello'){document.body.dataset.instance=value.instanceId;document.querySelector('#state').textContent='connected high-water '+after;return}const event=value.event;if(event.sequence<=after)return;after=event.sequence;const li=document.createElement('li');li.dataset.sequence=event.sequence;li.textContent=event.eventType;document.querySelector('#timeline').append(li);document.querySelector('#state').textContent='connected high-water '+value.highWaterSequence};
-        socket.onclose=()=>{document.querySelector('#state').textContent='reconnecting';setTimeout(connect,100)}}
-      async function approvals(){try{const a=await fetch('/v1/approvals?status=pending',{headers}).then(r=>r.json());document.querySelector('#approval').textContent=JSON.stringify(a.approvals||[])}finally{setTimeout(approvals,100)}}connect();approvals();
-      </script>`),
   )
 
   app.get('/v1/realtime', { websocket: true }, (socket, request) => {
@@ -2135,7 +2075,7 @@ export async function buildProductionControlPlaneFromEnv(
     () => new Date(),
     Number(env.TELEMETRY_MAX_RECORDS ?? 2_048),
   )
-  // WP37: OIDC_SIGNING_KEY_FILE tanımlıysa self-hosted kullanıcı hesapları
+  // OIDC_SIGNING_KEY_FILE tanımlıysa self-hosted kullanıcı hesapları
   // etkinleşir; content key lease'leri için iç listener da burada başlar.
   const selfHostedAuth = createSelfHostedAuthFromEnv(
     env,
@@ -2160,47 +2100,6 @@ export async function buildProductionControlPlaneFromEnv(
       issuer: required('OIDC_ISSUER'),
       audience: required('OIDC_AUDIENCE'),
     }),
-    ...(env.PERSISTENT_DEPLOYMENT_PROFILE === 'cloud'
-      ? {
-          managedCloud: createManagedCloudProductionComposition({
-            pool: repository.pool,
-            productionRepository: repository,
-            billing,
-            objectStore,
-            broker,
-            regionId: required('PERSISTENT_REGION_ID'),
-            runtimeResources: new HttpTenantRuntimeResources(
-              required('RUNTIME_CONTROL_API_URL'),
-              required('RUNTIME_CONTROL_SERVICE_TOKEN'),
-            ),
-            kms: new AwsKmsProvider(
-              new HttpAwsKmsClient(
-                required('KMS_API_URL'),
-                required('KMS_SERVICE_TOKEN'),
-              ),
-              required('KMS_KEY_ID'),
-              required('KMS_KEY_VERSION'),
-            ),
-            providerCapability: new StaticProviderAuthCapabilitySource({
-              deploymentProfile: 'cloud',
-              evidenceVersion: Number(
-                required('PROVIDER_AUTH_EVIDENCE_VERSION'),
-              ),
-              featureFlags: JSON.parse(
-                required('PROVIDER_AUTH_FEATURE_FLAGS_JSON'),
-              ) as ProviderAuthFeatureFlags,
-              evidenceProvider(provider, authMode) {
-                const evidence = JSON.parse(
-                  required('PROVIDER_AUTH_EVIDENCE_JSON'),
-                ) as Record<string, ProviderAuthEvidence>
-                return evidence[`${provider}:${authMode}`]
-              },
-            }),
-            rolloutId: required('WP35_ROLLOUT_ID'),
-            maxActiveTenants: Number(required('WP35_MAX_ACTIVE_TENANTS')),
-          }),
-        }
-      : {}),
     ...(env.WEB_ALLOWED_ORIGIN
       ? { allowedWebOrigin: env.WEB_ALLOWED_ORIGIN }
       : {}),

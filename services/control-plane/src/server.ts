@@ -1676,8 +1676,9 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   await app.register(websocket)
 
   app.addHook('onRequest', async (request) => {
-    ;(request as typeof request & { wp11StartedAt?: number }).wp11StartedAt =
-      performance.now()
+    ;(
+      request as typeof request & { requestStartedAt?: number }
+    ).requestStartedAt = performance.now()
     if (
       request.method === 'OPTIONS' ||
       request.url === '/healthz' ||
@@ -1863,8 +1864,8 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   })
   app.addHook('onResponse', async (request, reply) => {
     const started =
-      (request as typeof request & { wp11StartedAt?: number }).wp11StartedAt ??
-      performance.now()
+      (request as typeof request & { requestStartedAt?: number })
+        .requestStartedAt ?? performance.now()
     const route = metricRoute(request.url.split('?')[0]!)
     const method =
       request.method === 'GET' || request.method === 'POST'
@@ -4080,7 +4081,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
       await sharedFolders.getFolder(identity, session.folderId, capability)
     } catch (error) {
       // Legacy conversation folders remain available until their data migration;
-      // every WP25 shared-folder id is authoritative and never falls through.
+      // every shared-folder id is authoritative and never falls through.
       if (
         error instanceof SharedFolderError &&
         error.code === 'FOLDER_NOT_FOUND' &&

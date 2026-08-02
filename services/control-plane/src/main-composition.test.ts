@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { resolveBillingBootstrap } from './billing-composition'
 
-describe('WP24 main billing composition', () => {
+describe('main billing composition', () => {
   it('requires an explicit local emulator and durable database', () => {
     expect(() =>
       resolveBillingBootstrap({ PERSISTENT_CODEX_LOCAL_ALPHA: '1' }),

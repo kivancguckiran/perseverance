@@ -1,2 +1,2 @@
-WP21 plain text golden fixture.
+plain text golden fixture.
 The second line has a stable locator.

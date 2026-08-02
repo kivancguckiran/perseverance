@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# WP32 — Perseverance self-hosted dağıtım CLI'ı (ADR-0032).
+#  Perseverance self-hosted dağıtım CLI'ı (ADR-0032).
 #
 # Tek komut kurulum:
 #   bash infra/self-hosted/self-hosted.sh install \
 #     --domain workspace.example.com --acme-email admin@example.com
-#   (opsiyonel: --base-path /workspace — reverse-proxy alt-path'i, ADR-0038)
+#   (opsiyonel: --base-path /workspace  reverse-proxy alt-path'i, ADR-0038)
 #
 # Komutlar: preflight | install | status | admin-token | codex-login |
 #           workspace-import | backup | restore | upgrade | rollback |
 #           uninstall | verify-release |
 #           list-users | disable-user | reset-user --crypto-erase |
-#           set-allowed-users (WP37 kullanıcı yönetimi)
+#           set-allowed-users (kullanıcı yönetimi)
 # Tüm komutlar non-interactive'dir ve her eksikte actionable hata ile fail-closed
 # behavior with actionable errors. See infra/self-hosted/README.md.
 
@@ -34,7 +34,7 @@ run_check() {
   if "$@" >/dev/null 2>&1; then
     log "PASS ${name}"
   else
-    log "FAIL ${name} — ${hint}"
+    log "FAIL ${name}  ${hint}"
     PREFLIGHT_FAILURES+=("${name}")
   fi
 }
@@ -169,7 +169,7 @@ cmd_preflight() {
 }
 
 # ---------------------------------------------------------------------------
-# release doğrulaması (wp29 imza/provenance hattı)
+# release doğrulaması (fixture imza/provenance hattı)
 # ---------------------------------------------------------------------------
 
 cmd_verify_release() {
@@ -184,12 +184,12 @@ cmd_verify_release() {
   for required_file in SHA256SUMS release-manifest.json trust-policy.json \
     provenance.intoto.json cosign.pub self-hosted-dist.tar; do
     [ -f "${bundle}/${required_file}" ] ||
-      fail "bundle eksik: ${required_file} (imzalı release bundle'ı wp29 hattıyla üretilmelidir)"
+      fail "bundle eksik: ${required_file} (imzalı release bundle'ı fixture hattıyla üretilmelidir)"
   done
 
   log "checksum doğrulanıyor (SHA256SUMS)"
   (cd "${bundle}" && sha256sum -c SHA256SUMS --quiet) ||
-    fail "SHA256SUMS doğrulaması başarısız — bundle bütünlüğü bozuk"
+    fail "SHA256SUMS doğrulaması başarısız  bundle bütünlüğü bozuk"
 
   log "cosign imzaları doğrulanıyor"
   local _digest target
@@ -239,7 +239,7 @@ cmd_verify_release() {
     for (const subject of provenance.subject ?? [])
       assert(sums[subject.name] === subject.digest?.sha256,
         "provenance subject uyuşmazlığı: " + subject.name)
-    console.log("trust-policy + provenance OK — sourceCommit " + manifest.sourceCommit)
+    console.log("trust-policy + provenance OK  sourceCommit " + manifest.sourceCommit)
   ' || fail "trust policy / provenance doğrulaması başarısız"
 
   log "release doğrulaması geçti: ${bundle}"
@@ -276,7 +276,7 @@ load_release_product_image() {
 # ---------------------------------------------------------------------------
 
 chown_runtime_secrets() {
-  # WP36 gerçek-ortam bulgusu: compose file-secret mount'ları host sahipliğini
+  # gerçek-ortam bulgusu: compose file-secret mount'ları host sahipliğini
   # taşır. Product imajı servisleri (bootstrap dahil) uid 10001 (workspace) ile
   # koştuğundan root:0600 kalan secret dosyaları /run/secrets altında EACCES
   # verir. identity anahtarlarındaki sahiplik deseninin aynısı compose secrets
@@ -326,7 +326,7 @@ render_caddyfile() {
   internal) tls_directive="tls internal" ;;
   custom) tls_directive="tls /etc/self-hosted-tls/cert.pem /etc/self-hosted-tls/key.pem" ;;
   esac
-  # WP38 (ADR-0038): base-path'li kurulumda control-plane matcher'ı base
+  # (ADR-0038): base-path'li kurulumda control-plane matcher'ı base
   # altındaki yolları strip_prefix ile taşır; kök /healthz ve /readyz her
   # durumda korunur (monitoring/lifecycle geriye uyumluluğu). Kök '/' isteği
   # base'e yönlendirilir; diğer base dışı yollar web sunucusunda 404'tür.
@@ -352,7 +352,7 @@ render_env_file() {
   local domain="$1" source_commit="$2" base_path="${3:-}" product_image="$4"
   umask 077
   {
-    echo "# WP32 self-hosted yapılandırması — self-hosted.sh install tarafından üretildi."
+    echo "# self-hosted yapılandırması  self-hosted.sh install tarafından üretildi."
     echo "# Bu dosya secret içerir; 0600 izinli tutulur ve yedeklere dahil edilmez."
     cat "${SELF_HOSTED_SCRIPT_DIR}/images.env" | grep -v '^#'
     echo "SELF_HOSTED_DOMAIN=${domain}"
@@ -408,10 +408,10 @@ cmd_install() {
     source_commit="$(git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD)"
   fi
 
-  # WP38: base path'i erken ve fail-closed çöz (bayrak > mevcut env > kök).
+  # base path'i erken ve fail-closed çöz (bayrak > mevcut env > kök).
   local base_path
   base_path="$(effective_base_path)" ||
-    fail "SELF_HOSTED_BASE_PATH geçersiz — '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
+    fail "SELF_HOSTED_BASE_PATH geçersiz  '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
   local product_image
   product_image="$(product_image_tag "${source_commit}" "${base_path}")"
 
@@ -482,7 +482,7 @@ cmd_install() {
   origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
   log "public origin üzerinden readiness doğrulanıyor: ${origin}${base_path}/readyz"
   wait_public_ready "${origin}" 60 ||
-    fail "public readiness doğrulanamadı: ${origin}${base_path}/readyz — 'self-hosted.sh status' ve proxy loglarına bakın"
+    fail "public readiness doğrulanamadı: ${origin}${base_path}/readyz  'self-hosted.sh status' ve proxy loglarına bakın"
 
   write_release_state "${source_commit}" "${product_image}"
 
@@ -514,7 +514,7 @@ cmd_status() {
   if compose exec -T workspace-agent sh -c 'test -f /codex-home/auth.json' >/dev/null 2>&1; then
     log "provider auth: hazır (codex-home volume)"
   else
-    log "provider auth: eksik — self-hosted.sh codex-login"
+    log "provider auth: eksik  self-hosted.sh codex-login"
   fi
 }
 
@@ -585,11 +585,11 @@ cmd_workspace_import() {
 }
 
 # ---------------------------------------------------------------------------
-# WP37 — kullanıcı yönetimi (ADR-0037)
+#  kullanıcı yönetimi (ADR-0037)
 # ---------------------------------------------------------------------------
 
 psql_exec() {
-  # $1: SQL — superuser ile tek transaction'da çalıştırır (operatör akışı).
+  # $1: SQL  superuser ile tek transaction'da çalıştırır (operatör akışı).
   # -tA: yalnız satır değerleri döner (başlık/altbilgi ayrıştırma hatası olmaz).
   compose exec -T postgres psql -v ON_ERROR_STOP=1 -U self_hosted_admin \
     -d persistent_codex -q -tA -c "$1"
@@ -661,7 +661,7 @@ cmd_reset_user() {
       USING target WHERE t.user_id=target.user_id
     ), sec AS (
       INSERT INTO persistent_codex.workspace_security_audit(organization_id,workspace_id,action,outcome,reason_code,key_version)
-      SELECT organization_id,workspace_id,'workspace.crypto_erased','success','WP37_RESET_USER',NULL FROM target
+      SELECT organization_id,workspace_id,'workspace.crypto_erased','success','SELF_HOSTED_RESET_USER',NULL FROM target
     ), audit AS (
       INSERT INTO persistent_codex.user_auth_audit(tenant_id,username,action,outcome,reason_code)
       SELECT organization_id,username,'user.crypto_erased','allow','OPERATOR_RESET' FROM target
@@ -669,7 +669,7 @@ cmd_reset_user() {
     DELETE FROM persistent_codex.users u USING target WHERE u.user_id=target.user_id
     RETURNING u.user_id" | head -n 1 | tr -d ' ')"
   if [ -n "${erased}" ]; then
-    log "crypto-erase tamam: ${username} — sarılmış content key kopyaları silindi;"
+    log "crypto-erase tamam: ${username}  sarılmış content key kopyaları silindi;"
     log "eski içerik kalıcı olarak çözülemez. Kullanıcı allowlist'teyse yeniden kayıt olabilir."
     log "bellekteki lease'i anında düşürmek için: docker compose restart control-plane"
   else
@@ -681,7 +681,7 @@ cmd_set_allowed_users() {
   local users="${1:-}"
   [ -n "${users}" ] || fail "set-allowed-users <ad1,ad2,...> gerekli"
   update_env_value SELF_HOSTED_ALLOWED_USERS "${users}"
-  log "allowlist güncellendi: ${users} — control-plane yeni env ile yeniden başlatılıyor"
+  log "allowlist güncellendi: ${users}  control-plane yeni env ile yeniden başlatılıyor"
   compose up -d --wait --wait-timeout 300 control-plane
   log "allowlist aktif"
 }
@@ -762,7 +762,7 @@ cmd_restore() {
   local checksum_file="${archive%.tar.enc}.sha256"
   if [ -f "${checksum_file}" ]; then
     [ "$(sha256sum "${archive}" | cut -d' ' -f1)" = "$(cat "${checksum_file}")" ] ||
-      fail "yedek sha256 doğrulaması başarısız — dosya bozuk"
+      fail "yedek sha256 doğrulaması başarısız  dosya bozuk"
   fi
 
   local workdir
@@ -774,7 +774,7 @@ cmd_restore() {
   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 \
     -pass "file:$(secrets_dir)/backup-key" \
     -in "${archive}" -out "${workdir}/combined.tar" ||
-    fail "şifre çözme başarısız — backup-key doğru mu?"
+    fail "şifre çözme başarısız  backup-key doğru mu?"
   tar -C "${workdir}" -xf "${workdir}/combined.tar" && rm -f "${workdir}/combined.tar"
   [ -f "${workdir}/database.dump" ] || fail "arşivde database.dump yok"
 
@@ -822,7 +822,7 @@ cmd_upgrade() {
     new_commit="$(git -C "${SELF_HOSTED_REPO_ROOT}" rev-parse HEAD)" ||
       fail "upgrade kaynak checkout'u veya SELF_HOSTED_RELEASE_BUNDLE gerektirir"
     [ -z "$(git -C "${SELF_HOSTED_REPO_ROOT}" status --porcelain)" ] ||
-      fail "worktree temiz değil — upgrade yalnız temiz checkout'tan yapılır"
+      fail "worktree temiz değil  upgrade yalnız temiz checkout'tan yapılır"
   fi
   current_commit="$(read_env SELF_HOSTED_SOURCE_COMMIT)"
   if [ "${new_commit}" = "${current_commit}" ]; then
@@ -833,17 +833,17 @@ cmd_upgrade() {
   log "upgrade öncesi otomatik yedek alınıyor"
   cmd_backup >/dev/null
 
-  # WP37: eski kurulumlarda bulunmayan secret/env girdileri idempotent eklenir.
+  # eski kurulumlarda bulunmayan secret/env girdileri idempotent eklenir.
   ensure_secret_file internal-runtime-token
   chown_runtime_secrets "$(read_env SELF_HOSTED_NODE_IMAGE)"
   grep -q '^SELF_HOSTED_ALLOWED_USERS=' "$(env_file)" ||
     update_env_value SELF_HOSTED_ALLOWED_USERS "${SELF_HOSTED_ALLOWED_USERS:-}"
 
-  # WP38: base path fail-closed çözülür (bayrak > mevcut env > kök); eski
+  # base path fail-closed çözülür (bayrak > mevcut env > kök); eski
   # kurulumlarda anahtar idempotent eklenir ve Caddyfile yeniden render edilir.
   local base_path
   base_path="$(effective_base_path)" ||
-    fail "SELF_HOSTED_BASE_PATH geçersiz — '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
+    fail "SELF_HOSTED_BASE_PATH geçersiz  '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
   update_env_value SELF_HOSTED_BASE_PATH "${base_path}"
   render_caddyfile "$(read_env SELF_HOSTED_DOMAIN)" "$(read_env SELF_HOSTED_TLS_MODE)" \
     "${SELF_HOSTED_ACME_EMAIL:-}" "${base_path}"
@@ -875,7 +875,7 @@ cmd_upgrade() {
   log "servisler yeni sürüme geçiriliyor"
   compose up -d --wait --wait-timeout 600
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
-    fail "upgrade sonrası readiness doğrulanamadı — 'self-hosted.sh rollback' kullanılabilir"
+    fail "upgrade sonrası readiness doğrulanamadı  'self-hosted.sh rollback' kullanılabilir"
   write_release_state "${new_commit}" "${product_image}"
   log "upgrade tamam: ${current_commit} → ${new_commit}"
 }
@@ -884,7 +884,7 @@ cmd_rollback() {
   [ -f "$(previous_release_file)" ] || fail "rollback için kayıtlı önceki sürüm yok"
   local previous_commit previous_image
   previous_commit="$(sed -n 's/^SELF_HOSTED_SOURCE_COMMIT=//p' "$(previous_release_file)")"
-  # WP38: imaj referansı state'ten okunur (base'li kurulumda tag slug içerir).
+  # imaj referansı state'ten okunur (base'li kurulumda tag slug içerir).
   previous_image="$(sed -n 's/^SELF_HOSTED_PRODUCT_IMAGE=//p' "$(previous_release_file)")"
   [ -n "${previous_image}" ] || previous_image="perseverance-self-hosted-product:${previous_commit}"
   docker image inspect "${previous_image}" >/dev/null 2>&1 ||
@@ -938,7 +938,7 @@ cmd_uninstall() {
     rm -rf "${SELF_HOSTED_HOME}"
     log "durum dizini kaldırıldı: ${SELF_HOSTED_HOME}"
   else
-    log "durum dizini korundu (secret ve yedekler): ${SELF_HOSTED_HOME} — kaldırmak için --purge"
+    log "durum dizini korundu (secret ve yedekler): ${SELF_HOSTED_HOME}  kaldırmak için --purge"
   fi
   log "uninstall tamam"
 }

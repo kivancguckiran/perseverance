@@ -1,4 +1,4 @@
--- WP32 — self-hosted runtime rolü (ADR-0032, wp30 init.sql deseni).
+--  self-hosted runtime rolü (ADR-0032, fixture init.sql deseni).
 -- apply-migrations.sh her koşuda (install + upgrade) idempotent uygular; rol varsa
 -- yalnız parola tazelenir, grant'lar yeni tablolar için yeniden verilir.
 DO $$

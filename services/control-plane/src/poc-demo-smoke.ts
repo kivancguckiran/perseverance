@@ -27,7 +27,7 @@ import {
 import { buildControlPlane } from './server'
 
 const timeoutMs = Number(process.env.CODEX_POC_DEMO_TIMEOUT_MS ?? 300_000)
-const scenario = process.env.WP8_GOLDEN_SCENARIO ?? 'read-only'
+const scenario = process.env._GOLDEN_SCENARIO ?? 'read-only'
 const tenantId = 'ten_poc_demo'
 let workspaceId = 'wsp_poc_demo_read'
 let headers = { 'x-tenant-id': tenantId, 'x-workspace-id': workspaceId }
@@ -54,7 +54,7 @@ writeFileSync(
 )
 writeFileSync(
   join(workspaceCwd, 'README.md'),
-  '# Demo fixture\n\nA tiny, disposable repository for WP8.\n',
+  '# Demo fixture\n\nA tiny, disposable repository for .\n',
 )
 execFileSync('git', ['init', '--quiet'], { cwd: workspaceCwd })
 execFileSync('git', ['add', '.'], { cwd: workspaceCwd })
@@ -62,9 +62,9 @@ execFileSync(
   'git',
   [
     '-c',
-    'user.name=WP8 Demo',
+    'user.name=Demo',
     '-c',
-    'user.email=wp8@example.invalid',
+    'user.email=fixture@example.invalid',
     'commit',
     '--quiet',
     '-m',
@@ -132,7 +132,8 @@ const build = () =>
     approvalPolicy: 'on-request',
   })
 let app = await build()
-const mark = (value: string) => process.stderr.write(`[wp8-demo] ${value}\n`)
+const mark = (value: string) =>
+  process.stderr.write(`[fixture-demo] ${value}\n`)
 
 async function poll<T>(read: () => Promise<T | undefined>, label: string) {
   const deadline = Date.now() + timeoutMs
@@ -187,7 +188,7 @@ async function decide(
     payload: {
       decision,
       expectedVersion: approval.version,
-      clientContext: { deviceId: 'wp8-smoke', reason: null },
+      clientContext: { deviceId: 'fixture-smoke', reason: null },
     },
   })
 }
@@ -201,7 +202,7 @@ async function runGolden(
   const turnReply = await app.inject({
     method: 'POST',
     url: `/v1/sessions/${session.sessionId}/turns`,
-    headers: { ...headers, 'idempotency-key': `wp8-${name}-turn` },
+    headers: { ...headers, 'idempotency-key': `fixture-${name}-turn` },
     payload: { prompt },
   })
   if (turnReply.statusCode !== 202)
@@ -215,8 +216,8 @@ async function runGolden(
       handled.add(approval.approvalId)
       if (options.raceFirstApproval && !race) {
         const replies = await Promise.all([
-          decide(approval, 'accept', `wp8-${name}-race-a`),
-          decide(approval, 'decline', `wp8-${name}-race-b`),
+          decide(approval, 'accept', `fixture-${name}-race-a`),
+          decide(approval, 'decline', `fixture-${name}-race-b`),
         ])
         const statuses = replies.map((reply) => reply.statusCode).sort()
         race = {
@@ -229,7 +230,7 @@ async function runGolden(
         const reply = await decide(
           approval,
           'accept',
-          `wp8-${name}-${handled.size}`,
+          `fixture-${name}-${handled.size}`,
         )
         if (reply.statusCode !== 200)
           throw new Error(`Approval failed: ${reply.body}`)
@@ -299,7 +300,7 @@ try {
     change:
       'Add an exported subtract(left, right) function to math.mjs, add an assertion for subtract(5, 2) === 3 to math.test.mjs, then run node math.test.mjs. Finish with a concise summary.',
     approval:
-      'Run exactly this harmless command once with escalated sandbox permissions so it requires user approval: printf WP8_APPROVAL_DEMO. Do not use another tool. Then summarize the result.',
+      'Run exactly this harmless command once with escalated sandbox permissions so it requires user approval: printf _APPROVAL_DEMO. Do not use another tool. Then summarize the result.',
   }
   if (!prompts[scenario]) throw new Error(`Unknown scenario: ${scenario}`)
   const result = await runGolden(

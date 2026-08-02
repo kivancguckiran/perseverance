@@ -1,0 +1,75 @@
+# Public-release secret policy.
+# Gitleaks default kurallarını bir provider-credential sentinel kuralı ve
+# gerekçeli public-release allowlist'iyle genişletir. Public preflight aynı dosyayı
+# offline deterministik tarayıcı
+# için okur (desteklenen alt küme: [[rules]] regex/keywords, [[allowlists]]
+# description/paths/regexes).
+
+title = "Public-release gitleaks policy"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "provider-credential-marker"
+description = "Provider credential sentinel"
+regex = '''PERSISTENT_PROVIDER_CREDENTIAL_[A-Za-z0-9_-]{16,}'''
+keywords = ["PERSISTENT_PROVIDER_CREDENTIAL_"]
+
+# --- Public-release allowlist ---
+# Her kayıt gerekçesiyle listelenir. Kayıtlar yalnız doğrulanmış
+# false-positive sınıflarını kapsar; gerçek credential hiçbir allowlist
+# kaydına sığmaz.
+
+[[allowlists]]
+description = "Test fixture dosyaları: *.test.ts, golden-session girdileri ve adapter fixture'ları redaction/normalizasyon davranışını kanıtlamak için kendini fixture olarak etiketleyen sahte secret'lar içerir (ör. sk-fixture-not-a-real-key). Bu dosyalar üretim credential'ı taşıyamaz; kod incelemesi bunu ayrıca zorlar."
+paths = [
+  '''.*\.test\.tsx?$''',
+  '''^tests/golden-sessions/.*''',
+  '''.*/test/fixtures/.*''',
+]
+
+[[allowlists]]
+description = "Kendini etiketleyen sentinel fixture değerleri: bu sabitler 'saklanmaması gereken değer' semantiğini test etmek için kullanılır ve adları gereği gerçek secret değildir."
+regexes = [
+  '''(?i)(must-not-persist|do-not-store|never-store-me|not-a-secret|must-not-survive-normalization|admin-secret-fixture|opaque-e2e-workload-token)''',
+  '''sk-(fixture|secret)-[A-Za-z0-9-]+''',
+  '''(?i)['"](secret-value|local-secret)['"]''',
+]
+
+[[allowlists]]
+description = "Lokal geliştirme ve smoke fixture sabitleri yalnız loopback üzerinde çalışan geçici stack'ler için açıkça fixture olarak adlandırılmış placeholder parola/token/key değerleridir. Bu değerler hiçbir gerçek ortamda geçerli değildir."
+regexTarget = "match"
+regexes = [
+  '''(?i)(local|test|fixture|demo)[-_][A-Za-z0-9_-]*(secret|password|token|key|fixture|marker|root|admin)[A-Za-z0-9_-]*''',
+]
+
+[[allowlists]]
+description = "Protokol fixture alanları: WebSocket Sec-WebSocket-Key ve idempotencyKey replay/deduplication testlerinde sentetik opaque değer taşır; kimlik doğrulama credential'ı değildir ve üretimde de secret sayılmaz."
+regexTarget = "match"
+regexes = [
+  '''(?i)Sec-WebSocket-Key''',
+  '''(?i)idempotency[-_]?key''',
+]
+
+[[allowlists]]
+description = "Shell/psql değişken referansları literal secret değil, çalışma anında kurulum tarafından üretilen değerlere işaret eder."
+regexes = [
+  '''\$\{?[a-z_]*password\}?''',
+]
+
+[[allowlists]]
+description = "Self-hosted runtime rol parolası indirection'ı: init-runtime-role.sql psql değişkeni ve apply-migrations.sh env referansı literal secret taşımaz; gerçek değer kurulumda üretilir ve yalnız 0600 izinli secret dosyasında yaşar."
+regexes = [
+  '''self_hosted_runtime_password''',
+  '''\$\{RUNTIME_PASSWORD\}''',
+]
+
+[[allowlists]]
+description = "Git history daha sonra yeniden yazılana kadar silinmiş acceptance harness'larındaki açıkça sentetik loopback parolaları için dar geçiş istisnası; bu yollar mevcut working tree'de bulunmaz."
+paths = [
+  '''^infra/wp30-local/init\.sql$''',
+  '''^scripts/wp26-production-stack\.ts$''',
+  '''^scripts/wp27-restore\.ts$''',
+  '''^scripts/wp28-keycloak-identity\.ts$''',
+]

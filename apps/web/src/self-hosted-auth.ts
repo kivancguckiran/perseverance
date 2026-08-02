@@ -4,7 +4,7 @@ import {
   selfHostedSessionTokensSchema,
   type SelfHostedSessionTokens,
 } from '@perseverance/control-plane-contracts'
-// WP37 — self-hosted oturum saklama ve yenileme yardımcıları (ADR-0037).
+//  self-hosted oturum saklama ve yenileme yardımcıları (ADR-0037).
 // Access/refresh token ve scope tarayıcı storage'ında tutulur; parola ve
 // content key HİÇBİR ZAMAN saklanmaz. sessionStorage 'persistent.auth'
 // anahtarı mevcut operatör/acil akışıyla geriye uyumludur; PWA kalıcılığı
@@ -22,7 +22,7 @@ export interface StoredAuthSession {
 }
 
 export const AUTH_SESSION_KEY = 'persistent.auth'
-const AUTH_PERSISTENT_KEY = 'persistent.auth.wp37'
+const AUTH_PERSISTENT_KEY = 'persistent.auth.session'
 type RefreshResult = 'refreshed' | 'none' | 'failed'
 let refreshInFlight: Promise<RefreshResult> | null = null
 

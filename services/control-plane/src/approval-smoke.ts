@@ -125,7 +125,7 @@ try {
     headers: { ...headers, 'idempotency-key': 'real-approval-smoke-turn' },
     payload: {
       prompt:
-        'Run exactly this harmless command once: printf WP5_APPROVAL_SMOKE. Do not use another tool.',
+        'Run exactly this harmless command once: printf _APPROVAL_SMOKE. Do not use another tool.',
     },
   })
   if (turnReply.statusCode !== 202)

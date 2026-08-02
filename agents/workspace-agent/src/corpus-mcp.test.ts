@@ -53,7 +53,7 @@ const client: WorkspaceCorpusRetrievalClient = {
   },
 }
 
-describe('WP22 workspace-local corpus MCP', () => {
+describe('workspace-local corpus MCP', () => {
   it('offers only bounded read-only tools without a client-controlled scope', async () => {
     const server = new WorkspaceCorpusMcpServer(client)
     const listed = await server.handle({

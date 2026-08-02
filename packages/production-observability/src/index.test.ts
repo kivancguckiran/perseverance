@@ -118,7 +118,7 @@ const graph = (): RestoreGraph => {
   }
 }
 
-describe('WP27 production telemetry boundary', () => {
+describe('production telemetry boundary', () => {
   it('correlates spans, metrics and structured logs with W3C trace context', () => {
     const parent = createTrace()
     const parsed = parseTraceparent(traceparent(parent))
@@ -134,7 +134,7 @@ describe('WP27 production telemetry boundary', () => {
       parent: parsed,
       attributes: {
         operation: 'claim',
-        'tenant.opaque': opaqueScope('tenant-a', 'fixture-salt-wp27'),
+        'tenant.opaque': opaqueScope('tenant-a', 'fixture-salt-fixture'),
       },
     })
     telemetry.recordMetric('scheduler_queue_wait', 25, {
@@ -200,7 +200,7 @@ describe('WP27 production telemetry boundary', () => {
   })
 })
 
-describe('WP27 immutable backup and fail-closed restore', () => {
+describe('immutable backup and fail-closed restore', () => {
   it('verifies immutable manifest, all component checksums and key availability', () => {
     const sealed = manifest()
     expect(verifyManifest(sealed, bodies).manifestId).toBe('backup-1')
@@ -274,7 +274,7 @@ describe('WP27 immutable backup and fail-closed restore', () => {
   })
 })
 
-describe('WP27 multi-window burn-rate alerts', () => {
+describe('multi-window burn-rate alerts', () => {
   it('fires on injected failure and auto-resolves after recovery', () => {
     const lifecycle = new AlertLifecycle()
     const rule = MULTI_WINDOW_BURN_RATE[0]!

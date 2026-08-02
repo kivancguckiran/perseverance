@@ -1,4 +1,4 @@
-// WP38 (ADR-0038): base-path yardımcıları. Vite `base` build-time'da belirlenir
+// (ADR-0038): base-path yardımcıları. Vite `base` build-time'da belirlenir
 // (kökte '/', base'li kurulumda '/workspace/' gibi). Router navigasyonları
 // `basepath` ile otomatik prefix'lenir; buradaki yardımcılar router DIŞI
 // kök-mutlak kullanımlar içindir (window.location, raw <a href>, SW kaydı).

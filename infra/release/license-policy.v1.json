@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "projectLicense": "AGPL-3.0-only",
+  "note": "projectLicense repository'nin kendi lisansıdır (ADR-0031). allowed/forbidden listeleri dependency ağacına uygulanır; yasak copyleft bağımlılıklar ileride ikili/ticari lisans seçeneğini açık tutmak için AGPLv3 seçiminden sonra da yasak kalır.",
+  "allowed": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC-BY-4.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Python-2.0",
+    "Unicode-3.0",
+    "Unlicense"
+  ],
+  "forbidden": [
+    "AGPL-1.0",
+    "AGPL-3.0",
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "GPL-2.0",
+    "GPL-2.0-only",
+    "GPL-3.0",
+    "GPL-3.0-only",
+    "SSPL-1.0",
+    "BUSL-1.1",
+    "Elastic-2.0"
+  ],
+  "unknownRequiresReview": true
+}

@@ -36,7 +36,7 @@ const input = JSON.parse(
 const adapted = adapter.adapt(input)
 store.ingest({
   ...scope,
-  ingestKey: 'wp8-unknown-replay',
+  ingestKey: 'fixture-unknown-replay',
   raw: {
     envelope: adapted.envelope,
     checksum: adapted.checksum,

@@ -5,7 +5,5 @@ coverage/
 packages/codex-protocol-generated/src/generated/
 apps/web/src/routeTree.gen.ts
 docs/architecture/perseverance-tasarim-spesifikasyonu.md
-services/control-plane/corpus/raw/
-docs/acceptance/wp30-local-evidence/
-infra/release/wp31-sbom.cdx.json
-infra/release/wp31-license-report.json
+infra/release/sbom.cdx.json
+infra/release/dependency-license-report.json

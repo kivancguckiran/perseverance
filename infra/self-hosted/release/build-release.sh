@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WP32 — çok mimarili self-hosted release üretimi (ADR-0032, wp29 hattı).
+# Çok mimarili self-hosted release üretimi.
 # linux/amd64 + linux/arm64 product imajlarını buildx ile üretir, kurulum
 # bundle'ını (compose profili + migration'lar + script'ler) paketler, checksum
 # üretir ve COSIGN_KEY_FILE verilmişse cosign ile imzalar + in-toto/SLSA
@@ -101,7 +101,7 @@ docker run --rm \
   tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
   -cf /out/self-hosted-dist.tar \
   package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json \
-  apps agents packages services config \
+  apps agents packages services config third_party NOTICE LICENSE \
   infra/self-hosted infra/postgres/migrations
 
 echo "[release] release-manifest.json üretiliyor"
@@ -139,14 +139,14 @@ docker run --rm -v "${OUTPUT}:/out" -e "SOURCE_COMMIT=${SOURCE_COMMIT}" \
     predicateType: "https://slsa.dev/provenance/v1",
     predicate: {
       buildDefinition: {
-        buildType: "https://perseverance.invalid/wp32/self-hosted-release/v1",
+        buildType: "https://perseverance.invalid/self-hosted-release/v1",
         externalParameters: {
           repository: "perseverance",
           releaseVersion: process.env.RELEASE_VERSION,
           sourceCommit: process.env.SOURCE_COMMIT,
         },
       },
-      runDetails: { builder: { id: "wp32-self-hosted-release-builder-v1" } },
+      runDetails: { builder: { id: "self-hosted-release-builder-v1" } },
     },
   }
   writeFileSync("/out/provenance.intoto.json", JSON.stringify(provenance, null, 2) + "\n")
@@ -188,7 +188,7 @@ if [ -n "${COSIGN_KEY_FILE:-}" ]; then
 else
   echo "[release] UYARI: COSIGN_KEY_FILE verilmedi — bundle imzasız üretildi;"
   echo "[release] imzasız bundle 'self-hosted.sh verify-release' doğrulamasından GEÇMEZ."
-  echo "[release] Yayın öncesi 'pnpm wp29:signatures' hattındaki anahtar yönetimiyle imzalayın."
+  echo "[release] Yayın öncesi COSIGN_KEY_FILE ve COSIGN_PUB_FILE ile yeniden üretin."
 fi
 
 echo "[release] tamam — sourceCommit ${SOURCE_COMMIT}"

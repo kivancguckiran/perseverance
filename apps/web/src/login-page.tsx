@@ -1,4 +1,4 @@
-// WP37 — self-hosted giriş/kayıt/kurtarma sayfası (ADR-0037).
+//  self-hosted giriş/kayıt/kurtarma sayfası (ADR-0037).
 // Parola yalnız istekte kullanılır, hiçbir storage'a yazılmaz. Recovery key
 // kayıt ve kurtarma yanıtlarında BİR KEZ gösterilir; kullanıcı sakladığını
 // onaylamadan devam edilmez.
@@ -189,7 +189,7 @@ export function LoginPage() {
           <h1>{t('Save this code now', 'Bu kodu şimdi kaydedin')}</h1>
           <p>
             {t(
-              'This code is shown ONLY NOW and is not stored on the server. It is the only way to regain access if you forget your password. If both are lost, your conversations cannot be decrypted—not even by the operator.',
+              'This code is shown ONLY NOW and is not stored on the server. It is the only way to regain access if you forget your password. If both are lost, your conversations cannot be decryptednot even by the operator.',
               'Bu kod YALNIZ ŞİMDİ gösteriliyor ve sunucuda saklanmıyor. Parolanızı unutursanız hesabınıza erişmenin tek yolu budur. Parola ve kod birlikte kaybolursa konuşmalarınız kalıcı olarak çözülemez; operatör dahil kimse kurtaramaz.',
             )}
           </p>
@@ -273,7 +273,7 @@ export function LoginPage() {
         </h1>
         <p>
           {t(
-            'Your conversations are encrypted with a key derived from your password and never written to the server disk. Without your password, no one—including the operator—can read your content.',
+            'Your conversations are encrypted with a key derived from your password and never written to the server disk. Without your password, no oneincluding the operatorcan read your content.',
             'Konuşmalarınız parolanızdan türetilen ve sunucu diskine asla yazılmayan bir anahtarla şifrelenir. Parolanız olmadan operatör dahil kimse içeriğinizi okuyamaz.',
           )}
         </p>

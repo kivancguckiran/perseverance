@@ -1,4 +1,4 @@
-// WP32 — self-hosted ilk kurulum bootstrap'i (ADR-0032).
+//  self-hosted ilk kurulum bootstrap'i (ADR-0032).
 // `bootstrap` one-shot compose servisi olarak product imajında koşar. İdempotenttir:
 // ilk organizasyonu, admin principal'ını, owner üyeliğini, workspace'i, region ve
 // runtime node kaydını, scheduling policy'yi, byok billing planını ve object
@@ -106,7 +106,7 @@ try {
   await pool.end()
 }
 
-// WP37: billing seed tanımı kayıt akışıyla paylaşılan modüle taşındı
+// billing seed tanımı kayıt akışıyla paylaşılan modüle taşındı
 // (services/control-plane/src/self-hosted-provisioning.ts).
 const billingSeed = selfHostedBillingSeed()
 

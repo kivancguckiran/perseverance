@@ -1,5 +1,5 @@
-// WP37 — auth API sözleşme testleri (ADR-0037): route modülü stub servis ile
-// fastify inject üzerinden doğrulanır; tam DB'li akış wp37:privacy gate'inde.
+//  auth API sözleşme testleri (ADR-0037): route modülü stub servis ile
+// fastify inject üzerinden doğrulanır; tam DB'li akış fixture:privacy gate'inde.
 import Fastify from 'fastify'
 import { describe, expect, it } from 'vitest'
 import { selfHostedSessionTokensSchema } from '@perseverance/control-plane-contracts'
@@ -12,7 +12,7 @@ import {
   type SelfHostedAuthService,
 } from './self-hosted-auth'
 
-describe('wp37 auth API sözleşmesi', () => {
+describe('fixture auth API sözleşmesi', () => {
   const buildApp = (service: Partial<SelfHostedAuthService>) => {
     const app = Fastify({ logger: false })
     registerSelfHostedAuthRoutes(app, {

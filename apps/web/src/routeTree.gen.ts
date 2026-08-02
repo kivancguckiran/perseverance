@@ -9,27 +9,15 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as ManagedCloudRouteImport } from './routes/managed-cloud'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as EnterpriseRouteImport } from './routes/enterprise'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 import { Route as FilesSplatRouteImport } from './routes/files.$'
 import { Route as SessionsSessionIdFilesSplatRouteImport } from './routes/sessions.$sessionId.files.$'
 
-const ManagedCloudRoute = ManagedCloudRouteImport.update({
-  id: '/managed-cloud',
-  path: '/managed-cloud',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EnterpriseRoute = EnterpriseRouteImport.update({
-  id: '/enterprise',
-  path: '/enterprise',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -56,18 +44,14 @@ const SessionsSessionIdFilesSplatRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/enterprise': typeof EnterpriseRoute
   '/login': typeof LoginRoute
-  '/managed-cloud': typeof ManagedCloudRoute
   '/files/$': typeof FilesSplatRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRouteWithChildren
   '/sessions/$sessionId/files/$': typeof SessionsSessionIdFilesSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/enterprise': typeof EnterpriseRoute
   '/login': typeof LoginRoute
-  '/managed-cloud': typeof ManagedCloudRoute
   '/files/$': typeof FilesSplatRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRouteWithChildren
   '/sessions/$sessionId/files/$': typeof SessionsSessionIdFilesSplatRoute
@@ -75,9 +59,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/enterprise': typeof EnterpriseRoute
   '/login': typeof LoginRoute
-  '/managed-cloud': typeof ManagedCloudRoute
   '/files/$': typeof FilesSplatRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRouteWithChildren
   '/sessions/$sessionId/files/$': typeof SessionsSessionIdFilesSplatRoute
@@ -86,27 +68,21 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/enterprise'
     | '/login'
-    | '/managed-cloud'
     | '/files/$'
     | '/sessions/$sessionId'
     | '/sessions/$sessionId/files/$'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/enterprise'
     | '/login'
-    | '/managed-cloud'
     | '/files/$'
     | '/sessions/$sessionId'
     | '/sessions/$sessionId/files/$'
   id:
     | '__root__'
     | '/'
-    | '/enterprise'
     | '/login'
-    | '/managed-cloud'
     | '/files/$'
     | '/sessions/$sessionId'
     | '/sessions/$sessionId/files/$'
@@ -114,34 +90,18 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  EnterpriseRoute: typeof EnterpriseRoute
   LoginRoute: typeof LoginRoute
-  ManagedCloudRoute: typeof ManagedCloudRoute
   FilesSplatRoute: typeof FilesSplatRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/managed-cloud': {
-      id: '/managed-cloud'
-      path: '/managed-cloud'
-      fullPath: '/managed-cloud'
-      preLoaderRoute: typeof ManagedCloudRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/login': {
       id: '/login'
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/enterprise': {
-      id: '/enterprise'
-      path: '/enterprise'
-      fullPath: '/enterprise'
-      preLoaderRoute: typeof EnterpriseRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -188,9 +148,7 @@ const SessionsSessionIdRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  EnterpriseRoute: EnterpriseRoute,
   LoginRoute: LoginRoute,
-  ManagedCloudRoute: ManagedCloudRoute,
   FilesSplatRoute: FilesSplatRoute,
   SessionsSessionIdRoute: SessionsSessionIdRouteWithChildren,
 }

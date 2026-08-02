@@ -14,7 +14,7 @@ import { InMemorySharedFolderRepository } from '@perseverance/shared-folders'
 import { afterEach, describe, expect, it } from 'vitest'
 import { buildControlPlane } from './server'
 
-const issuer = 'https://wp25.test'
+const issuer = 'https://fixture.test'
 const roots: string[] = []
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -67,9 +67,9 @@ const headers = (principal: 'owner' | 'friend' | 'outsider') => ({
   'content-type': 'application/json',
 })
 
-describe('WP25 shared folder REST boundary', () => {
+describe('shared folder REST boundary', () => {
   it('shares only the invited folder and applies role/revoke changes fail-closed', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp25-api-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-api-'))
     roots.push(root)
     const repository = new InMemorySharedFolderRepository()
     const app = await buildControlPlane({

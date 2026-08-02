@@ -305,7 +305,7 @@ describe('production scheduler billing cleanup', () => {
       scope,
       'run-a',
       expect.objectContaining({
-        idempotencyKey: 'wp26:run-a:failed',
+        idempotencyKey: 'scheduler:run-a:failed',
         outcome: 'failed',
         terminal: true,
       }),

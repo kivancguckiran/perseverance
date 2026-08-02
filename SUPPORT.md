@@ -12,6 +12,5 @@ Report vulnerabilities through the private channel in [SECURITY.md](SECURITY.md)
 not through issues.
 
 Third-party provider installation, licensing, account, subscription, and usage
-cost questions are outside this project's support scope. The repository contains
-a historical `cloud` profile and managed-runtime contracts, but Perseverance does
-not operate or support a hosted cloud service.
+cost questions are outside this project's support scope. Perseverance does not
+operate or support a hosted cloud service.

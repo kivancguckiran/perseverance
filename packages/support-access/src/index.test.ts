@@ -43,7 +43,7 @@ function fixture(actions: SupportAccessAction[] = ['content.view']) {
   }
 }
 
-describe('WP20 support access governance', () => {
+describe('support access governance', () => {
   it('requires tenant-user initiation, narrow scope, MFA and separation of duty', () => {
     const service = new SupportAccessService()
     expect(() =>
@@ -323,7 +323,7 @@ describe('WP20 support access governance', () => {
   })
 })
 
-describe('WP20 break-glass', () => {
+describe('break-glass', () => {
   it('requires incident, strong MFA, two distinct approvers, alarm and notification outbox', () => {
     const service = new SupportAccessService(
       () => new Date('2026-07-17T10:00:00.000Z'),

@@ -50,7 +50,7 @@ afterEach(() => {
 })
 
 function setup(role: OrganizationMembership['role'] = 'developer') {
-  const root = mkdtempSync(join(tmpdir(), 'wp18-auth-'))
+  const root = mkdtempSync(join(tmpdir(), 'fixture-auth-'))
   roots.push(root)
   const store = new SqliteEventStore(join(root, 'events.sqlite'))
   store.createSession({
@@ -90,7 +90,7 @@ function setup(role: OrganizationMembership['role'] = 'developer') {
   }
 }
 
-describe('WP18 REST authorization boundary', () => {
+describe('REST authorization boundary', () => {
   it('keeps admin financial projections out of normal tenant roles', async () => {
     const tenantFixture = setup('developer')
     const tenantApp = await buildControlPlane({
@@ -300,7 +300,7 @@ describe('WP18 REST authorization boundary', () => {
   })
 })
 
-describe('WP20 admin and support governance boundary', () => {
+describe('admin and support governance boundary', () => {
   const headers = {
     authorization: 'Bearer valid',
     'x-tenant-id': 'org-a',

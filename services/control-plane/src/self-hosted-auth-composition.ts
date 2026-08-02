@@ -1,4 +1,4 @@
-// WP37 — self-hosted auth kompozisyonu (ADR-0037). Env'den auth servisini
+//  self-hosted auth kompozisyonu (ADR-0037). Env'den auth servisini
 // kurar ve workspace-agent'ın content key lease'i almak için kullandığı,
 // YALNIZ iç docker ağında dinleyen (Caddy tarafından yayınlanmayan) içsel
 // listener'ı başlatır. İç token dosyadan okunur; env'e/log'a yazılmaz.
@@ -52,7 +52,7 @@ export function createSelfHostedAuthFromEnv(
           )
           await client.query(
             `INSERT INTO persistent_codex.workspace_security_audit(organization_id,workspace_id,action,outcome,reason_code,key_version)
-             VALUES ($1,$2,$3,'success','WP37_CONTENT_KEY_LEASE',NULL)`,
+             VALUES ($1,$2,$3,'success','SELF_HOSTED_CONTENT_KEY_LEASE',NULL)`,
             [event.scope.organizationId, event.scope.workspaceId, event.action],
           )
           await client.query('COMMIT')

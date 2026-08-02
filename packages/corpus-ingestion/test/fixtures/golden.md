@@ -1,4 +1,4 @@
-# WP21 Golden
+# Golden
 
 Tenant-aware Markdown extraction preserves line locators.
 

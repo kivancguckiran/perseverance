@@ -4,10 +4,11 @@ Copyright (c) 2026 The Perseverance Authors
 This product is licensed under the GNU Affero General Public License,
 version 3 only (AGPL-3.0-only). See the LICENSE file for the full text.
 
-This repository does not bundle or redistribute any provider CLI or SDK
-binaries (OpenAI Codex, Anthropic Claude, Google Gemini, Cursor). Users
-install those tools themselves under the providers' own licenses and terms.
-Provider tools remain subject to their vendors' licenses and terms.
+Self-hosted release artifacts bundle the pinned OpenAI Codex CLI/runtime,
+Copyright OpenAI, under the Apache License 2.0. The complete license and
+attribution are distributed in third_party/openai-codex/. Anthropic Claude,
+Google Gemini, and Cursor CLIs are not bundled; operators install them under
+their vendors' licenses and terms.
 
 "Codex" is a trademark of OpenAI. "Claude" is a trademark of Anthropic.
 "Gemini" is a trademark of Google. "Cursor" is a trademark of Anysphere.

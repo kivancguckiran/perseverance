@@ -3,10 +3,10 @@ import { baseUrl, withBase } from './base-path'
 import { refreshStoredSession } from './self-hosted-auth'
 import { useTranslations } from './i18n'
 
-// WP38 (ADR-0038): SW, scope kuralı gereği base altından kaydedilir ve servis
-// edilir; kökte withBase no-op'tur. Sürüm wp38-v1: sw.js scope-türevli precache
+// (ADR-0038): SW, scope kuralı gereği base altından kaydedilir ve servis
+// edilir; kökte withBase no-op'tur. Sürüm fixture-v1: sw.js scope-türevli precache
 // listesine geçti.
-export const serviceWorkerUrl = withBase('/sw.js?v=wp38-v1')
+export const serviceWorkerUrl = withBase('/sw.js?v=self-hosted-v1')
 
 function applicationServerKey(value: string) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
@@ -171,7 +171,7 @@ export function PwaRuntime() {
   const [notificationResolutionError, setNotificationResolutionError] =
     useState(false)
   const reloadOnControllerChange = useRef(false)
-  // WP37: PWA yeniden açılışında oturum, refresh token ile parolasız sürer.
+  // PWA yeniden açılışında oturum, refresh token ile parolasız sürer.
   // Content key kilidi ayrıdır; içerik gerektiğinde sunucu 428 döner ve
   // kullanıcı /login üzerinden parolasını yeniden girer.
   useEffect(() => {

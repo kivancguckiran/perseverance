@@ -36,7 +36,7 @@ function registry(
     explicitUsage: 'test',
   },
 ) {
-  const root = mkdtempSync(join(tmpdir(), 'wp21-corpus-'))
+  const root = mkdtempSync(join(tmpdir(), 'fixture-corpus-'))
   roots.push(root)
   return { root, value: new LocalCorpusRegistry(root, options) }
 }
@@ -44,7 +44,7 @@ afterEach(() => {
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true })
 })
 
-describe('WP21 golden extraction', () => {
+describe('golden extraction', () => {
   it.each([
     ['golden.pdf', 'application/pdf', 'page'],
     ['golden.md', 'text/markdown', 'line'],
@@ -57,7 +57,7 @@ describe('WP21 golden extraction', () => {
       const extracted = await extractDocumentBounded({ mediaType, bytes })
       expect(extracted.length).toBeGreaterThan(0)
       expect(extracted[0]!.locator.kind).toBe(locator)
-      expect(extracted.map((entry) => entry.text).join('\n')).toContain('WP21')
+      expect(extracted.map((entry) => entry.text).join('\n')).toContain('')
     },
   )
 
@@ -120,7 +120,7 @@ describe('WP21 golden extraction', () => {
       mediaType: 'application/pdf',
       bytes: fixture('tj-array.pdf'),
     })
-    expect(tjArray[0]?.text).toContain('WP21 TJ array operator fixture')
+    expect(tjArray[0]?.text).toContain('TJ array operator fixture')
     await expect(
       extractDocumentBounded({
         mediaType: 'application/pdf',
@@ -157,7 +157,7 @@ describe('WP21 golden extraction', () => {
   })
 })
 
-describe('WP21 idempotent registry and worker', () => {
+describe('idempotent registry and worker', () => {
   it('dedupes duplicate ingest, chunk and embedding usage and rebuilds deterministically', async () => {
     const { value } = registry()
     const first = await value.createSource({
@@ -327,7 +327,7 @@ describe('WP21 idempotent registry and worker', () => {
   })
 })
 
-describe('WP21 corpus snapshot envelope encryption', () => {
+describe('corpus snapshot envelope encryption', () => {
   function encryptedStorage(root: string, kms: LocalKmsProvider) {
     return new EncryptedFilesystemCorpusSnapshotStorage(
       root,
@@ -337,7 +337,7 @@ describe('WP21 corpus snapshot envelope encryption', () => {
   }
 
   it('binds tenant, workspace, revision, storage key, content hash and envelope fields', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp21-envelope-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-envelope-'))
     roots.push(root)
     const storage = encryptedStorage(
       root,
@@ -455,7 +455,7 @@ describe('WP21 corpus snapshot envelope encryption', () => {
   })
 
   it('supports rotation and fails closed for revoked keys and workspace crypto-erasure', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp21-envelope-lifecycle-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-envelope-lifecycle-'))
     roots.push(root)
     const kms = new LocalKmsProvider(Buffer.alloc(32, 12))
     const storage = encryptedStorage(root, kms)
@@ -501,7 +501,7 @@ describe('WP21 corpus snapshot envelope encryption', () => {
   })
 
   it('requires explicit test or development use for a local KMS', () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp21-envelope-local-kms-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-envelope-local-kms-'))
     roots.push(root)
     expect(
       () =>

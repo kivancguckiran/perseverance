@@ -1465,7 +1465,7 @@ export function readEncryptedFile(path: string): ChunkedEnvelopeV1 {
 }
 
 // ---------------------------------------------------------------------------
-// WP37 — parola-türevli kullanıcı içerik anahtarı (ADR-0037).
+//  parola-türevli kullanıcı içerik anahtarı (ADR-0037).
 // Kullanıcı başına 32 baytlık content key; paroladan Argon2id+HKDF ile türeyen
 // user-KEK ve kayıtta bir kez gösterilen recovery key'den HKDF ile türeyen
 // recovery-KEK ile ayrı ayrı sarılır. Düz anahtarlar yalnız bellekte yaşar.
@@ -1745,7 +1745,7 @@ export class UserContentKmsProvider implements KmsProvider {
     // keyVersion burada KEK sargı jenerasyonunu izler (parola/recovery
     // rotasyonunda artar); content key'in kendisi değişmez. Eski jenerasyonla
     // yazılmış zarflar recovery sonrası da açılabilmelidir; bu yüzden sürüm
-    // eşitliği dayatılmaz — GCM auth tag'i yanlış anahtarı zaten reddeder.
+    // eşitliği dayatılmaz  GCM auth tag'i yanlış anahtarı zaten reddeder.
     const raw = Buffer.from(wrapped.ciphertext, 'base64')
     if (raw.byteLength < 29) throw new CryptoError('WRAPPED_KEY_TOO_SHORT')
     try {

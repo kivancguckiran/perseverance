@@ -100,7 +100,7 @@ export function ProductionSessionPage({ sessionId }: { sessionId: string }) {
     let timer: number | undefined
     const connect = () => {
       if (!active) return
-      // WP38: kök-mutlak path apiBaseUrl'deki base'i düşürür — string birleştir.
+      // kök-mutlak path apiBaseUrl'deki base'i düşürür — string birleştir.
       const url = new URL(`${apiBaseUrl}/v1/realtime`)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(url)

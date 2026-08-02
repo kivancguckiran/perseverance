@@ -1,4 +1,4 @@
-// WP37 — self-hosted kullanıcı hesapları ve parola-türevli at-rest mahremiyet
+//  self-hosted kullanıcı hesapları ve parola-türevli at-rest mahremiyet
 // (ADR-0037). Kayıt yalnız SELF_HOSTED_ALLOWED_USERS allowlist'ine açıktır
 // (fail-closed). Parola, recovery key, KEK'ler ve çözülmüş content key diske
 // asla yazılmaz; content key login'de çözülür ve bellek-içi lease olarak
@@ -876,7 +876,7 @@ export class SelfHostedAuthService {
         client,
         this.#scopeOf(user),
         'key.rotated',
-        'WP37_RECOVERY_REWRAP',
+        'SELF_HOSTED_RECOVERY_REWRAP',
         String(nextKeyVersion),
       )
       return await this.#issueSession(client, user)

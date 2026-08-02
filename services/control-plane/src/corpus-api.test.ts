@@ -18,9 +18,9 @@ afterEach(() => {
   while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true })
 })
 
-describe('WP21 workspace source API', () => {
+describe('workspace source API', () => {
   it('fails closed without a production corpus repository', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp21-api-production-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-api-production-'))
     roots.push(root)
     vi.stubEnv('NODE_ENV', 'production')
     try {
@@ -37,7 +37,7 @@ describe('WP21 workspace source API', () => {
   })
 
   it('fails closed when durable corpus storage uses a development KMS', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp21-api-local-kms-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-api-local-kms-'))
     roots.push(root)
     const repository = createPostgresCorpusRepository({
       connectionString: 'postgresql://unused:unused@127.0.0.1:1/unused',
@@ -66,7 +66,7 @@ describe('WP21 workspace source API', () => {
   })
 
   it('creates, lists, details, reindexes and deletes within the authorized workspace', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp21-api-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-api-'))
     roots.push(root)
     const app = await buildControlPlane({
       databasePath: ':memory:',

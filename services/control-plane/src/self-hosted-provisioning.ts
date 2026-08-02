@@ -1,4 +1,4 @@
-// WP37 — self-hosted kullanıcı workspace provisioning'i (ADR-0037).
+//  self-hosted kullanıcı workspace provisioning'i (ADR-0037).
 // İlk kurulum bootstrap'i (infra/self-hosted/bootstrap) ile kayıt akışının
 // paylaştığı idempotent kurulum adımları: organization, principal, owner
 // üyeliği, workspace, scheduling policy ve byok billing snapshot'ı.
@@ -9,7 +9,7 @@ export const SELF_HOSTED_PLAN_VERSION = 32
 
 export function selfHostedBillingSeed() {
   return {
-    // WP36 gerçek-ortam bulgusu: byok planında promosyon kredisi bilinçli
+    // gerçek-ortam bulgusu: byok planında promosyon kredisi bilinçli
     // olarak yoktur. Alan 0 olarak gönderilirse seedDevelopmentScope
     // (!== undefined guard'ı) bunu seedDevelopmentCredits'e iletir ve
     // creditsMicros <= 0 DEVELOPMENT_CREDIT_SEED_INVALID fırlatır; bu yüzden

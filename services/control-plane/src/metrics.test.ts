@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BoundedMetricRecorder, METRIC_DEFINITIONS } from './metrics'
 
-describe('WP11 bounded metrics', () => {
+describe('bounded metrics', () => {
   it('uses an injectable clock and bounded allowlisted labels', () => {
     const recorder = new BoundedMetricRecorder({
       now: () => new Date('2026-07-15T10:00:00.000Z'),

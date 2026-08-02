@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WP32 — self-hosted.sh için paylaşılan yardımcılar (ADR-0032).
+#  self-hosted.sh için paylaşılan yardımcılar (ADR-0032).
 # Bu dosya tek başına çalıştırılmaz; self-hosted.sh tarafından source edilir.
 
 set -euo pipefail
@@ -17,7 +17,7 @@ fail() {
 }
 
 require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || fail "gerekli komut bulunamadı: $1 — $2"
+  command -v "$1" >/dev/null 2>&1 || fail "gerekli komut bulunamadı: $1  $2"
 }
 
 config_dir() { printf '%s/config' "${SELF_HOSTED_HOME}"; }
@@ -35,16 +35,16 @@ compose() {
 }
 
 read_env() {
-  # $1: anahtar — env dosyasından değer okur (yalnız KEY=VALUE satırları).
+  # $1: anahtar  env dosyasından değer okur (yalnız KEY=VALUE satırları).
   sed -n "s/^$1=//p" "$(env_file)" | tail -n 1
 }
 
 gen_secret() { openssl rand -base64 32 | tr -d '\n=' | tr '+/' '-_'; }
 
-# --- WP38: base-path (subpath) yardımcıları (ADR-0038) ------------------------
+# --- base-path (subpath) yardımcıları (ADR-0038) ------------------------
 
 normalize_base_path() {
-  # $1: ham değer — normalize edilmiş base path'i basar (boş = kök).
+  # $1: ham değer  normalize edilmiş base path'i basar (boş = kök).
   # Kurallar: başta '/', sonda '/' yok, segmentler [A-Za-z0-9._~-], '.'/'..'
   # yasak, uygulama-rezerve kökleriyle çakışma yasak. Geçersizse 1 döner.
   local raw="${1:-}"
@@ -86,7 +86,7 @@ effective_base_path() {
 }
 
 product_image_tag() {
-  # $1: source commit, $2: normalize base path — kökte tag değişmez; base'li
+  # $1: source commit, $2: normalize base path  kökte tag değişmez; base'li
   # kurulumda base slug'ı eklenir ki base değişikliği yeni build tetiklesin.
   local commit="$1" base="${2:-}"
   if [ -n "${base}" ]; then
@@ -105,7 +105,7 @@ ensure_dirs() {
 }
 
 ensure_secret_file() {
-  # $1: dosya adı — yoksa openssl rand ile üretir, 0600 tutar.
+  # $1: dosya adı  yoksa openssl rand ile üretir, 0600 tutar.
   local path
   path="$(secrets_dir)/$1"
   if [ ! -f "${path}" ]; then
@@ -115,7 +115,7 @@ ensure_secret_file() {
 }
 
 verify_pinned_image() {
-  # $1: tag@sha256 pinli imaj referansı — pull sonrası RepoDigests doğrulaması.
+  # $1: tag@sha256 pinli imaj referansı  pull sonrası RepoDigests doğrulaması.
   local reference="$1" repository digest repo_digests
   repository="${reference%%@*}"
   repository="${repository%%:*}"
@@ -127,7 +127,7 @@ verify_pinned_image() {
   repo_digests="$(docker image inspect --format '{{join .RepoDigests "\n"}}' "${reference}" 2>/dev/null)" ||
     fail "imaj bulunamadı (pull başarısız?): ${reference}"
   printf '%s\n' "${repo_digests}" | grep -q "${repository}@${digest}" ||
-    fail "imaj digest uyuşmazlığı: ${reference} — RepoDigests: ${repo_digests}"
+    fail "imaj digest uyuşmazlığı: ${reference}  RepoDigests: ${repo_digests}"
 }
 
 pinned_images() {
@@ -147,8 +147,8 @@ labeled_resources() {
 }
 
 wait_public_ready() {
-  # $1: public origin, $2: deneme sayısı — /readyz 'ready' dönene dek bekler.
-  # WP38: base-path'li kurulumda readiness base altından doğrulanır (kök
+  # $1: public origin, $2: deneme sayısı  /readyz 'ready' dönene dek bekler.
+  # base-path'li kurulumda readiness base altından doğrulanır (kök
   # /readyz ayrıca korunur; eski env dosyalarında anahtar yoksa base boştur).
   local origin="$1" attempts="${2:-60}" insecure=() base=""
   base="$(read_env SELF_HOSTED_BASE_PATH)"
@@ -167,8 +167,8 @@ release_state_file() { printf '%s/current-release.env' "$(state_dir)"; }
 previous_release_file() { printf '%s/previous-release.env' "$(state_dir)"; }
 
 write_release_state() {
-  # $1: source commit, $2: product imaj referansı (WP38: base'li kurulumda tag
-  # slug içerir) — mevcut sürümü state'e yazar, öncekini saklar.
+  # $1: source commit, $2: product imaj referansı (base'li kurulumda tag
+  # slug içerir)  mevcut sürümü state'e yazar, öncekini saklar.
   if [ -f "$(release_state_file)" ]; then
     cp "$(release_state_file)" "$(previous_release_file)"
   fi
@@ -180,7 +180,7 @@ write_release_state() {
 }
 
 update_env_value() {
-  # $1: anahtar, $2: değer — env dosyasında anahtarı günceller veya ekler.
+  # $1: anahtar, $2: değer  env dosyasında anahtarı günceller veya ekler.
   local key="$1" value="$2" file
   file="$(env_file)"
   if grep -q "^${key}=" "${file}"; then

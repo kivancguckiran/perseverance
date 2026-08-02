@@ -172,7 +172,7 @@ describe('readiness response compatibility', () => {
   })
 })
 
-describe('WP20 support access presentation', () => {
+describe('support access presentation', () => {
   it('distinguishes pending, active, revoked and expired states', () => {
     expect(supportGrantStatusLabel('pending_approval')).toContain('Awaiting')
     expect(supportGrantStatusLabel('active')).toBe('Active')
@@ -1234,7 +1234,7 @@ describe('attachment selection', () => {
 })
 
 describe('corpus source selection', () => {
-  it('accepts the bounded WP21 source file set', () => {
+  it('accepts the bounded source file set', () => {
     expect(sourceMediaType({ name: 'paper.pdf', type: '' })).toBe(
       'application/pdf',
     )

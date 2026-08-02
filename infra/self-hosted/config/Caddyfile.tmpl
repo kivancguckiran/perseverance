@@ -1,4 +1,4 @@
-# WP32 — self-hosted reverse proxy şablonu. self-hosted.sh install tarafından
+#  self-hosted reverse proxy şablonu. self-hosted.sh install tarafından
 # @@PLACEHOLDER@@ alanları doldurularak ${SELF_HOSTED_CONFIG_DIR}/Caddyfile olarak
 # render edilir. TLS zorunludur; HTTP yalnız ACME challenge, health ve HTTPS
 # yönlendirmesi sunar.
@@ -7,7 +7,7 @@
 	@@ACME_EMAIL_BLOCK@@
 }
 
-# WP36 gerçek-ortam bulgusu: bu blok host'a bağlıyken (http://@@DOMAIN@@:80)
+# gerçek-ortam bulgusu: bu blok host'a bağlıyken (http://@@DOMAIN@@:80)
 # healthcheck'in Host: 127.0.0.1 isteği siteyle eşleşmiyor ve proxy hiç
 # healthy olamıyordu. Health endpoint'i host-bağımsız :80 bloğunda sunulur;
 # diğer tüm HTTP istekleri kanonik domain'e yönlendirilir. ACME HTTP-01
@@ -21,7 +21,7 @@
 	}
 }
 
-# WP38 (ADR-0038): base-path'li kurulumda @@CONTROL_PLANE_PATHS@@ base altındaki
+# (ADR-0038): base-path'li kurulumda @@CONTROL_PLANE_PATHS@@ base altındaki
 # API/health yollarını içerir ve @@CONTROL_PLANE_STRIP@@ prefix'i control-plane'e
 # geçmeden söker; kök /healthz ve /readyz her durumda korunur. @@BASE_REDIRECT@@
 # kök '/' isteğini base'e yönlendirir (boş base'de tüm placeholder'lar boştur ve

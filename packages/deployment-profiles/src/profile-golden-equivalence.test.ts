@@ -10,10 +10,8 @@ import {
   assertEntitled,
 } from './index'
 
-// Fork-engelleyici contract testi (ADR-0033): aynı golden event/conversation
-// akışı üç deployment profilinin composition'ından geçtiğinde bayt-eşdeğer
-// çıktı üretmek zorundadır. Profil parametresinin event pipeline'ına sızması
-// bu testi kırar.
+// The same golden event/conversation flow must remain byte-equal across local
+// development and self-hosted composition.
 
 const goldenDirectory = fileURLToPath(
   new URL('../../../tests/golden-sessions/', import.meta.url),
@@ -64,20 +62,19 @@ function contractDigest(profile: DeploymentProfile, name: string) {
   }
 }
 
-describe('deployment profilleri arasında golden akış eşdeğerliği', () => {
-  it('çekirdek semantik entitlement üç profilde de açıktır', () => {
+describe('deployment profiles preserve golden flow equivalence', () => {
+  it('keeps core semantics entitled in every mode', () => {
     expect(() => assertCoreSemanticsEntitled()).not.toThrow()
   })
 
   it.each(fixtureNames)(
-    '%s golden akışı üç profilde bayt-eşdeğer contract çıktısı üretir',
+    '%s remains byte-equivalent across local and self-hosted modes',
     (name) => {
-      const [local, selfHosted, cloud] = DEPLOYMENT_PROFILES.map((profile) =>
+      const [local, selfHosted] = DEPLOYMENT_PROFILES.map((profile) =>
         contractDigest(profile, name),
       )
       expect(local!.serialized).toBe(selfHosted!.serialized)
-      expect(selfHosted!.serialized).toBe(cloud!.serialized)
-      expect(local!.sha256).toBe(cloud!.sha256)
+      expect(local!.sha256).toBe(selfHosted!.sha256)
     },
   )
 })

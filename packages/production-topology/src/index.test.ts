@@ -94,7 +94,7 @@ const item = (
   providerRequestsLastMinute: 0,
 })
 
-describe('WP26 versioned contracts', () => {
+describe('versioned contracts', () => {
   it('parses every placement, lease, drain, recovery and capacity boundary as v1', () => {
     const scope = {
       tenantId: 'tenant-a',

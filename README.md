@@ -2,13 +2,12 @@
 
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 
-Perseverance is a persistent, multi-provider, mobile-first agent workspace for
-Codex, Claude, Gemini, and Cursor. It is an independent community project and
+Perseverance is a persistent, mobile-first, self-hosted agent workspace built
+around Codex. It is an independent community project and
 is not affiliated with or endorsed by any model provider. See [NOTICE](NOTICE).
 
-The supported deployment model is self-hosted. The repository still contains
-historical managed-runtime contracts, but there is no operated Perseverance
-cloud service and the `cloud` profile is not a supported deployment target.
+The only supported deployment model is self-hosted. Perseverance does not
+operate a hosted cloud service.
 
 ## Why it exists
 
@@ -107,8 +106,10 @@ docs/       machine-readable security and acceptance schemas
 
 ## License, security, and support
 
-Perseverance is licensed under [GNU AGPL-3.0-only](LICENSE). Provider CLIs and
-SDKs are not distributed by this repository.
+Perseverance is licensed under [GNU AGPL-3.0-only](LICENSE). Self-hosted release
+artifacts bundle the pinned OpenAI Codex CLI/runtime under Apache-2.0; its
+license and attribution are included under `third_party/openai-codex/` and in
+the release installation bundle. Other provider CLIs are not bundled.
 
 - Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
 - Community support scope is defined in [SUPPORT.md](SUPPORT.md).

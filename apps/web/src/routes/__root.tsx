@@ -27,7 +27,7 @@ export const Route = createRootRouteWithContext<{
     ],
     links: [
       { rel: 'stylesheet', href: appStyles },
-      // WP38: statik PWA varlıkları base altından servis edilir (kökte no-op).
+      // statik PWA varlıkları base altından servis edilir (kökte no-op).
       { rel: 'manifest', href: withBase('/manifest.webmanifest') },
       { rel: 'icon', href: withBase('/icon.svg'), type: 'image/svg+xml' },
       { rel: 'apple-touch-icon', href: withBase('/icon-192.png') },

@@ -256,7 +256,7 @@ export class OtlpHttpExporter {
                 resource: { attributes: [] },
                 scopeSpans: [
                   {
-                    scope: { name: 'persistent-codex-wp27' },
+                    scope: { name: 'perseverance-production' },
                     spans: snapshot.spans.map((span) => ({
                       traceId: otlpId(span.traceId),
                       spanId: otlpId(span.spanId),
@@ -288,7 +288,7 @@ export class OtlpHttpExporter {
                 resource: { attributes: [] },
                 scopeMetrics: [
                   {
-                    scope: { name: 'persistent-codex-wp27' },
+                    scope: { name: 'perseverance-production' },
                     metrics: snapshot.metrics.map((metric) => ({
                       name: `persistent_codex_${metric.sli}`,
                       gauge: {
@@ -322,7 +322,7 @@ export class OtlpHttpExporter {
                 resource: { attributes: [] },
                 scopeLogs: [
                   {
-                    scope: { name: 'persistent-codex-wp27' },
+                    scope: { name: 'perseverance-production' },
                     logRecords: snapshot.logs.map((log) => ({
                       timeUnixNano: unixNano(log.observedAt),
                       severityText: log.severity.toUpperCase(),

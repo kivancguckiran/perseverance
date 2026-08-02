@@ -26,7 +26,7 @@ describe('CodexTitleProcessRunner', () => {
   it('spawns in the platform temp directory without /private/tmp', async () => {
     const { title } = await new CodexTitleProcessRunner().run(input('cwd'))
     expect(title).toBe(realpathSync(tmpdir()))
-    // Regression guard for WP36: on Linux hosts without a
+    // Regression guard for on Linux hosts without a
     // /private/tmp -> /tmp symlink the runner must still work; the child
     // process above proves the spawn cwd is the platform tmpdir, not a
     // macOS-only hardcoded path.

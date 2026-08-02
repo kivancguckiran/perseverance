@@ -1,4 +1,4 @@
-// WP32 — self-hosted iç OIDC issuer'ı (ADR-0032).
+//  self-hosted iç OIDC issuer'ı (ADR-0032).
 // `serve` modu yalnız discovery + JWKS + health sunar; ağ üzerinden token basma
 // ucu YOKTUR. Token basımı yalnız `mint` alt komutuyla (docker exec üzerinden,
 // private key dosyasını okuyarak) yapılır.

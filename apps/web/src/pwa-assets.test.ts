@@ -29,7 +29,7 @@ function serviceWorkerHarness(
     headers: new Headers(),
     clone: () => ({ asset: true }),
   },
-  // WP38: sw.js scope'unu servis edildiği URL'den türetir; base-path'li
+  // sw.js scope'unu servis edildiği URL'den türetir; base-path'li
   // kurulum 'https://workspace.test/workspace/sw.js' ile simüle edilir.
   serviceWorkerLocation = 'https://workspace.test/sw.js',
 ) {
@@ -92,7 +92,7 @@ describe('production PWA assets and cache boundary', () => {
       icons: Array<{ src: string; sizes: string; purpose: string }>
     }
     expect(manifest).toMatchObject({
-      // WP38: relative üyeler manifest'in servis edildiği base'e çözülür
+      // relative üyeler manifest'in servis edildiği base'e çözülür
       // (kökte '/', base-path'li kurulumda '/workspace/').
       start_url: './',
       scope: './',
@@ -116,8 +116,8 @@ describe('production PWA assets and cache boundary', () => {
   })
 
   it('uses one explicit version and waits for user-approved activation', async () => {
-    expect(serviceWorkerUrl).toContain('wp38-v1')
-    expect(serviceWorkerSource).toContain('wp38-v1')
+    expect(serviceWorkerUrl).toContain('self-hosted-v1')
+    expect(serviceWorkerSource).toContain('self-hosted-v1')
     const harness = serviceWorkerHarness()
     let installPromise: Promise<unknown> | undefined
     harness.listeners.get('install')?.({
@@ -297,7 +297,7 @@ describe('production PWA assets and cache boundary', () => {
   })
 })
 
-describe('WP38: service worker scope under a base path', () => {
+describe('service worker scope under a base path', () => {
   const baseLocation = 'https://workspace.test/workspace/sw.js'
   type AnyMock = ReturnType<typeof vi.fn>
 

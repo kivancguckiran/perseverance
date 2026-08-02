@@ -1,4 +1,4 @@
-// WP37 — self-hosted kayıt/giriş/recovery HTTP API'si (ADR-0037).
+//  self-hosted kayıt/giriş/recovery HTTP API'si (ADR-0037).
 // Bu uçlar OIDC bearer doğrulamasından muaftır (pre-auth); production-server
 // auth hook'u SELF_HOSTED_AUTH_PUBLIC_PATHS listesini muaf tutar. Yanıtlar
 // parola/recovery key/anahtar içermez; recovery key yalnız kayıt ve recovery

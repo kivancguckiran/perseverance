@@ -1,12 +1,12 @@
-# WP32 — self-hosted product imajı (ADR-0032).
-# wp30 product imajının dağıtım uyarlaması: web bundle'ı domain-agnostik placeholder
+# Self-hosted product image.
+# The web bundle is built with a domain-agnostic placeholder
 # origin ile üretilir (self-hosted-web-server.mjs açılışta kanonik origin'i yazar),
 # bootstrap bundle'ı eklenir, SOURCE_DATE_EPOCH ile deterministik kurulur.
 # Multi-arch: base imaj digest'i çok mimarili index digest'idir; linux/amd64 ve
-# linux/arm64 build'leri `wp32:release-build` (buildx) ile üretilir.
+# linux/arm64 builds are produced with the release buildx pipeline.
 FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS build
 ARG SOURCE_DATE_EPOCH=1753056000
-# WP38 (ADR-0038): base-path build-time'dır (Vite base build-arg ile iner);
+# The base path is selected at build time (through the Vite build argument);
 # boş değer = kök ve bugünkü çıktıyla bire bir aynıdır. Origin ikamesi
 # runtime'da kalır (self-hosted-web-server.mjs).
 ARG SELF_HOSTED_BASE_PATH=
@@ -18,6 +18,7 @@ COPY agents agents
 COPY packages packages
 COPY services services
 COPY config config
+COPY third_party third_party
 COPY infra/self-hosted/bootstrap infra/self-hosted/bootstrap
 RUN pnpm install --frozen-lockfile --ignore-scripts
 RUN pnpm exec esbuild services/control-plane/src/production-api-process.ts --bundle --platform=node --format=esm --external:pg-native --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/control-plane.mjs \
@@ -37,8 +38,8 @@ RUN pnpm exec esbuild services/control-plane/src/production-api-process.ts --bun
 FROM node:24-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd
 ARG SOURCE_DATE_EPOCH=1753056000
 LABEL org.opencontainers.image.title="perseverance-self-hosted-product" \
-      org.opencontainers.image.description="Perseverance self-hosted product image (WP32)" \
-      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.description="Perseverance self-hosted product image" \
+      org.opencontainers.image.licenses="AGPL-3.0-only AND Apache-2.0" \
       org.opencontainers.image.created="2026-07-21T00:00:00Z"
 RUN apk add --no-cache \
       bash=5.3.9-r1 \
@@ -46,7 +47,7 @@ RUN apk add --no-cache \
       openssh-client-default=10.3_p1-r0 \
       ripgrep=15.1.0-r0
 RUN addgroup -S workspace && adduser -S -G workspace -u 10001 workspace
-# WP36 gerçek-ortam bulgusu: codex-home named volume'u ilk mount'ta imajdaki
+# gerçek-ortam bulgusu: codex-home named volume'u ilk mount'ta imajdaki
 # dizin sahipliğini devralır. Dizin imajda yokken root sahipliğiyle oluşuyor ve
 # uid 10001 ile koşan workspace-agent içindeki codex login /codex-home'a
 # yazamıyordu (gate'ler görmedi çünkü provider auth hep defer edilmişti).
@@ -57,10 +58,11 @@ RUN mkdir -p /codex-home/runtime /workspace /scoped-workspace \
  && chown -R 10001:10001 /codex-home /workspace /scoped-workspace
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out ./
+COPY --from=build --chown=10001:10001 /src/third_party ./third-party-licenses
 RUN bwrap_path="$(find /app/codex/vendor -path '*/codex-resources/bwrap' -type f | head -n 1)" \
  && test -n "$bwrap_path" \
  && ln -s "$bwrap_path" /app/codex/bwrap
 COPY --chown=10001:10001 infra/self-hosted/web/self-hosted-web-server.mjs ./self-hosted-web-server.mjs
 USER 10001:10001
-ENV WP26_CODEX_BIN=/app/codex/bin/codex.js
+ENV PERSISTENT_CODEX_BIN=/app/codex/bin/codex.js
 CMD ["node", "control-plane.mjs"]

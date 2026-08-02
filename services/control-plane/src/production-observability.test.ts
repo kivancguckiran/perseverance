@@ -12,13 +12,13 @@ const scope = {
   workspaceId: 'workspace-a',
 }
 
-describe('WP27 production API telemetry integration', () => {
+describe('production API telemetry integration', () => {
   it('correlates incoming trace without retaining scope plaintext', async () => {
     const telemetry = new ProductionTelemetry()
     const app = await buildProductionControlPlane({
       instanceId: 'api-test',
       telemetry,
-      telemetryScopeSalt: 'wp27-test-scope-salt',
+      telemetryScopeSalt: 'fixture-test-scope-salt',
       repository: {
         pool: { query: async () => ({}) },
         close: async () => {},

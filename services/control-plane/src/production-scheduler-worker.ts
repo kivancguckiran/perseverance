@@ -59,7 +59,7 @@ import {
   type MaterializedProductionAttachment,
 } from './production-turn-input'
 
-// WP37: workspace-agent, kullanıcı workspace'lerinin content key'ini
+// workspace-agent, kullanıcı workspace'lerinin content key'ini
 // control-plane'in iç listener'ından alır (anahtar diske yazılmaz).
 export interface ContentKeyResolver {
   resolve(scope: ProductionScope): Promise<UserContentKeyMaterial | null>
@@ -507,8 +507,8 @@ export async function settleTerminalRunBilling(
 ) {
   try {
     await billing.settleOperation(scope, runId, {
-      idempotencyKey: `wp26:${runId}:${outcome}`,
-      usageDedupeKey: `wp26:${runId}:${outcome}`,
+      idempotencyKey: `scheduler:${runId}:${outcome}`,
+      usageDedupeKey: `scheduler:${runId}:${outcome}`,
       measuredCreditsMicros: 0,
       usageStatus: 'measured',
       outcome,
@@ -915,7 +915,7 @@ export class ProductionSchedulerWorker {
       const promptBytes = await this.options.objectStore.get(
         stored.promptObjectKey,
       )
-      // WP37: envelope-şifreli prompt yalnız content key lease'i ile açılır;
+      // envelope-şifreli prompt yalnız content key lease'i ile açılır;
       // lease yoksa run fail-closed düşer (düz metin fallback yoktur).
       const promptEnvelope = parseUserContentEnvelope(promptBytes)
       let userContentKey: UserContentKeyMaterial | null = null
@@ -1053,8 +1053,8 @@ export class ProductionSchedulerWorker {
       let timeout: ReturnType<typeof setTimeout> | undefined
       try {
         await client.initialize({
-          name: 'persistent_wp26_scheduler',
-          title: 'Persistent WP26 Scheduler',
+          name: 'perseverance_scheduler',
+          title: 'Perseverance Scheduler',
           version: '1',
         })
         await fence()
@@ -1463,8 +1463,8 @@ export function productionSchedulerWorkerFromEnv(env: NodeJS.ProcessEnv) {
     leaseMs: Number(env.SCHEDULER_LEASE_MS ?? 5_000),
     pollMs: Number(env.SCHEDULER_POLL_MS ?? 100),
     runtimeHoldMs: Number(env.SCHEDULER_RUNTIME_HOLD_MS ?? 0),
-    codexBin: required('WP26_CODEX_BIN'),
-    workspaceSandboxBin: required('WP26_BWRAP_BIN'),
+    codexBin: required('PERSISTENT_CODEX_BIN'),
+    workspaceSandboxBin: required('PERSISTENT_BWRAP_BIN'),
     ...(env.CODEX_PROVISIONING_SOURCE
       ? { codexProvisioningSource: env.CODEX_PROVISIONING_SOURCE }
       : {}),

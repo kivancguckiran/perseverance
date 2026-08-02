@@ -3,13 +3,6 @@
 .env.*
 !.env.example
 node_modules/
-.wp29/
-.wp30/
-.wp31/
-.wp32/
-.wp33/
-.wp34/
-.wp35/
 .next/
 dist/
 coverage/
@@ -20,9 +13,6 @@ tmp/
 .codex-home/
 .runtime/
 artifacts/
+.public-release/
+.self-hosted-release/
 config/local/
-
-# Local review scratch
-_to_delete/
-.wp37/
-.wp38/

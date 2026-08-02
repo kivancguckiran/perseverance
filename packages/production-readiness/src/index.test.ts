@@ -47,7 +47,7 @@ const initial = (): ProductionRolloutRecord => ({
   historyHeadSha256: null,
 })
 
-describe('WP30 production rollout authority', () => {
+describe('production rollout authority', () => {
   it('promotes only adjacent healthy cohorts with optimistic locking', () => {
     const budget = evaluateProductionBudget(healthyObservation, policy)
     const designPartner = transitionProductionRollout(initial(), {

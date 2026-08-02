@@ -13,7 +13,9 @@ import {
 function repository() {
   return new InMemoryPushRepository(
     new EnvelopeEncryption(
-      new LocalKmsProvider(createHash('sha256').update('wp23-test').digest()),
+      new LocalKmsProvider(
+        createHash('sha256').update('fixture-test').digest(),
+      ),
     ),
   )
 }
@@ -32,7 +34,7 @@ const request = {
   expiresAt: null,
 }
 
-describe('WP23 push subscription lifecycle', () => {
+describe('push subscription lifecycle', () => {
   it('rotates without exposing endpoint material and revokes with CAS', async () => {
     const repo = repository()
     const created = await repo.upsert(scope, request)

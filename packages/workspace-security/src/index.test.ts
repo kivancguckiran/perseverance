@@ -342,7 +342,7 @@ describe('chunked encryption and backup restore', () => {
   })
 })
 
-describe('wp37 user content key chain', () => {
+describe('fixture user content key chain', () => {
   const userScope = {
     ...scope,
     userId: 'usr_1',

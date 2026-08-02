@@ -1,5 +1,5 @@
-// WP32 — self-hosted SSR/PWA sunucusu (ADR-0032).
-// wp30 web-production-server deseninin self-hosted uyarlaması: web bundle'ı
+//  self-hosted SSR/PWA sunucusu (ADR-0032).
+// fixture web-production-server deseninin self-hosted uyarlaması: web bundle'ı
 // build sırasında `https://public-origin.invalid` placeholder origin'i ile
 // üretilir; bu sunucu açılışta client asset'lerini ve SSR bundle'ını yazılabilir
 // bir dizine kopyalayıp placeholder'ı kanonik PUBLIC_ORIGIN ile değiştirir.
@@ -29,7 +29,7 @@ if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(publicOrigin)) {
   )
   process.exit(1)
 }
-// WP38 (ADR-0038): base-path'li kurulumda statik/SSR servis base altından
+// (ADR-0038): base-path'li kurulumda statik/SSR servis base altından
 // yapılır ve placeholder ikamesi origin+base ile çalışır (apiBaseUrl base'i
 // içerir). Boş BASE_PATH = kök = bugünkü davranış. Fail-closed doğrulama:
 // imaj build'i ile uyumsuz/geçersiz base yapılandırması sunucuyu başlatmaz.

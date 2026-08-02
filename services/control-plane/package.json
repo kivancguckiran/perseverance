@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "corpus:lint": "node corpus/scripts/lint.mjs",
     "dev": "tsx watch src/entrypoint.ts",
     "start": "tsx src/entrypoint.ts",
     "typecheck": "tsc --noEmit"
@@ -22,10 +21,7 @@
     "@perseverance/deployment-profiles": "workspace:*",
     "@perseverance/domain-events": "workspace:*",
     "@perseverance/event-store": "workspace:*",
-    "@perseverance/enterprise-lifecycle": "workspace:*",
-    "@perseverance/managed-cloud": "workspace:*",
     "@perseverance/provider-platform": "workspace:*",
-    "@perseverance/provider-auth": "workspace:*",
     "@perseverance/production-topology": "workspace:*",
     "@perseverance/production-readiness": "workspace:*",
     "@perseverance/production-observability": "workspace:*",
@@ -33,7 +29,6 @@
     "@perseverance/push-notifications": "workspace:*",
     "@perseverance/provider-cli-adapters": "workspace:*",
     "@perseverance/support-access": "workspace:*",
-    "@perseverance/tenant-runtime": "workspace:*",
     "@perseverance/workspace-security": "workspace:*",
     "@perseverance/workspace-agent": "workspace:*",
     "fastify": "^5.10.0",

@@ -13,7 +13,7 @@ const scope = {
   workspaceId: 'workspace-a',
 }
 
-describe('WP24 prepaid credit contracts', () => {
+describe('prepaid credit contracts', () => {
   it('normalizes paid purchase without retaining payment instrument payload', () => {
     const value = normalizeBillingWebhookPayload({
       schemaVersion: 1,

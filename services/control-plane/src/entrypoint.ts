@@ -1,7 +1,6 @@
 import { resolveBootProfile } from './profile-composition'
 
-// WP33: deployment profili boot'ta çözülür; bilinmeyen profil ve cloud
-// profilindeki development fallback'leri fail-closed reddedilir (ADR-0033).
+// Resolve local development or the supported self-hosted runtime fail-closed.
 const { profile } = resolveBootProfile(process.env)
 
 if (profile === 'local') {

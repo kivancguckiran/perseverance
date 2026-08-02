@@ -103,7 +103,7 @@ const productionEmbedding: EmbeddingProvider = {
   },
 }
 
-describe('WP22 hybrid retrieval policy', () => {
+describe('hybrid retrieval policy', () => {
   it('deterministically ranks exact lexical, semantic and mixed candidates with immutable citations', async () => {
     const repository = new FixtureRepository()
     repository.candidates = [

@@ -198,7 +198,7 @@ describe('SqliteEventStore sessions', () => {
   })
 })
 
-describe('WP15 conversation title jobs', () => {
+describe('conversation title jobs', () => {
   const titleScope = {
     tenantId: 'ten_title',
     workspaceId: 'wsp_title',
@@ -637,7 +637,7 @@ describe('SqliteEventStore atomic ingest', () => {
     })
   })
 
-  it('persists only the WP2-redacted envelope', () => {
+  it('persists only the redacted envelope', () => {
     withStore((store) => {
       const secret = 'sk-secret-value-123456789'
       const redacted = ingestRawCodexEnvelope({
@@ -780,7 +780,7 @@ describe('SqliteEventStore replay and durability', () => {
     }
   })
 
-  it('bootstraps the WP2 events table without data loss', () => {
+  it('bootstraps the events table without data loss', () => {
     const directory = mkdtempSync(join(tmpdir(), 'event-store-migration-'))
     const path = join(directory, 'events.sqlite')
     const legacy = new DatabaseSync(path)
@@ -869,7 +869,7 @@ describe('SqliteEventStore replay and durability', () => {
   })
 })
 
-describe('WP10 sessions and Git snapshot persistence', () => {
+describe('sessions and Git snapshot persistence', () => {
   it('keeps legacy conversations with user-message events while hiding empty sessions', () => {
     withStore((store) => {
       const legacySessionId = 'ses_legacy'
@@ -1114,7 +1114,7 @@ describe('SqliteEventStore idempotency keys', () => {
   })
 })
 
-describe('WP11 durable audit', () => {
+describe('durable audit', () => {
   const audit = (key: string, overrides = {}) => ({
     ...scope,
     actor: 'system' as const,
@@ -1271,7 +1271,7 @@ describe('WP11 durable audit', () => {
   })
 })
 
-describe('WP13 provider persistence and append-only usage ledger', () => {
+describe('provider persistence and append-only usage ledger', () => {
   const capabilities = {
     streaming: 'supported' as const,
     reasoningSummary: 'supported' as const,
@@ -1535,7 +1535,7 @@ describe('WP13 provider persistence and append-only usage ledger', () => {
   })
 })
 
-describe('WP14 durable detached run lifecycle', () => {
+describe('durable detached run lifecycle', () => {
   it('enforces the explicit lifecycle and idempotent terminal transition', () => {
     const store = new SqliteEventStore(':memory:')
     store.createSession(scope)

@@ -113,7 +113,7 @@ export async function extractPdfInSandbox(input: {
       'SOURCE_TOO_LARGE',
       'Source exceeds configured byte limit',
     )
-  const root = mkdtempSync(join(tmpdir(), 'wp21-pdf-'))
+  const root = mkdtempSync(join(tmpdir(), 'fixture-pdf-'))
   const sourcePath = join(root, 'source.pdf')
   try {
     writeFileSync(sourcePath, input.bytes, { flag: 'wx', mode: 0o600 })

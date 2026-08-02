@@ -1,4 +1,4 @@
-# WP32 — Perseverance self-hosted dağıtımı (ADR-0032).
+#  Perseverance self-hosted dağıtımı (ADR-0032).
 # Tek dışa açık servis proxy'dir (80/443, TLS zorunlu); diğer her şey iç ağda kalır.
 # Tüm imajlar images.env üzerinden sürüm+digest pinlidir. Yaşam döngüsü keşfi ve
 # temizlik doğrulaması yalnız `persistent.self-hosted=true` etiketiyle yapılır.
@@ -226,9 +226,9 @@ services:
       PERSISTENT_REGION_ID: ${SELF_HOSTED_REGION_ID:-self-hosted-1}
       WORKSPACE_CWD: /workspace
       CODEX_HOME: /codex-home
-      WP26_CODEX_BIN: /app/codex/bin/codex.js
-      WP26_BWRAP_BIN: /app/codex/bwrap
-      # WP37: envelope-şifreli prompt'lar için content key lease'i iç
+      PERSISTENT_CODEX_BIN: /app/codex/bin/codex.js
+      PERSISTENT_BWRAP_BIN: /app/codex/bwrap
+      # envelope-şifreli prompt'lar için content key lease'i iç
       # listener'dan alınır; anahtar diske yazılmaz.
       CONTENT_KEY_SERVICE_URL: http://control-plane:3304
       INTERNAL_RUNTIME_TOKEN_FILE: /run/secrets/internal_runtime_token
@@ -271,7 +271,7 @@ services:
       OIDC_ISSUER: ${SELF_HOSTED_OIDC_ISSUER:-http://identity:3303}
       OIDC_AUDIENCE: ${SELF_HOSTED_OIDC_AUDIENCE}
       WEB_ALLOWED_ORIGIN: ${SELF_HOSTED_PUBLIC_ORIGIN}
-      # WP37: kullanıcı hesapları — imzalama anahtarı identity ile paylaşılır
+      # kullanıcı hesapları  imzalama anahtarı identity ile paylaşılır
       # (JWKS yayını identity'de kalır); allowlist env'den okunur; iç content
       # key listener'ı yalnız iç ağda dinler ve Caddy tarafından yayınlanmaz.
       SELF_HOSTED_ALLOWED_USERS: ${SELF_HOSTED_ALLOWED_USERS:-}
@@ -307,7 +307,7 @@ services:
       HOST: 0.0.0.0
       PORT: '3301'
       PUBLIC_ORIGIN: ${SELF_HOSTED_PUBLIC_ORIGIN}
-      # WP38 (ADR-0038): base-path'li kurulumda SSR/statik servis base altından
+      # (ADR-0038): base-path'li kurulumda SSR/statik servis base altından
       # yapılır; kök health endpoint'leri (healthcheck) korunur.
       BASE_PATH: ${SELF_HOSTED_BASE_PATH:-}
     depends_on:

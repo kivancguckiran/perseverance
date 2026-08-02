@@ -1,10 +1,10 @@
-// WP38 (ADR-0038): SW tek statik dosya kalır ve scope'unu servis edildiği
+// (ADR-0038): SW tek statik dosya kalır ve scope'unu servis edildiği
 // yerden türetir — kökte BASE '/', base-path'li kurulumda '/workspace/' gibi.
 // Tüm precache/never-cache yolları bu base ile kurulur; kök davranışı bire bir
 // korunur.
 const BASE = new URL('./', self.location).pathname
 const CACHE_PREFIX = 'persistent-workspace-shell-'
-const CACHE_VERSION = `${CACHE_PREFIX}wp38-v1`
+const CACHE_VERSION = `${CACHE_PREFIX}self-hosted-v1`
 const SHELL = [
   'manifest.webmanifest',
   'icon-192.png',

@@ -21,7 +21,7 @@ class MemoryStorage {
   }
 }
 
-const persistentKey = 'persistent.auth.wp37'
+const persistentKey = 'persistent.auth.session'
 const expiredAccess = {
   accessToken: 'old-access',
   accessTokenExpiresAt: '2026-08-01T00:00:00.000Z',

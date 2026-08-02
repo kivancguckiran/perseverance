@@ -14,7 +14,7 @@ export function getRouter(history?: RouterHistory) {
     context: { queryClient },
     defaultPreload: 'intent',
     scrollRestoration: true,
-    // WP38 (ADR-0038): base-path'li kurulumda tüm route'lar base altından
+    // (ADR-0038): base-path'li kurulumda tüm route'lar base altından
     // eşleşir ve üretilir; kökte BASE_URL '/' olduğundan davranış değişmez.
     basepath: import.meta.env.BASE_URL ?? '/',
     ...(history ? { history } : {}),

@@ -20,9 +20,9 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true })
 })
 
-describe('WP23 push API authorization and lifecycle', () => {
+describe('push API authorization and lifecycle', () => {
   it('binds subscription to authenticated principal and never echoes endpoint secrets', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'wp23-push-api-'))
+    const root = mkdtempSync(join(tmpdir(), 'fixture-push-api-'))
     roots.push(root)
     const repository = new InMemoryPushRepository(
       new EnvelopeEncryption(

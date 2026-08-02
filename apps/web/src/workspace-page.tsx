@@ -151,7 +151,7 @@ const locationScope =
   typeof window === 'undefined'
     ? undefined
     : new URLSearchParams(window.location.search)
-// WP37: son kullanıcı akışında scope ve token login yanıtından (storage)
+// son kullanıcı akışında scope ve token login yanıtından (storage)
 // gelir; query param ve sessionStorage enjeksiyonu operatör/acil ve yerel
 // geliştirme yolları olarak kalır.
 const storedAuth = readStoredAuth()
@@ -3624,7 +3624,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       })
     const connect = () => {
       if (!active) return
-      // WP38: kök-mutlak path apiBaseUrl'deki base'i düşürür — string birleştir.
+      // kök-mutlak path apiBaseUrl'deki base'i düşürür — string birleştir.
       const url = new URL(`${apiBaseUrl}/v1/realtime`)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(url)
