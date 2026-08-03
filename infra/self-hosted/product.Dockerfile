@@ -62,7 +62,11 @@ RUN mkdir -p /codex-home/runtime /workspace /scoped-workspace \
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /out ./
 COPY --from=build --chown=10001:10001 /src/third_party ./third-party-licenses
-RUN bwrap_path="$(find /app/codex/vendor -path '*/codex-resources/bwrap' -type f | head -n 1)" \
+RUN bundled_rg_path="$(find /app/codex/vendor -path '*/codex-path/rg' -type f | head -n 1)" \
+ && test -n "$bundled_rg_path" \
+ && rm "$bundled_rg_path" \
+ && ln -s /usr/bin/rg "$bundled_rg_path" \
+ && bwrap_path="$(find /app/codex/vendor -path '*/codex-resources/bwrap' -type f | head -n 1)" \
  && test -n "$bwrap_path" \
  && ln -s "$bwrap_path" /app/codex/bwrap
 COPY --chown=10001:10001 infra/self-hosted/web/self-hosted-web-server.mjs ./self-hosted-web-server.mjs
