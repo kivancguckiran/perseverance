@@ -225,6 +225,8 @@ describe('self-hosted release dağıtım dosyaları', () => {
     expect(dockerfile).toContain(
       'chown -R 10001:10001 /codex-home /workspace /scoped-workspace',
     )
+    expect(dockerfile).toContain("-path '*/codex-path/rg'")
+    expect(dockerfile).toContain('ln -s /usr/bin/rg "$bundled_rg_path"')
   })
 
   it('workspace import canonical Git worktree, read-only bind ve explicit replace uygular', () => {

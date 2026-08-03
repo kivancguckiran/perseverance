@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { memo, useMemo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { withBase } from './base-path'
@@ -77,14 +78,14 @@ function markdownComponents(sessionId?: string): Components {
   }
 }
 
-export default function MessageMarkdown({
+const MessageMarkdown = memo(function MessageMarkdown({
   children,
   sessionId,
 }: {
   children: string
   sessionId?: string | undefined
 }) {
-  const components = markdownComponents(sessionId)
+  const components = useMemo(() => markdownComponents(sessionId), [sessionId])
   return (
     <div className="message-markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
@@ -92,4 +93,6 @@ export default function MessageMarkdown({
       </ReactMarkdown>
     </div>
   )
-}
+})
+
+export default MessageMarkdown
