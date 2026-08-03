@@ -4351,7 +4351,64 @@ body:has(.workspace-file-page) .language-switcher.is-floating {
 /* Workbench hierarchy ------------------------------------------------------ */
 html,
 body {
+  width: 100%;
+  max-width: 100%;
   overflow-x: clip;
+}
+
+.workspace-shell,
+.workspace-shell .workspace-grid,
+.workspace-shell .timeline-panel,
+.workspace-shell .chat-surface,
+.chat-content,
+.chat-messages,
+.chat-message,
+.chat-message-content,
+.message-markdown,
+.chat-work {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-message-content,
+.message-markdown,
+.message-markdown p,
+.message-markdown li,
+.message-markdown a,
+.message-attachments > span {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.message-markdown pre,
+.message-markdown table {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.message-markdown table {
+  color: var(--color-ink);
+  background: var(--color-paper);
+}
+
+.message-markdown th,
+.message-markdown td {
+  border-color: var(--color-rule-2);
+  color: var(--color-ink);
+  background: var(--color-paper);
+}
+
+.message-markdown th {
+  background: var(--color-paper-2);
+  font-weight: 700;
+}
+
+.message-markdown img,
+.message-markdown video,
+.message-markdown iframe {
+  max-width: 100%;
+  height: auto;
 }
 
 body,
@@ -4450,6 +4507,7 @@ button:disabled {
   padding-inline: 0;
   overflow: hidden;
   color: transparent;
+  font-size: 0;
 }
 
 .activity-toggle::before {
@@ -4570,7 +4628,10 @@ button:disabled {
 }
 
 .workspace-shell .chat-surface {
-  padding: var(--space-md) var(--space-sm) var(--space-sm);
+  padding: var(--space-md)
+    max(calc(var(--space-sm) + var(--space-3xs)), env(safe-area-inset-right))
+    var(--space-sm)
+    max(calc(var(--space-sm) + var(--space-3xs)), env(safe-area-inset-left));
   background: var(--color-paper);
 }
 
@@ -4612,25 +4673,52 @@ button:disabled {
 }
 
 .timeline-panel > .composer {
-  padding: var(--space-xs) var(--space-sm)
-    max(var(--space-xs), env(safe-area-inset-bottom));
+  padding: var(--space-xs)
+    max(calc(var(--space-sm) + var(--space-3xs)), env(safe-area-inset-right))
+    max(var(--space-xs), env(safe-area-inset-bottom))
+    max(calc(var(--space-sm) + var(--space-3xs)), env(safe-area-inset-left));
   border-top: var(--rule-hair) solid var(--color-rule-2);
   background: var(--color-paper);
 }
 
 .timeline-panel > .composer .composer-row {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-3xs);
   border: var(--rule-hair) solid var(--color-rule-2);
   border-radius: var(--radius-card) !important;
+  align-items: end;
   background: var(--color-paper-2);
+  grid-template-columns: 2.75rem minmax(0, 1fr) 2.75rem;
+  grid-template-rows: auto 2.75rem;
+  gap: var(--space-3xs) var(--space-2xs);
 }
 
 .timeline-panel > .composer .composer-row textarea {
-  min-height: 3rem;
+  width: 100%;
+  min-height: 3.25rem;
   border: 0;
   border-radius: 0 !important;
   color: var(--color-ink);
   background: transparent;
+  grid-column: 1 / -1;
+  grid-row: 1;
   resize: vertical;
+}
+
+.timeline-panel > .composer .composer-row > .attachment-button {
+  margin: 0;
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.timeline-panel > .composer .composer-row > button[type='submit'],
+.timeline-panel > .composer .composer-row > button.composer-stop {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: end;
 }
 
 .timeline-panel > .composer .composer-row:focus-within {
@@ -4890,6 +4978,7 @@ button:disabled {
     padding-inline: var(--space-xs);
     overflow: visible;
     color: var(--color-ink-2);
+    font-size: var(--text-xs);
   }
 
   .activity-toggle::before {
