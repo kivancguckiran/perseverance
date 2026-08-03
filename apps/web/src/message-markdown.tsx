@@ -1,4 +1,3 @@
-import { Link } from '@tanstack/react-router'
 import { memo, useMemo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -46,24 +45,12 @@ function markdownComponents(sessionId?: string): Components {
     a: ({ node: _node, href, children, title }) => {
       const workspacePath = workspaceMarkdownPath(href)
       return workspacePath ? (
-        sessionId ? (
-          <Link
-            to="/sessions/$sessionId/files/$"
-            params={{ sessionId, _splat: workspacePath }}
-            {...(title ? { title } : {})}
-          >
-            {children}
-          </Link>
-        ) : (
-          <Link
-            to="/files/$"
-            params={{ _splat: workspacePath }}
-            search={{ sessionId: undefined }}
-            {...(title ? { title } : {})}
-          >
-            {children}
-          </Link>
-        )
+        <a
+          href={workspaceMarkdownHref(href, sessionId) ?? undefined}
+          {...(title ? { title } : {})}
+        >
+          {children}
+        </a>
       ) : (
         <a
           href={href}
