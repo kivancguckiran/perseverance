@@ -128,17 +128,29 @@ normalize_pwa_id() {
 
 effective_pwa_id() {
   # $1: yeni kurulumda fallback olacak normalize base path. Mevcut kurulumda
-  # kayıtlı identity, eski env'de anahtar yoksa kurulu base tercih edilir.
-  local fallback_base="${1:-}" installed_base="" value=""
-  if [ -f "$(env_file)" ]; then
-    value="$(read_env SELF_HOSTED_PWA_ID)"
-    if [ -z "${value}" ]; then
-      installed_base="$(normalize_base_path "$(read_env SELF_HOSTED_BASE_PATH)")" ||
-        return 1
-      value="$(pwa_id_for_base "${installed_base}")"
-    fi
+  # kayıtlı identity, açık env/flag override yoksa korunur.
+  local fallback_base="${1:-}" value=""
+  if [ -n "${SELF_HOSTED_PWA_ID+x}" ]; then
+    value="${SELF_HOSTED_PWA_ID}"
+  elif [ -f "$(env_file)" ]; then
+    installed_pwa_id || return 1
+    return 0
   else
     value="$(pwa_id_for_base "${fallback_base}")"
+  fi
+  normalize_pwa_id "${value}"
+}
+
+installed_pwa_id() {
+  # Kurulu state'i yalnız dosyadan okur; reconfigure sırasında hedef override
+  # verilse bile rollback için mevcut identity doğru yakalanır.
+  local installed_base="" value=""
+  [ -f "$(env_file)" ] || return 1
+  value="$(read_env SELF_HOSTED_PWA_ID)"
+  if [ -z "${value}" ]; then
+    installed_base="$(normalize_base_path "$(read_env SELF_HOSTED_BASE_PATH)")" ||
+      return 1
+    value="$(pwa_id_for_base "${installed_base}")"
   fi
   normalize_pwa_id "${value}"
 }
@@ -243,7 +255,7 @@ write_current_release_state() {
     printf 'SELF_HOSTED_DOMAIN=%s\n' "$(read_env SELF_HOSTED_DOMAIN)"
     printf 'SELF_HOSTED_PUBLIC_ORIGIN=%s\n' "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
     printf 'SELF_HOSTED_BASE_PATH=%s\n' "$(read_env SELF_HOSTED_BASE_PATH)"
-    printf 'SELF_HOSTED_PWA_ID=%s\n' "$(effective_pwa_id "$(read_env SELF_HOSTED_BASE_PATH)")"
+    printf 'SELF_HOSTED_PWA_ID=%s\n' "$(installed_pwa_id)"
   } >"$(release_state_file)"
   chmod 600 "$(release_state_file)"
 }

@@ -22,6 +22,9 @@ Editing those values independently can leave a partially migrated installation.
   from the base path at first install and preserve it across later base-path
   changes. Existing installations derive the same identity browsers already
   computed from their relative manifest ID.
+- Preserve that identity by default, but permit an explicit `--pwa-id` rotation
+  when an operator intentionally retires the old installed-app identity. Treat
+  this as a user-visible reinstall boundary, not as a silent migration.
 - Render the self-hosted manifest at runtime with the durable identity and with
   `start_url`, `scope`, and icon paths rooted at the current base path. Reject
   IDs containing an origin, query, fragment, traversal, or invalid segment.

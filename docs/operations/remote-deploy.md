@@ -78,6 +78,18 @@ back if public readiness fails. An unrelated hostname change still requires
 users to reinstall the PWA because browser origin storage and permissions do not
 migrate across sites.
 
+To deliberately retire the old same-origin PWA identity as well, pass a
+root-relative target identity explicitly:
+
+```bash
+SELF_HOSTED_HOME=<state-home> bash infra/self-hosted/self-hosted.sh reconfigure \
+  --domain workspace.example.com --base-path /perseverance \
+  --pwa-id /perseverance/
+```
+
+Identity rotation is not silent: installed apps using the retired identity can
+require reinstallation.
+
 ## Failure and rollback
 
 Do not modify a dirty or mismatched release to recover a failed deploy. Keep it

@@ -103,6 +103,18 @@ describe('public origin ve PWA identity normalizasyonu', () => {
     expect(libCall(`pwa_id_for_base ''`).stdout).toBe('/')
   })
 
+  it('açık PWA identity override değerini doğrular ve kullanır', () => {
+    const result = libCall(
+      `SELF_HOSTED_PWA_ID='/perseverance/' effective_pwa_id '/workspace'`,
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('/perseverance/')
+    expect(
+      libCall(`SELF_HOSTED_PWA_ID='../bad' effective_pwa_id '/workspace'`)
+        .status,
+    ).not.toBe(0)
+  })
+
   it('identity sabitken launch path ve ikonları yeni base path altında üretir', () => {
     const result = pwaManifestCall(`
       const value = configurePwaManifest(
@@ -205,6 +217,10 @@ describe('dağıtım dosyaları base farkındalığı', () => {
     )
     expect(script).toContain('wait_public_ready "${target_origin}" 60')
     expect(script).toContain('reconfigure) cmd_reconfigure')
+    expect(script).toContain('--pwa-id) export SELF_HOSTED_PWA_ID="$2"')
+    expect(script).toContain(
+      'update_env_value SELF_HOSTED_PWA_ID "${target_pwa_id}"',
+    )
     expect(
       script.match(
         /compose up -d --wait --wait-timeout 600 --force-recreate proxy/g,

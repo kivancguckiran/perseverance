@@ -527,6 +527,7 @@ cmd_reconfigure() {
 
   local current_domain current_origin current_base current_commit current_image
   local current_pwa_id target_domain target_origin target_base target_image
+  local target_pwa_id
   local backup_before backup_after mutated=0
   current_domain="$(read_env SELF_HOSTED_DOMAIN)"
   current_origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
@@ -534,7 +535,7 @@ cmd_reconfigure() {
     fail "kurulu SELF_HOSTED_BASE_PATH geçersiz"
   current_commit="$(read_env SELF_HOSTED_SOURCE_COMMIT)"
   current_image="$(read_env SELF_HOSTED_PRODUCT_IMAGE)"
-  current_pwa_id="$(effective_pwa_id "${current_base}")" ||
+  current_pwa_id="$(installed_pwa_id)" ||
     fail "kurulu SELF_HOSTED_PWA_ID geçersiz"
 
   target_domain="$(normalize_domain "${SELF_HOSTED_DOMAIN:-${current_domain}}")" ||
@@ -542,10 +543,13 @@ cmd_reconfigure() {
   target_origin="https://${target_domain}"
   target_base="$(effective_base_path)" ||
     fail "SELF_HOSTED_BASE_PATH geçersiz"
+  target_pwa_id="$(effective_pwa_id "${target_base}")" ||
+    fail "SELF_HOSTED_PWA_ID geçersiz"
   target_image="$(product_image_tag "${current_commit}" "${target_base}")"
 
   if [ "${target_origin}" = "${current_origin}" ] &&
-    [ "${target_base}" = "${current_base}" ]; then
+    [ "${target_base}" = "${current_base}" ] &&
+    [ "${target_pwa_id}" = "${current_pwa_id}" ]; then
     update_env_value SELF_HOSTED_PWA_ID "${current_pwa_id}"
     log "public origin/base path zaten güncel: ${target_origin}${target_base}"
     return 0
@@ -598,7 +602,7 @@ cmd_reconfigure() {
   update_env_value SELF_HOSTED_DOMAIN "${target_domain}"
   update_env_value SELF_HOSTED_PUBLIC_ORIGIN "${target_origin}"
   update_env_value SELF_HOSTED_BASE_PATH "${target_base}"
-  update_env_value SELF_HOSTED_PWA_ID "${current_pwa_id}"
+  update_env_value SELF_HOSTED_PWA_ID "${target_pwa_id}"
   update_env_value SELF_HOSTED_PRODUCT_IMAGE "${target_image}"
   render_caddyfile "${target_domain}" "$(read_env SELF_HOSTED_TLS_MODE)" \
     "${SELF_HOSTED_ACME_EMAIL:-}" "${target_base}"
@@ -615,7 +619,11 @@ cmd_reconfigure() {
   mutated=0
   trap - EXIT
   log "reconfigure tamam: ${target_origin}${target_base}"
-  log "PWA identity korundu: ${current_pwa_id}"
+  if [ "${target_pwa_id}" = "${current_pwa_id}" ]; then
+    log "PWA identity korundu: ${target_pwa_id}"
+  else
+    log "PWA identity değiştirildi: ${current_pwa_id} → ${target_pwa_id}"
+  fi
 }
 
 cmd_admin_token() {
@@ -1084,6 +1092,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
   --domain) export SELF_HOSTED_DOMAIN="$2" && shift ;;
   --base-path) export SELF_HOSTED_BASE_PATH="$2" && shift ;;
+  --pwa-id) export SELF_HOSTED_PWA_ID="$2" && shift ;;
   --acme-email) export SELF_HOSTED_ACME_EMAIL="$2" && shift ;;
   --tls-mode) export SELF_HOSTED_TLS_MODE="$2" && shift ;;
   --home) export SELF_HOSTED_HOME="$2" && shift ;;
