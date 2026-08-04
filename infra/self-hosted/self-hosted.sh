@@ -587,6 +587,7 @@ cmd_reconfigure() {
       render_caddyfile "${current_domain}" "$(read_env SELF_HOSTED_TLS_MODE)" \
         "${SELF_HOSTED_ACME_EMAIL:-}" "${current_base}"
       compose up -d --wait --wait-timeout 600
+      compose up -d --wait --wait-timeout 600 --force-recreate proxy
       set -e
     fi
     exit "${status}"
@@ -604,6 +605,10 @@ cmd_reconfigure() {
 
   log "servisler yeni public origin/base ile yeniden oluşturuluyor"
   compose up -d --wait --wait-timeout 600
+  # Caddyfile bind mount içeriği Compose service hash'ini değiştirmez. Proxy
+  # container'ı zorla yeniden oluşturulmazsa eski domain/site config'i bellekte
+  # tutar ve dış nginx yeni SNI için 502 döner.
+  compose up -d --wait --wait-timeout 600 --force-recreate proxy
   wait_public_ready "${target_origin}" 60 ||
     fail "reconfigure sonrası public readiness doğrulanamadı: ${target_origin}${target_base}/readyz"
   write_release_state "${current_commit}" "${target_image}"
@@ -972,6 +977,9 @@ cmd_upgrade() {
 
   log "servisler yeni sürüme geçiriliyor"
   compose up -d --wait --wait-timeout 600
+  # Template veya render edilmiş Caddyfile değişmiş olabilir; bind mount içerik
+  # değişikliği tek başına Compose recreate tetiklemez.
+  compose up -d --wait --wait-timeout 600 --force-recreate proxy
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "upgrade sonrası readiness doğrulanamadı  'self-hosted.sh rollback' kullanılabilir"
   write_release_state "${new_commit}" "${product_image}"
@@ -1012,6 +1020,7 @@ cmd_rollback() {
       "${SELF_HOSTED_ACME_EMAIL:-}" "${previous_base}"
   fi
   compose up -d --wait --wait-timeout 600
+  compose up -d --wait --wait-timeout 600 --force-recreate proxy
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "rollback sonrası readiness doğrulanamadı"
   mv "$(previous_release_file)" "$(state_dir)/rolled-back-from.env"

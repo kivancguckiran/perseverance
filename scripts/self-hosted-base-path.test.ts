@@ -205,6 +205,11 @@ describe('dağıtım dosyaları base farkındalığı', () => {
     )
     expect(script).toContain('wait_public_ready "${target_origin}" 60')
     expect(script).toContain('reconfigure) cmd_reconfigure')
+    expect(
+      script.match(
+        /compose up -d --wait --wait-timeout 600 --force-recreate proxy/g,
+      ),
+    ).toHaveLength(4)
     const lib = read('infra/self-hosted/lib.sh')
     expect(lib).toContain('write_current_release_state()')
     expect(lib).toContain("printf 'SELF_HOSTED_BASE_PATH=%s\\n'")
