@@ -1,5 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Perseverance">
   <rect width="512" height="512" fill="#0d1714"/>
-  <circle cx="256" cy="256" r="180" fill="#142a22"/>
-  <path d="M350 166c-24-23-55-35-94-35-69 0-125 56-125 125s56 125 125 125c39 0 70-12 94-35l-43-46c-13 12-29 19-51 19-35 0-63-28-63-63s28-63 63-63c22 0 38 7 51 19z" fill="#bdebd8"/>
+  <circle cx="256" cy="256" r="205" fill="#14231e"/>
+  <g transform="translate(36 36) scale(.86)">
+    <path
+      fill="#bdebd8"
+      fill-rule="evenodd"
+      d="M128 92h148c108 0 176 57 176 152s-68 152-176 152h-62v28h-86V92Zm86 78v148h62c59 0 90-25 90-74s-31-74-90-74h-62Z"
+    />
+    <path d="m401 94 43 1v47l-43 39z" fill="#f2a66f"/>
+  </g>
 </svg>

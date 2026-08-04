@@ -1,4 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Perseverance">
   <rect width="512" height="512" rx="112" fill="#0d1714"/>
-  <path d="M352 154c-25-25-58-38-96-38-77 0-140 63-140 140s63 140 140 140c38 0 71-13 96-38l-47-50c-13 14-29 21-49 21-36 0-65-29-65-65v-16c0-36 29-65 65-65 20 0 36 7 49 21z" fill="#bdebd8"/>
+  <path
+    fill="#bdebd8"
+    fill-rule="evenodd"
+    d="M128 92h148c108 0 176 57 176 152s-68 152-176 152h-62v28h-86V92Zm86 78v148h62c59 0 90-25 90-74s-31-74-90-74h-62Z"
+  />
+  <path d="m401 94 43 1v47l-43 39z" fill="#f2a66f"/>
 </svg>
