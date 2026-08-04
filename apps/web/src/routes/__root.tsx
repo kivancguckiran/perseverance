@@ -29,7 +29,11 @@ export const Route = createRootRouteWithContext<{
       { rel: 'stylesheet', href: appStyles },
       // statik PWA varlıkları base altından servis edilir (kökte no-op).
       { rel: 'manifest', href: withBase('/manifest.webmanifest') },
-      { rel: 'icon', href: withBase('/icon.svg'), type: 'image/svg+xml' },
+      {
+        rel: 'icon',
+        href: withBase('/perseverance-mark.svg'),
+        type: 'image/svg+xml',
+      },
       {
         rel: 'icon',
         href: withBase('/favicon-32.png'),

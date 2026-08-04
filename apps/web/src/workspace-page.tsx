@@ -2784,7 +2784,7 @@ export function ConversationHistory({
       <div className="history-brand">
         <img
           className="history-logo"
-          src={withBase('/icon.svg')}
+          src={withBase('/perseverance-mark.svg')}
           alt=""
           aria-hidden="true"
         />

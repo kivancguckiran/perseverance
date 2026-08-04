@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Perseverance">
+  <rect width="512" height="512" rx="112" fill="#0d1714"/>
+  <path
+    fill="#bdebd8"
+    fill-rule="evenodd"
+    d="M128 92h148c108 0 176 57 176 152s-68 152-176 152h-62v28h-86V92Zm86 78v148h62c59 0 90-25 90-74s-31-74-90-74h-62Z"
+  />
+  <path d="m401 94 43 1v47l-43 39z" fill="#f2a66f"/>
+</svg>
