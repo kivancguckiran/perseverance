@@ -10,7 +10,6 @@ import {
   attachmentMediaType,
   attachmentUploadPercent,
   approvalRiskLevel,
-  sourceMediaType,
   chatFollowStateAfterScroll,
   coalesceTimelineEvents,
   ComposerAttachmentList,
@@ -1243,21 +1242,6 @@ describe('attachment selection', () => {
         lengthComputable: false,
       }),
     ).toBe(0)
-  })
-})
-
-describe('corpus source selection', () => {
-  it('accepts the bounded source file set', () => {
-    expect(sourceMediaType({ name: 'paper.pdf', type: '' })).toBe(
-      'application/pdf',
-    )
-    expect(sourceMediaType({ name: 'notes.md', type: '' })).toBe(
-      'text/markdown',
-    )
-    expect(sourceMediaType({ name: 'worker.ts', type: '' })).toBe(
-      'application/typescript',
-    )
-    expect(sourceMediaType({ name: 'archive.zip', type: '' })).toBeUndefined()
   })
 })
 

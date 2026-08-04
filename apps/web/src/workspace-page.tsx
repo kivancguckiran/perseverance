@@ -27,7 +27,6 @@ import {
   supportGrantListResponseSchema,
   supportGrantSchema,
   securityAuditListResponseSchema,
-  sourceListResponseSchema,
   acceptFolderInvitationResponseSchema,
   createFolderInvitationResponseSchema,
   folderListResponseSchema,
@@ -54,7 +53,6 @@ import {
   type SupportGrant,
   type SupportAccessAction,
   type SecurityAuditRecord,
-  type Source,
   type FolderMembership,
   type SharedFolder,
   type ApiErrorResponse,
@@ -368,32 +366,6 @@ export function ComposerAttachmentList({
       })}
     </div>
   )
-}
-
-export function sourceMediaType(file: Pick<File, 'name' | 'type'>) {
-  const extension = file.name.toLowerCase().split('.').pop()
-  if (file.type === 'application/pdf' || extension === 'pdf')
-    return 'application/pdf'
-  if (
-    file.type === 'text/markdown' ||
-    ['md', 'markdown'].includes(extension ?? '')
-  )
-    return 'text/markdown'
-  if (file.type === 'text/plain' || ['txt', 'text'].includes(extension ?? ''))
-    return 'text/plain'
-  const codeTypes: Record<string, string> = {
-    json: 'application/json',
-    js: 'application/javascript',
-    jsx: 'application/javascript',
-    ts: 'application/typescript',
-    tsx: 'application/typescript',
-    py: 'text/x-python',
-    rs: 'text/x-rust',
-    sh: 'text/x-shellscript',
-    css: 'text/css',
-    html: 'text/html',
-  }
-  return extension ? codeTypes[extension] : undefined
 }
 
 async function readPlatformMeta(): Promise<PlatformMeta> {
@@ -822,15 +794,6 @@ async function readFolderMembers(folderId: string) {
   return folderMemberListResponseSchema.parse(await response.json())
 }
 
-async function readSources() {
-  const response = await fetch(
-    `${apiBaseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/sources`,
-    { headers: scopeHeaders },
-  )
-  if (!response.ok) throw await apiError(response)
-  return sourceListResponseSchema.parse(await response.json())
-}
-
 async function readGitSnapshots(sessionId: string) {
   const response = await fetch(
     `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/git-snapshots`,
@@ -1158,94 +1121,6 @@ function SupportAccessPanel({
           </ol>
         </details>
       ) : null}
-    </aside>
-  )
-}
-
-function SourcesDrawer({
-  sources,
-  pending,
-  error,
-  online,
-  onUpload,
-  onClose,
-}: {
-  sources: Source[]
-  pending: boolean
-  error: boolean
-  online: boolean
-  onUpload(file: File): void
-  onClose(): void
-}) {
-  const t = useTranslations()
-  return (
-    <aside
-      className="workspace-drawer sources-drawer"
-      aria-labelledby="sources-title"
-    >
-      <div className="drawer-heading">
-        <div>
-          <p className="section-label">
-            {t('Workspace knowledge', 'Workspace bilgisi')}
-          </p>
-          <h2 id="sources-title">Sources</h2>
-          <p>
-            {t(
-              'Files and documents this workspace can reference in answers.',
-              'Bu workspace’in cevaplarda başvurabildiği dosya ve dokümanlar.',
-            )}
-          </p>
-        </div>
-        <button
-          className="drawer-close"
-          type="button"
-          onClick={onClose}
-          aria-label={t('Close sources panel', 'Sources panelini kapat')}
-        >
-          ×
-        </button>
-      </div>
-      <label className="source-upload drawer-upload">
-        <span>
-          {pending
-            ? t('Loading…', 'Yükleniyor…')
-            : t('Add source', 'Source ekle')}
-        </span>
-        <input
-          type="file"
-          disabled={!online || pending}
-          accept=".pdf,.md,.markdown,.txt,.text,.json,.js,.jsx,.ts,.tsx,.py,.rs,.sh,.css,.html"
-          onChange={(event) => {
-            const file = event.target.files?.[0]
-            if (file) onUpload(file)
-            event.currentTarget.value = ''
-          }}
-        />
-      </label>
-      {error ? (
-        <p className="form-error" role="alert">
-          {t('Could not load the source list.', 'Source listesi alınamadı.')}
-        </p>
-      ) : null}
-      {sources.length ? (
-        <ul
-          className="source-list"
-          aria-label={t('Corpus source statuses', 'Corpus source durumları')}
-        >
-          {sources.map((source) => (
-            <li key={source.sourceId}>
-              <span title={source.displayName}>{source.displayName}</span>
-              <strong data-source-status={source.status}>
-                {source.status}
-              </strong>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="drawer-empty">
-          {t('No sources have been added yet.', 'Henüz source eklenmedi.')}
-        </p>
-      )}
     </aside>
   )
 }
@@ -3283,17 +3158,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       online && managedFolder?.membership.role === 'owner' && !!managedFolderId,
     retry: false,
   })
-  const sources = useQuery({
-    queryKey: ['corpus-sources', cacheNamespace],
-    queryFn: readSources,
-    enabled: online && identity.isSuccess,
-    refetchInterval: (query) =>
-      query.state.data?.sources.some((source) =>
-        ['pending', 'extracting'].includes(source.status),
-      )
-        ? 1_000
-        : false,
-  })
   const gitSnapshots = useQuery({
     queryKey: ['git-snapshots', cacheNamespace, sessionId],
     queryFn: () => readGitSnapshots(sessionId!),
@@ -3381,7 +3245,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [activityOpen, setActivityOpen] = useState(false)
   const [providerSheetOpen, setProviderSheetOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [sourcesOpen, setSourcesOpen] = useState(false)
   const [supportAccessOpen, setSupportAccessOpen] = useState(false)
   const [attachmentItems, setAttachmentItems] = useState<
     ComposerAttachmentItem[]
@@ -3392,7 +3255,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const attachmentPending = attachmentItems.some(
     (item) => item.status === 'uploading',
   )
-  const [sourcePending, setSourcePending] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<
     'codex' | 'claude' | 'gemini' | 'cursor'
   >('codex')
@@ -3771,7 +3633,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
             void Promise.all([
               sharedFolders.refetch(),
               recentSessions.refetch(),
-              sources.refetch(),
             ])
           }
         }
@@ -4730,41 +4591,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     )
   }
 
-  async function uploadSource(file: File) {
-    const mediaType = sourceMediaType(file)
-    if (!mediaType || sourcePending || !online) return
-    setSourcePending(true)
-    setError(undefined)
-    try {
-      const response = await fetch(
-        `${apiBaseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/sources`,
-        {
-          method: 'POST',
-          headers: {
-            ...scopeHeaders,
-            'content-type': 'application/octet-stream',
-            'x-source-name': encodeURIComponent(file.name),
-            'x-source-media-type': mediaType,
-            ...(selectedFolderId?.startsWith('fld_')
-              ? { 'x-folder-id': selectedFolderId }
-              : {}),
-          },
-          body: file,
-        },
-      )
-      if (!response.ok) throw await apiError(response)
-      await sources.refetch()
-    } catch (uploadError) {
-      setError(
-        uploadError instanceof Error
-          ? uploadError.message
-          : t('Could not upload source', 'Source yüklenemedi'),
-      )
-    } finally {
-      setSourcePending(false)
-    }
-  }
-
   return (
     <main className="workspace-shell" data-session-id={sessionId}>
       {identity.isPending && online ? (
@@ -4974,31 +4800,21 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               </div>
             }
             tools={
-              <>
+              session ? (
                 <button
                   className="history-tool-button"
                   type="button"
-                  onClick={() => setSourcesOpen(true)}
+                  onClick={() => setSupportAccessOpen(true)}
                 >
-                  <span>▤ Sources</span>
-                  <small>{sources.data?.sources.length ?? 0}</small>
+                  <span>{t('Support access', 'Support erişimi')}</span>
+                  <small>
+                    {supportGrants.data?.filter(
+                      (grant) => grant.status === 'active',
+                    ).length ?? 0}{' '}
+                    aktif
+                  </small>
                 </button>
-                {session ? (
-                  <button
-                    className="history-tool-button"
-                    type="button"
-                    onClick={() => setSupportAccessOpen(true)}
-                  >
-                    <span>{t('Support access', 'Support erişimi')}</span>
-                    <small>
-                      {supportGrants.data?.filter(
-                        (grant) => grant.status === 'active',
-                      ).length ?? 0}{' '}
-                      aktif
-                    </small>
-                  </button>
-                ) : null}
-              </>
+              ) : null
             }
           />
           <section
@@ -6120,25 +5936,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </form>
         </section>
       </section>
-      {sourcesOpen || supportAccessOpen ? (
+      {supportAccessOpen ? (
         <button
           className="drawer-backdrop"
           type="button"
           aria-label="Yan paneli kapat"
           onClick={() => {
-            setSourcesOpen(false)
             setSupportAccessOpen(false)
           }}
-        />
-      ) : null}
-      {sourcesOpen ? (
-        <SourcesDrawer
-          sources={sources.data?.sources ?? []}
-          pending={sourcePending}
-          error={sources.isError}
-          online={online}
-          onUpload={(file) => void uploadSource(file)}
-          onClose={() => setSourcesOpen(false)}
         />
       ) : null}
       {supportAccessOpen && session ? (
