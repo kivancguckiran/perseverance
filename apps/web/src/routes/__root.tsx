@@ -30,7 +30,14 @@ export const Route = createRootRouteWithContext<{
       // statik PWA varlıkları base altından servis edilir (kökte no-op).
       { rel: 'manifest', href: withBase('/manifest.webmanifest') },
       { rel: 'icon', href: withBase('/icon.svg'), type: 'image/svg+xml' },
-      { rel: 'apple-touch-icon', href: withBase('/icon-192.png') },
+      {
+        rel: 'icon',
+        href: withBase('/favicon-32.png'),
+        type: 'image/png',
+        sizes: '32x32',
+      },
+      { rel: 'shortcut icon', href: withBase('/favicon.ico') },
+      { rel: 'apple-touch-icon', href: withBase('/apple-touch-icon.png') },
     ],
   }),
   notFoundComponent: NotFoundPage,

@@ -113,6 +113,14 @@ describe('production PWA assets and cache boundary', () => {
       width: 512,
       height: 512,
     })
+    expect(pngDimensions('apple-touch-icon.png')).toEqual({
+      width: 180,
+      height: 180,
+    })
+    expect(pngDimensions('favicon-32.png')).toEqual({ width: 32, height: 32 })
+    expect(
+      readFileSync(join(publicDirectory, 'favicon.ico')).byteLength,
+    ).toBeGreaterThan(0)
   })
 
   it('uses one explicit version and waits for user-approved activation', async () => {

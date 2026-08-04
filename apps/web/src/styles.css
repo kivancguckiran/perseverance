@@ -3649,10 +3649,11 @@ button:disabled {
 }
 
 .history-logo {
-  width: 12px;
-  height: 12px;
+  width: 28px;
+  height: 28px;
   border: 0;
-  background: var(--color-accent);
+  border-radius: 7px;
+  background: transparent;
 }
 
 .history-brand strong {
