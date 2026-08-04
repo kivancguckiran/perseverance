@@ -85,6 +85,76 @@ effective_base_path() {
   normalize_base_path "${raw}"
 }
 
+normalize_domain() {
+  # $1: şemasız DNS adı. Port, path, wildcard ve boş etiket reddedilir.
+  local raw="${1:-}" normalized label
+  [ -n "${raw}" ] && [ "${#raw}" -le 253 ] || return 1
+  case "${raw}" in
+  .* | *. | *..* | *[!A-Za-z0-9.-]*) return 1 ;;
+  esac
+  local IFS='.'
+  for label in ${raw}; do
+    [ -n "${label}" ] && [ "${#label}" -le 63 ] || return 1
+    case "${label}" in
+    -* | *- | *[!A-Za-z0-9-]*) return 1 ;;
+    esac
+  done
+  normalized="$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]')"
+  printf '%s' "${normalized}"
+}
+
+pwa_id_for_base() {
+  # Manifest identity root-relative ve origin'e bağlıdır. Base path değişse de
+  # bu ilk değer kurulum state'inde korunur.
+  local base="${1:-}"
+  if [ -n "${base}" ]; then
+    printf '%s/' "${base}"
+  else
+    printf '/'
+  fi
+}
+
+normalize_pwa_id() {
+  local value="${1:-}"
+  case "${value}" in
+  /) : ;;
+  /*/)
+    normalize_base_path "${value%/}" >/dev/null || return 1
+    ;;
+  *) return 1 ;;
+  esac
+  printf '%s' "${value}"
+}
+
+effective_pwa_id() {
+  # $1: yeni kurulumda fallback olacak normalize base path. Mevcut kurulumda
+  # kayıtlı identity, açık env/flag override yoksa korunur.
+  local fallback_base="${1:-}" value=""
+  if [ -n "${SELF_HOSTED_PWA_ID+x}" ]; then
+    value="${SELF_HOSTED_PWA_ID}"
+  elif [ -f "$(env_file)" ]; then
+    installed_pwa_id || return 1
+    return 0
+  else
+    value="$(pwa_id_for_base "${fallback_base}")"
+  fi
+  normalize_pwa_id "${value}"
+}
+
+installed_pwa_id() {
+  # Kurulu state'i yalnız dosyadan okur; reconfigure sırasında hedef override
+  # verilse bile rollback için mevcut identity doğru yakalanır.
+  local installed_base="" value=""
+  [ -f "$(env_file)" ] || return 1
+  value="$(read_env SELF_HOSTED_PWA_ID)"
+  if [ -z "${value}" ]; then
+    installed_base="$(normalize_base_path "$(read_env SELF_HOSTED_BASE_PATH)")" ||
+      return 1
+    value="$(pwa_id_for_base "${installed_base}")"
+  fi
+  normalize_pwa_id "${value}"
+}
+
 product_image_tag() {
   # $1: source commit, $2: normalize base path  kökte tag değişmez; base'li
   # kurulumda base slug'ı eklenir ki base değişikliği yeni build tetiklesin.
@@ -167,14 +237,25 @@ release_state_file() { printf '%s/current-release.env' "$(state_dir)"; }
 previous_release_file() { printf '%s/previous-release.env' "$(state_dir)"; }
 
 write_release_state() {
-  # $1: source commit, $2: product imaj referansı (base'li kurulumda tag
-  # slug içerir)  mevcut sürümü state'e yazar, öncekini saklar.
+  # $1: source commit, $2: product imaj referansı. Public URL/PWA koordinatları
+  # aynı state kaydında tutulur ki rollback eski imajı yanlış base ile açmasın.
   if [ -f "$(release_state_file)" ]; then
     cp "$(release_state_file)" "$(previous_release_file)"
   fi
+  write_current_release_state "$1" "$2"
+}
+
+write_current_release_state() {
+  # Önceki release'i döndürmeden current-release.env kaydını tazeler. Eski iki
+  # alanlı state dosyalarını reconfigure öncesi atomik rollback bilgisiyle
+  # zenginleştirmek için kullanılır.
   {
     printf 'SELF_HOSTED_SOURCE_COMMIT=%s\n' "$1"
     printf 'SELF_HOSTED_PRODUCT_IMAGE=%s\n' "${2:-perseverance-self-hosted-product:$1}"
+    printf 'SELF_HOSTED_DOMAIN=%s\n' "$(read_env SELF_HOSTED_DOMAIN)"
+    printf 'SELF_HOSTED_PUBLIC_ORIGIN=%s\n' "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
+    printf 'SELF_HOSTED_BASE_PATH=%s\n' "$(read_env SELF_HOSTED_BASE_PATH)"
+    printf 'SELF_HOSTED_PWA_ID=%s\n' "$(installed_pwa_id)"
   } >"$(release_state_file)"
   chmod 600 "$(release_state_file)"
 }

@@ -6,7 +6,7 @@
 #     --domain workspace.example.com --acme-email admin@example.com
 #   (opsiyonel: --base-path /workspace  reverse-proxy alt-path'i, ADR-0038)
 #
-# Komutlar: preflight | install | status | admin-token | codex-login |
+# Komutlar: preflight | install | status | reconfigure | admin-token | codex-login |
 #           workspace-import | backup | restore | upgrade | rollback |
 #           uninstall | verify-release |
 #           list-users | disable-user | reset-user --crypto-erase |
@@ -358,6 +358,7 @@ render_env_file() {
     echo "SELF_HOSTED_DOMAIN=${domain}"
     echo "SELF_HOSTED_PUBLIC_ORIGIN=https://${domain}"
     echo "SELF_HOSTED_BASE_PATH=${base_path}"
+    echo "SELF_HOSTED_PWA_ID=$(pwa_id_for_base "${base_path}")"
     echo "SELF_HOSTED_TLS_MODE=${SELF_HOSTED_TLS_MODE:-acme}"
     echo "SELF_HOSTED_HTTP_BIND=${SELF_HOSTED_HTTP_BIND:-0.0.0.0}"
     echo "SELF_HOSTED_HTTPS_BIND=${SELF_HOSTED_HTTPS_BIND:-0.0.0.0}"
@@ -412,8 +413,10 @@ cmd_install() {
   local base_path
   base_path="$(effective_base_path)" ||
     fail "SELF_HOSTED_BASE_PATH geçersiz  '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
-  local product_image
+  local product_image pwa_id
   product_image="$(product_image_tag "${source_commit}" "${base_path}")"
+  pwa_id="$(effective_pwa_id "${base_path}")" ||
+    fail "SELF_HOSTED_PWA_ID geçersiz"
 
   log "secret'lar üretiliyor"
   ensure_secret_file postgres-password
@@ -444,6 +447,7 @@ cmd_install() {
   else
     log "mevcut yapılandırma korunuyor: $(env_file)"
     update_env_value SELF_HOSTED_BASE_PATH "${base_path}"
+    update_env_value SELF_HOSTED_PWA_ID "${pwa_id}"
     update_env_value SELF_HOSTED_SOURCE_COMMIT "${source_commit}"
     update_env_value SELF_HOSTED_PRODUCT_IMAGE "${product_image}"
     update_env_value SELF_HOSTED_DIST_DIR "${SELF_HOSTED_SCRIPT_DIR}"
@@ -515,6 +519,110 @@ cmd_status() {
     log "provider auth: hazır (codex-home volume)"
   else
     log "provider auth: eksik  self-hosted.sh codex-login"
+  fi
+}
+
+cmd_reconfigure() {
+  [ -f "$(env_file)" ] || fail "kurulu bir stack yok (önce install)"
+
+  local current_domain current_origin current_base current_commit current_image
+  local current_pwa_id target_domain target_origin target_base target_image
+  local target_pwa_id
+  local backup_before backup_after mutated=0
+  current_domain="$(read_env SELF_HOSTED_DOMAIN)"
+  current_origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
+  current_base="$(normalize_base_path "$(read_env SELF_HOSTED_BASE_PATH)")" ||
+    fail "kurulu SELF_HOSTED_BASE_PATH geçersiz"
+  current_commit="$(read_env SELF_HOSTED_SOURCE_COMMIT)"
+  current_image="$(read_env SELF_HOSTED_PRODUCT_IMAGE)"
+  current_pwa_id="$(installed_pwa_id)" ||
+    fail "kurulu SELF_HOSTED_PWA_ID geçersiz"
+
+  target_domain="$(normalize_domain "${SELF_HOSTED_DOMAIN:-${current_domain}}")" ||
+    fail "--domain geçerli, şemasız bir DNS adı olmalı"
+  target_origin="https://${target_domain}"
+  target_base="$(effective_base_path)" ||
+    fail "SELF_HOSTED_BASE_PATH geçersiz"
+  target_pwa_id="$(effective_pwa_id "${target_base}")" ||
+    fail "SELF_HOSTED_PWA_ID geçersiz"
+  target_image="$(product_image_tag "${current_commit}" "${target_base}")"
+
+  if [ "${target_origin}" = "${current_origin}" ] &&
+    [ "${target_base}" = "${current_base}" ] &&
+    [ "${target_pwa_id}" = "${current_pwa_id}" ]; then
+    update_env_value SELF_HOSTED_PWA_ID "${current_pwa_id}"
+    log "public origin/base path zaten güncel: ${target_origin}${target_base}"
+    return 0
+  fi
+
+  backup_before="$(find "$(backups_dir)" -maxdepth 1 -type f -name 'backup-*.tar.enc' -print 2>/dev/null | sort | tail -n 1)"
+  log "reconfigure öncesi şifreli yedek alınıyor"
+  cmd_backup >/dev/null
+  backup_after="$(find "$(backups_dir)" -maxdepth 1 -type f -name 'backup-*.tar.enc' -print 2>/dev/null | sort | tail -n 1)"
+  [ -n "${backup_after}" ] && [ "${backup_after}" != "${backup_before}" ] &&
+    [ -s "${backup_after}" ] || fail "reconfigure yedeği üretilemedi"
+
+  # Eski kurulumların iki alanlı release state'ini mutation öncesi public URL
+  # koordinatlarıyla zenginleştir; başarılı write_release_state bunu previous'a
+  # taşıyarak rollback'i config/image açısından atomik tutar.
+  update_env_value SELF_HOSTED_PWA_ID "${current_pwa_id}"
+  write_current_release_state "${current_commit}" "${current_image}"
+
+  if ! docker image inspect "${target_image}" >/dev/null 2>&1; then
+    log "yeni base path için product imajı build ediliyor: ${target_image}"
+    docker build \
+      -f "${SELF_HOSTED_SCRIPT_DIR}/product.Dockerfile" \
+      --build-arg "SELF_HOSTED_BASE_PATH=${target_base}" \
+      -t "${target_image}" \
+      "${SELF_HOSTED_REPO_ROOT}"
+  fi
+
+  rollback_reconfigure() {
+    local status="$?"
+    trap - EXIT
+    if [ "${mutated}" = 1 ]; then
+      set +e
+      log "reconfigure başarısız; önceki origin/base/image geri yükleniyor"
+      update_env_value SELF_HOSTED_DOMAIN "${current_domain}"
+      update_env_value SELF_HOSTED_PUBLIC_ORIGIN "${current_origin}"
+      update_env_value SELF_HOSTED_BASE_PATH "${current_base}"
+      update_env_value SELF_HOSTED_PWA_ID "${current_pwa_id}"
+      update_env_value SELF_HOSTED_PRODUCT_IMAGE "${current_image}"
+      render_caddyfile "${current_domain}" "$(read_env SELF_HOSTED_TLS_MODE)" \
+        "${SELF_HOSTED_ACME_EMAIL:-}" "${current_base}"
+      compose up -d --wait --wait-timeout 600
+      compose up -d --wait --wait-timeout 600 --force-recreate proxy
+      set -e
+    fi
+    exit "${status}"
+  }
+  trap rollback_reconfigure EXIT
+
+  mutated=1
+  update_env_value SELF_HOSTED_DOMAIN "${target_domain}"
+  update_env_value SELF_HOSTED_PUBLIC_ORIGIN "${target_origin}"
+  update_env_value SELF_HOSTED_BASE_PATH "${target_base}"
+  update_env_value SELF_HOSTED_PWA_ID "${target_pwa_id}"
+  update_env_value SELF_HOSTED_PRODUCT_IMAGE "${target_image}"
+  render_caddyfile "${target_domain}" "$(read_env SELF_HOSTED_TLS_MODE)" \
+    "${SELF_HOSTED_ACME_EMAIL:-}" "${target_base}"
+
+  log "servisler yeni public origin/base ile yeniden oluşturuluyor"
+  compose up -d --wait --wait-timeout 600
+  # Caddyfile bind mount içeriği Compose service hash'ini değiştirmez. Proxy
+  # container'ı zorla yeniden oluşturulmazsa eski domain/site config'i bellekte
+  # tutar ve dış nginx yeni SNI için 502 döner.
+  compose up -d --wait --wait-timeout 600 --force-recreate proxy
+  wait_public_ready "${target_origin}" 60 ||
+    fail "reconfigure sonrası public readiness doğrulanamadı: ${target_origin}${target_base}/readyz"
+  write_release_state "${current_commit}" "${target_image}"
+  mutated=0
+  trap - EXIT
+  log "reconfigure tamam: ${target_origin}${target_base}"
+  if [ "${target_pwa_id}" = "${current_pwa_id}" ]; then
+    log "PWA identity korundu: ${target_pwa_id}"
+  else
+    log "PWA identity değiştirildi: ${current_pwa_id} → ${target_pwa_id}"
   fi
 }
 
@@ -841,10 +949,13 @@ cmd_upgrade() {
 
   # base path fail-closed çözülür (bayrak > mevcut env > kök); eski
   # kurulumlarda anahtar idempotent eklenir ve Caddyfile yeniden render edilir.
-  local base_path
+  local base_path pwa_id
   base_path="$(effective_base_path)" ||
     fail "SELF_HOSTED_BASE_PATH geçersiz  '/' ile başlamalı, '/' ile bitmemeli (boş = kök)"
+  pwa_id="$(effective_pwa_id "${base_path}")" ||
+    fail "SELF_HOSTED_PWA_ID geçersiz"
   update_env_value SELF_HOSTED_BASE_PATH "${base_path}"
+  update_env_value SELF_HOSTED_PWA_ID "${pwa_id}"
   render_caddyfile "$(read_env SELF_HOSTED_DOMAIN)" "$(read_env SELF_HOSTED_TLS_MODE)" \
     "${SELF_HOSTED_ACME_EMAIL:-}" "${base_path}"
   local product_image
@@ -874,6 +985,9 @@ cmd_upgrade() {
 
   log "servisler yeni sürüme geçiriliyor"
   compose up -d --wait --wait-timeout 600
+  # Template veya render edilmiş Caddyfile değişmiş olabilir; bind mount içerik
+  # değişikliği tek başına Compose recreate tetiklemez.
+  compose up -d --wait --wait-timeout 600 --force-recreate proxy
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "upgrade sonrası readiness doğrulanamadı  'self-hosted.sh rollback' kullanılabilir"
   write_release_state "${new_commit}" "${product_image}"
@@ -882,17 +996,39 @@ cmd_upgrade() {
 
 cmd_rollback() {
   [ -f "$(previous_release_file)" ] || fail "rollback için kayıtlı önceki sürüm yok"
-  local previous_commit previous_image
+  local previous_commit previous_image previous_domain previous_origin
+  local previous_base previous_pwa_id
   previous_commit="$(sed -n 's/^SELF_HOSTED_SOURCE_COMMIT=//p' "$(previous_release_file)")"
   # imaj referansı state'ten okunur (base'li kurulumda tag slug içerir).
   previous_image="$(sed -n 's/^SELF_HOSTED_PRODUCT_IMAGE=//p' "$(previous_release_file)")"
   [ -n "${previous_image}" ] || previous_image="perseverance-self-hosted-product:${previous_commit}"
   docker image inspect "${previous_image}" >/dev/null 2>&1 ||
     fail "önceki sürüm imajı yok: ${previous_image}"
+  previous_domain="$(sed -n 's/^SELF_HOSTED_DOMAIN=//p' "$(previous_release_file)")"
+  previous_origin="$(sed -n 's/^SELF_HOSTED_PUBLIC_ORIGIN=//p' "$(previous_release_file)")"
+  previous_base="$(sed -n 's/^SELF_HOSTED_BASE_PATH=//p' "$(previous_release_file)")"
+  previous_pwa_id="$(sed -n 's/^SELF_HOSTED_PWA_ID=//p' "$(previous_release_file)")"
   log "rollback: $(read_env SELF_HOSTED_SOURCE_COMMIT) → ${previous_commit}"
   update_env_value SELF_HOSTED_SOURCE_COMMIT "${previous_commit}"
   update_env_value SELF_HOSTED_PRODUCT_IMAGE "${previous_image}"
+  if [ -n "${previous_domain}" ] && [ -n "${previous_origin}" ]; then
+    normalize_domain "${previous_domain}" >/dev/null ||
+      fail "önceki release domain'i geçersiz"
+    [ "${previous_origin}" = "https://${previous_domain}" ] ||
+      fail "önceki release public origin'i domain ile uyuşmuyor"
+    normalize_base_path "${previous_base}" >/dev/null ||
+      fail "önceki release base path'i geçersiz"
+    normalize_pwa_id "${previous_pwa_id}" >/dev/null ||
+      fail "önceki release PWA identity'si geçersiz"
+    update_env_value SELF_HOSTED_DOMAIN "${previous_domain}"
+    update_env_value SELF_HOSTED_PUBLIC_ORIGIN "${previous_origin}"
+    update_env_value SELF_HOSTED_BASE_PATH "${previous_base}"
+    update_env_value SELF_HOSTED_PWA_ID "${previous_pwa_id}"
+    render_caddyfile "${previous_domain}" "$(read_env SELF_HOSTED_TLS_MODE)" \
+      "${SELF_HOSTED_ACME_EMAIL:-}" "${previous_base}"
+  fi
   compose up -d --wait --wait-timeout 600
+  compose up -d --wait --wait-timeout 600 --force-recreate proxy
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "rollback sonrası readiness doğrulanamadı"
   mv "$(previous_release_file)" "$(state_dir)/rolled-back-from.env"
@@ -956,6 +1092,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
   --domain) export SELF_HOSTED_DOMAIN="$2" && shift ;;
   --base-path) export SELF_HOSTED_BASE_PATH="$2" && shift ;;
+  --pwa-id) export SELF_HOSTED_PWA_ID="$2" && shift ;;
   --acme-email) export SELF_HOSTED_ACME_EMAIL="$2" && shift ;;
   --tls-mode) export SELF_HOSTED_TLS_MODE="$2" && shift ;;
   --home) export SELF_HOSTED_HOME="$2" && shift ;;
@@ -969,6 +1106,7 @@ case "${COMMAND}" in
 preflight) cmd_preflight full ;;
 install) cmd_install ;;
 status) cmd_status ;;
+reconfigure) cmd_reconfigure ;;
 admin-token) cmd_admin_token ${ARGS[@]+"${ARGS[@]}"} ;;
 codex-login) cmd_codex_login ${ARGS[@]+"${ARGS[@]}"} ;;
 workspace-import) cmd_workspace_import ${ARGS[@]+"${ARGS[@]}"} ;;

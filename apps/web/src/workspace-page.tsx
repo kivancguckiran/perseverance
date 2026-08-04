@@ -2657,7 +2657,12 @@ export function ConversationHistory({
   return (
     <section className="conversation-history" aria-label="Conversation history">
       <div className="history-brand">
-        <span className="history-logo" aria-hidden="true" />
+        <img
+          className="history-logo"
+          src={withBase('/perseverance-mark.svg')}
+          alt=""
+          aria-hidden="true"
+        />
         <strong>PERSEVERANCE</strong>
         {onClose ? (
           <button

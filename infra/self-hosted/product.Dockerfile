@@ -70,6 +70,7 @@ RUN bundled_rg_path="$(find /app/codex/vendor -path '*/codex-path/rg' -type f | 
  && test -n "$bwrap_path" \
  && ln -s "$bwrap_path" /app/codex/bwrap
 COPY --chown=10001:10001 infra/self-hosted/web/self-hosted-web-server.mjs ./self-hosted-web-server.mjs
+COPY --chown=10001:10001 infra/self-hosted/web/pwa-manifest.mjs ./pwa-manifest.mjs
 USER 10001:10001
 ENV PERSISTENT_CODEX_BIN=/app/codex/bin/codex.js
 CMD ["node", "control-plane.mjs"]

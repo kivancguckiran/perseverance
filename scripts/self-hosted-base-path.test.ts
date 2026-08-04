@@ -19,6 +19,17 @@ const libCall = (expression: string) => {
   return { status: result.status, stdout: result.stdout }
 }
 
+const pwaManifestCall = (expression: string) =>
+  spawnSync(
+    'node',
+    [
+      '--input-type=module',
+      '-e',
+      `import { configurePwaManifest, normalizePwaId } from './infra/self-hosted/web/pwa-manifest.mjs'; ${expression}`,
+    ],
+    { cwd: root, encoding: 'utf8' },
+  )
+
 describe('normalize_base_path (lib.sh)', () => {
   it.each([
     ['', ''],
@@ -65,6 +76,77 @@ describe('product_image_tag (lib.sh)', () => {
   })
 })
 
+describe('public origin ve PWA identity normalizasyonu', () => {
+  it.each([
+    ['Workspace.Example.com', 'workspace.example.com'],
+    ['imac.ferahfeza.net', 'imac.ferahfeza.net'],
+  ])('domain kabul eder: %s', (input, expected) => {
+    const result = libCall(`normalize_domain '${input}'`)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe(expected)
+  })
+
+  it.each([
+    '',
+    'https://workspace.example.com',
+    'workspace.example.com/path',
+    '*.example.com',
+    '.example.com',
+    'example..com',
+    '-bad.example',
+  ])('domain fail-closed reddeder: %j', (input) => {
+    expect(libCall(`normalize_domain '${input}'`).status).not.toBe(0)
+  })
+
+  it('ilk base path değerinden root-relative identity türetir', () => {
+    expect(libCall(`pwa_id_for_base '/workspace'`).stdout).toBe('/workspace/')
+    expect(libCall(`pwa_id_for_base ''`).stdout).toBe('/')
+  })
+
+  it('açık PWA identity override değerini doğrular ve kullanır', () => {
+    const result = libCall(
+      `SELF_HOSTED_PWA_ID='/perseverance/' effective_pwa_id '/workspace'`,
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('/perseverance/')
+    expect(
+      libCall(`SELF_HOSTED_PWA_ID='../bad' effective_pwa_id '/workspace'`)
+        .status,
+    ).not.toBe(0)
+  })
+
+  it('identity sabitken launch path ve ikonları yeni base path altında üretir', () => {
+    const result = pwaManifestCall(`
+      const value = configurePwaManifest(
+        { id: './', start_url: './', scope: './', icons: [{ src: './icon.png' }] },
+        { basePath: '/perseverance', pwaId: '/workspace/' },
+      );
+      process.stdout.write(JSON.stringify(value));
+    `)
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      id: '/workspace/',
+      start_url: '/perseverance/',
+      scope: '/perseverance/',
+      icons: [{ src: '/perseverance/icon.png' }],
+    })
+  })
+
+  it('PWA identity içinde origin, query ve traversal kabul etmez', () => {
+    for (const value of [
+      'https://other.example/app',
+      '/app?user=1',
+      '/app#fragment',
+      '/../app/',
+    ]) {
+      const result = pwaManifestCall(
+        `normalizePwaId(${JSON.stringify(value)}, '/perseverance')`,
+      )
+      expect(result.status).not.toBe(0)
+    }
+  })
+})
+
 describe('dağıtım dosyaları base farkındalığı', () => {
   it("Caddyfile şablonu base placeholder'larını içerir ve kök davranışı korur", () => {
     const caddyfile = read('infra/self-hosted/config/Caddyfile.tmpl')
@@ -99,6 +181,7 @@ describe('dağıtım dosyaları base farkındalığı', () => {
   it("compose web servisi BASE_PATH env'ini geçirir", () => {
     const compose = read('infra/self-hosted/compose.yml')
     expect(compose).toContain('BASE_PATH: ${SELF_HOSTED_BASE_PATH:-}')
+    expect(compose).toContain('PWA_ID: ${SELF_HOSTED_PWA_ID:-}')
   })
 
   it("web SSR sunucusu base doğrular ve placeholder'ı origin+base ile ikame eder", () => {
@@ -122,6 +205,33 @@ describe('dağıtım dosyaları base farkındalığı', () => {
     const serviceWorker = read('apps/web/public/sw.js')
     expect(serviceWorker).toContain("new URL('./', self.location)")
     expect(serviceWorker).not.toMatch(/'\/(manifest\.webmanifest|icon-)/)
+  })
+
+  it('reconfigure yedek, rebuild, rollback ve public readiness uygular', () => {
+    const script = read('infra/self-hosted/self-hosted.sh')
+    expect(script).toContain('cmd_reconfigure()')
+    expect(script).toContain('reconfigure öncesi şifreli yedek alınıyor')
+    expect(script).toContain('rollback_reconfigure()')
+    expect(script).toContain(
+      'update_env_value SELF_HOSTED_PWA_ID "${current_pwa_id}"',
+    )
+    expect(script).toContain('wait_public_ready "${target_origin}" 60')
+    expect(script).toContain('reconfigure) cmd_reconfigure')
+    expect(script).toContain('--pwa-id) export SELF_HOSTED_PWA_ID="$2"')
+    expect(script).toContain(
+      'update_env_value SELF_HOSTED_PWA_ID "${target_pwa_id}"',
+    )
+    expect(
+      script.match(
+        /compose up -d --wait --wait-timeout 600 --force-recreate proxy/g,
+      ),
+    ).toHaveLength(4)
+    const lib = read('infra/self-hosted/lib.sh')
+    expect(lib).toContain('write_current_release_state()')
+    expect(lib).toContain("printf 'SELF_HOSTED_BASE_PATH=%s\\n'")
+    expect(script).toContain(
+      'update_env_value SELF_HOSTED_BASE_PATH "${previous_base}"',
+    )
   })
 
   it('istemci new URL(kök-mutlak, apiBaseUrl) desenini kullanmaz', () => {

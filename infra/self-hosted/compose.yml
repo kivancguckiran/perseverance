@@ -310,6 +310,9 @@ services:
       # (ADR-0038): base-path'li kurulumda SSR/statik servis base altından
       # yapılır; kök health endpoint'leri (healthcheck) korunur.
       BASE_PATH: ${SELF_HOSTED_BASE_PATH:-}
+      # PWA identity ilk kurulum yolundan türetilir ve sonraki base-path
+      # reconfigure işlemlerinde sabit kalır.
+      PWA_ID: ${SELF_HOSTED_PWA_ID:-}
     depends_on:
       control-plane:
         condition: service_healthy

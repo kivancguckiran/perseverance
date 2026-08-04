@@ -107,17 +107,31 @@ describe('production PWA assets and cache boundary', () => {
         expect.objectContaining({ sizes: '512x512', purpose: 'maskable' }),
       ]),
     )
-    expect(pngDimensions('icon-192.png')).toEqual({ width: 192, height: 192 })
-    expect(pngDimensions('icon-512.png')).toEqual({ width: 512, height: 512 })
-    expect(pngDimensions('icon-maskable-512.png')).toEqual({
+    expect(pngDimensions('perseverance-pwa-v2-192.png')).toEqual({
+      width: 192,
+      height: 192,
+    })
+    expect(pngDimensions('perseverance-pwa-v2-512.png')).toEqual({
       width: 512,
       height: 512,
     })
+    expect(pngDimensions('perseverance-pwa-v2-maskable-512.png')).toEqual({
+      width: 512,
+      height: 512,
+    })
+    expect(pngDimensions('perseverance-pwa-v2-apple-touch.png')).toEqual({
+      width: 180,
+      height: 180,
+    })
+    expect(pngDimensions('favicon-32.png')).toEqual({ width: 32, height: 32 })
+    expect(
+      readFileSync(join(publicDirectory, 'favicon.ico')).byteLength,
+    ).toBeGreaterThan(0)
   })
 
   it('uses one explicit version and waits for user-approved activation', async () => {
-    expect(serviceWorkerUrl).toContain('self-hosted-v1')
-    expect(serviceWorkerSource).toContain('self-hosted-v1')
+    expect(serviceWorkerUrl).toContain('self-hosted-v2')
+    expect(serviceWorkerSource).toContain('self-hosted-v2')
     const harness = serviceWorkerHarness()
     let installPromise: Promise<unknown> | undefined
     harness.listeners.get('install')?.({
@@ -317,9 +331,9 @@ describe('service worker scope under a base path', () => {
     expect(precached).toEqual(
       expect.arrayContaining([
         '/workspace/manifest.webmanifest',
-        '/workspace/icon-192.png',
-        '/workspace/icon-512.png',
-        '/workspace/icon-maskable-512.png',
+        '/workspace/perseverance-pwa-v2-192.png',
+        '/workspace/perseverance-pwa-v2-512.png',
+        '/workspace/perseverance-pwa-v2-maskable-512.png',
       ]),
     )
   })

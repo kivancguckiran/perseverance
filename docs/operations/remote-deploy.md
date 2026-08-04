@@ -60,6 +60,36 @@ The wrapper fails closed and performs these steps:
 The wrapper never copies env files or secrets into the release checkout and
 never prints their values.
 
+## Public URL or base-path migration
+
+Deploy the release containing the desired lifecycle behavior first. Stage the
+external reverse-proxy route for the target URL, while keeping the old path
+available, then run from the installed release:
+
+```bash
+SELF_HOSTED_HOME=<state-home> bash infra/self-hosted/self-hosted.sh reconfigure \
+  --domain workspace.example.com --base-path /perseverance
+```
+
+`reconfigure` creates and verifies an encrypted backup before mutation, keeps
+the existing root-relative PWA identity, rebuilds for the new base path, updates
+the web origin/CORS and Caddy site together, and rolls the runtime configuration
+back if public readiness fails. An unrelated hostname change still requires
+users to reinstall the PWA because browser origin storage and permissions do not
+migrate across sites.
+
+To deliberately retire the old same-origin PWA identity as well, pass a
+root-relative target identity explicitly:
+
+```bash
+SELF_HOSTED_HOME=<state-home> bash infra/self-hosted/self-hosted.sh reconfigure \
+  --domain workspace.example.com --base-path /perseverance \
+  --pwa-id /perseverance/
+```
+
+Identity rotation is not silent: installed apps using the retired identity can
+require reinstallation.
+
 ## Failure and rollback
 
 Do not modify a dirty or mismatched release to recover a failed deploy. Keep it
