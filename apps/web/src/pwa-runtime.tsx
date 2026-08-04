@@ -4,9 +4,9 @@ import { refreshStoredSession } from './self-hosted-auth'
 import { useTranslations } from './i18n'
 
 // (ADR-0038): SW, scope kuralı gereği base altından kaydedilir ve servis
-// edilir; kökte withBase no-op'tur. Sürüm fixture-v1: sw.js scope-türevli precache
+// edilir; kökte withBase no-op'tur. Sürüm fixture-v2: sw.js scope-türevli precache
 // listesine geçti.
-export const serviceWorkerUrl = withBase('/sw.js?v=self-hosted-v1')
+export const serviceWorkerUrl = withBase('/sw.js?v=self-hosted-v2')
 
 function applicationServerKey(value: string) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')

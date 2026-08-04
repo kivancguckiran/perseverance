@@ -4,12 +4,12 @@
 // korunur.
 const BASE = new URL('./', self.location).pathname
 const CACHE_PREFIX = 'persistent-workspace-shell-'
-const CACHE_VERSION = `${CACHE_PREFIX}self-hosted-v1`
+const CACHE_VERSION = `${CACHE_PREFIX}self-hosted-v2`
 const SHELL = [
   'manifest.webmanifest',
-  'icon-192.png',
-  'icon-512.png',
-  'icon-maskable-512.png',
+  'perseverance-pwa-v2-192.png',
+  'perseverance-pwa-v2-512.png',
+  'perseverance-pwa-v2-maskable-512.png',
 ].map((name) => `${BASE}${name}`)
 const NEVER_CACHE = [
   'v1/',
@@ -106,8 +106,8 @@ self.addEventListener('push', (event) => {
         body: approval
           ? 'Open the workspace to review context and decide.'
           : 'View the latest status in your secure workspace.',
-        icon: `${BASE}icon-192.png`,
-        badge: `${BASE}icon-192.png`,
+        icon: `${BASE}perseverance-pwa-v2-192.png`,
+        badge: `${BASE}perseverance-pwa-v2-192.png`,
         tag: `pcw:${payload.notificationId}`,
         renotify: approval,
         requireInteraction: approval,

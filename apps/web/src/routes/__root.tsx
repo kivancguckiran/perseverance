@@ -41,7 +41,10 @@ export const Route = createRootRouteWithContext<{
         sizes: '32x32',
       },
       { rel: 'shortcut icon', href: withBase('/favicon.ico') },
-      { rel: 'apple-touch-icon', href: withBase('/apple-touch-icon.png') },
+      {
+        rel: 'apple-touch-icon',
+        href: withBase('/perseverance-pwa-v2-apple-touch.png'),
+      },
     ],
   }),
   notFoundComponent: NotFoundPage,
