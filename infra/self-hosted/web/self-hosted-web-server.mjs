@@ -19,6 +19,7 @@ import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { extname, join, normalize, resolve } from 'node:path'
+import { configurePwaManifest, normalizePwaId } from './pwa-manifest.mjs'
 
 const host = process.env.HOST ?? '0.0.0.0'
 const port = Number(process.env.PORT ?? 3301)
@@ -43,6 +44,13 @@ if (
   )
   process.exit(1)
 }
+let pwaId
+try {
+  pwaId = normalizePwaId(process.env.PWA_ID ?? '', basePath)
+} catch (error) {
+  process.stderr.write(`${error.message}\n`)
+  process.exit(1)
+}
 
 const PLACEHOLDER = 'https://public-origin.invalid'
 const SUBSTITUTABLE = new Set(['.js', '.mjs', '.html', '.webmanifest', '.json'])
@@ -52,6 +60,16 @@ const imageServerBundle = '/app/web-server.mjs'
 const runtimeRoot = mkdtempSync(join(tmpdir(), 'self-hosted-web-'))
 const clientRoot = join(runtimeRoot, 'client')
 cpSync(imageClientRoot, clientRoot, { recursive: true })
+
+// PWA identity is durable installation state, while start_url/scope follow the
+// currently configured base path. Keeping those concerns separate allows a
+// same-origin path migration without creating a duplicate installed app.
+const manifestPath = join(clientRoot, 'manifest.webmanifest')
+const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+writeFileSync(
+  manifestPath,
+  `${JSON.stringify(configurePwaManifest(manifest, { basePath, pwaId }), null, 2)}\n`,
+)
 
 // apiBaseUrl base'i içermelidir: https://domain/workspace (kökte https://domain).
 const substitutionTarget = `${publicOrigin}${basePath}`

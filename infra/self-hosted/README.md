@@ -33,6 +33,11 @@ The installer verifies and loads the product image matching the host architectur
 - `list-users`, `disable-user`, and `reset-user --crypto-erase` manage accounts.
 - `status`, `upgrade`, `rollback`, `backup`, `restore`, and `uninstall` manage the
   installation lifecycle.
+- `reconfigure --domain <host> --base-path <path>` changes the canonical public
+  URL as one backed-up operation. It preserves the installed PWA identity,
+  rebuilds the base-path-specific image, recreates the stack, and rolls back the
+  runtime configuration if public readiness fails. Reverse-proxy routing for the
+  target URL must be staged before running it.
 
 Users register at `https://<domain>/login`. Conversation content is encrypted at
 rest with a passphrase-derived key. Losing both the password and one-time recovery
