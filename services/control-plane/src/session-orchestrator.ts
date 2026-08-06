@@ -52,6 +52,15 @@ import {
 } from '@perseverance/provider-cli-adapters'
 import { CodexTitleProcessRunner } from './title-process-runner'
 import {
+  codexAccountAuthMode,
+  normalizeCodexAccountLimits,
+  unavailableCodexAccountLimits,
+} from './codex-account-limits'
+import {
+  archiveInstallGuidance,
+  isArchiveAttachment,
+} from './production-turn-input'
+import {
   CodexAppServerError,
   ProcessExitedError,
   ProcessUnavailableError,
@@ -231,6 +240,7 @@ function turnPromptWithAttachmentContext(
     ...files.map(
       (file) => `- ${JSON.stringify(file.name)}: ${JSON.stringify(file.path)}`,
     ),
+    ...(files.some(isArchiveAttachment) ? [archiveInstallGuidance] : []),
     attachmentContextEnd,
   ].join('\n')
   return prompt ? `${prompt}\n\n${context}` : context
@@ -456,6 +466,34 @@ export class SessionOrchestrator {
 
   get registry(): WorkspaceRuntimeRegistry {
     return this.#registry
+  }
+
+  async getCodexAccountLimits(input: {
+    tenantId: string
+    workspaceId: string
+  }) {
+    const cwd =
+      typeof this.#workspaceCwd === 'function'
+        ? this.#workspaceCwd(input)
+        : this.#workspaceCwd
+    const runtime = await this.#registry.getOrInitialize({
+      ...input,
+      cwd,
+      codexHome: this.#codexHome(input),
+    })
+    const account = await runtime.client.request<codexV2.GetAccountResponse>(
+      'account/read',
+      { refreshToken: false } satisfies codexV2.GetAccountParams,
+    )
+    const authMode = codexAccountAuthMode(account.account)
+    if (authMode !== 'chatgpt')
+      return unavailableCodexAccountLimits(authMode, 'unsupported')
+    const limits =
+      await runtime.client.request<codexV2.GetAccountRateLimitsResponse>(
+        'account/rateLimits/read',
+        undefined,
+      )
+    return normalizeCodexAccountLimits(limits)
   }
 
   async checkReadiness(

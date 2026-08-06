@@ -1,0 +1,19 @@
+{
+  "name": "@perseverance/content-key-broker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/entrypoint.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@perseverance/control-plane-contracts": "workspace:*",
+    "@perseverance/workspace-security": "workspace:*",
+    "fastify": "^5.10.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
+  }
+}

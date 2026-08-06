@@ -93,6 +93,7 @@ export function selfHostedBillingSeed() {
 export interface ProvisionWorkspaceInput {
   issuer: string
   subject: string
+  supportSubject?: string
   organizationId: string
   organizationName: string
   workspaceId: string
@@ -130,6 +131,20 @@ export async function provisionWorkspace(
      VALUES ($1,$2,$3,'owner','active') ON CONFLICT DO NOTHING`,
     [input.organizationId, input.issuer, input.subject],
   )
+  if (input.supportSubject && input.supportSubject !== input.subject) {
+    await client.query(
+      `INSERT INTO persistent_codex.principal_identities(issuer,subject,status)
+       VALUES ($1,$2,'active') ON CONFLICT DO NOTHING`,
+      [input.issuer, input.supportSubject],
+    )
+    await client.query(
+      `INSERT INTO persistent_codex.organization_memberships(organization_id,issuer,subject,role,status)
+       VALUES ($1,$2,$3,'support','active')
+       ON CONFLICT (organization_id,issuer,subject)
+       DO UPDATE SET role='support', status='active'`,
+      [input.organizationId, input.issuer, input.supportSubject],
+    )
+  }
   await client.query(
     `INSERT INTO persistent_codex.workspaces(tenant_id,organization_id,workspace_id,name)
      VALUES ($1,$1,$2,$3) ON CONFLICT DO NOTHING`,
@@ -143,6 +158,21 @@ export async function provisionWorkspace(
      DO UPDATE SET access='allow', updated_at=now()`,
     [input.organizationId, input.workspaceId, input.issuer, input.subject],
   )
+  if (input.supportSubject && input.supportSubject !== input.subject) {
+    await client.query(
+      `INSERT INTO persistent_codex.workspace_membership_overrides
+         (organization_id,workspace_id,issuer,subject,access)
+       VALUES ($1,$2,$3,$4,'allow')
+       ON CONFLICT (organization_id,workspace_id,issuer,subject)
+       DO UPDATE SET access='allow', updated_at=now()`,
+      [
+        input.organizationId,
+        input.workspaceId,
+        input.issuer,
+        input.supportSubject,
+      ],
+    )
+  }
   await client.query(
     `INSERT INTO persistent_codex.tenant_scheduling_policies
        (tenant_id,organization_id,policy_version,algorithm,weight,tenant_concurrency,workspace_concurrency,provider_concurrency,provider_requests_per_minute,starvation_age_ms,retry_policy,effective_at)

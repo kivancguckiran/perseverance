@@ -15,7 +15,6 @@ import {
 import type pg from 'pg'
 import type { SelfHostedSessionTokens as ContractSelfHostedSessionTokens } from '@perseverance/control-plane-contracts'
 import {
-  ContentKeyLeaseManager,
   RECOVERY_KEK_HKDF_INFO,
   USER_KEK_HKDF_INFO,
   createUserKdfParams,
@@ -32,6 +31,7 @@ import {
   type UserKdfParamsV1,
   type WrappedContentKeyV1,
 } from '@perseverance/workspace-security'
+import type { ContentKeyLeaseStore } from './content-key-lease-client'
 import {
   provisionWorkspace,
   snapshotSelfHostedBilling,
@@ -130,7 +130,8 @@ export interface SelfHostedAuthOptions {
   audience: string
   signingKeyPem: string
   signingKeyId: string
-  leases: ContentKeyLeaseManager
+  supportSubject?: string
+  leases: ContentKeyLeaseStore
   accessTokenTtlSeconds?: number
   limiter?: AuthAttemptLimiter
   now?: () => Date
@@ -190,7 +191,7 @@ export class SelfHostedAuthService {
     this.#now = options.now ?? (() => new Date())
   }
 
-  get leases(): ContentKeyLeaseManager {
+  get leases(): ContentKeyLeaseStore {
     return this.#options.leases
   }
 
@@ -369,8 +370,12 @@ export class SelfHostedAuthService {
     }
   }
 
-  #issueLease(user: StoredUser, keyVersion: number, contentKey: Buffer): void {
-    this.#options.leases.issue({
+  async #issueLease(
+    user: StoredUser,
+    keyVersion: number,
+    contentKey: Buffer,
+  ): Promise<void> {
+    await this.#options.leases.issue({
       scope: this.#scopeOf(user),
       userId: user.userId,
       keyVersion: String(keyVersion),
@@ -480,6 +485,9 @@ export class SelfHostedAuthService {
       await provisionWorkspace(client, {
         issuer: this.#options.issuer,
         subject: this.subjectFor(username),
+        ...(this.#options.supportSubject
+          ? { supportSubject: this.#options.supportSubject }
+          : {}),
         organizationId,
         organizationName: `Kullanıcı: ${username}`,
         workspaceId,
@@ -511,8 +519,11 @@ export class SelfHostedAuthService {
       workspaceId,
     })
     this.#userWorkspaces.add(workspaceId)
-    this.#issueLease(result.user, 1, contentKey)
-    contentKey.fill(0)
+    try {
+      await this.#issueLease(result.user, 1, contentKey)
+    } finally {
+      contentKey.fill(0)
+    }
     this.#limiter.reset(username)
     return {
       userId,
@@ -521,6 +532,63 @@ export class SelfHostedAuthService {
       recoveryKey,
       session: result.session,
     }
+  }
+
+  async verifySupportStepUp(input: {
+    password: string
+    expectedSubject: string
+    expectedScope: SelfHostedAuthScope
+  }): Promise<{ evidenceId: string; authenticatedAt: string }> {
+    const prefix = 'user:'
+    if (!input.expectedSubject.startsWith(prefix))
+      throw new SelfHostedAuthError('AUTHORIZATION_DENIED', 403)
+    const username = input.expectedSubject.slice(prefix.length).toLowerCase()
+    if (!USERNAME_PATTERN.test(username))
+      throw new SelfHostedAuthError('AUTHORIZATION_DENIED', 403)
+    if (!this.#limiter.allowed(username))
+      throw new SelfHostedAuthError('AUTH_RATE_LIMITED', 429)
+
+    const user = await this.#withAuthFlow((client) =>
+      this.#getUser(client, username),
+    )
+    const passwordOk = await verifyUserPassword(
+      String(input.password ?? ''),
+      user?.passwordHash ?? null,
+    )
+    if (!user || !passwordOk)
+      await this.#denied(
+        username,
+        'user.support_access_verification_denied',
+        'INVALID_CREDENTIALS',
+        401,
+      )
+    const verifiedUser = user as StoredUser
+    if (
+      verifiedUser.status !== 'approved' ||
+      verifiedUser.organizationId !== input.expectedScope.organizationId ||
+      verifiedUser.organizationId !== input.expectedScope.tenantId ||
+      verifiedUser.workspaceId !== input.expectedScope.workspaceId
+    )
+      await this.#denied(
+        username,
+        'user.support_access_verification_denied',
+        'AUTHORIZATION_DENIED',
+        403,
+      )
+
+    const authenticatedAt = this.#now().toISOString()
+    const evidenceId = `reauth_${randomBytes(18).toString('hex')}`
+    await this.#withAuthFlow(async (client) => {
+      await this.#audit(client, {
+        username,
+        action: 'user.support_access_verified',
+        outcome: 'allow',
+        reasonCode: 'PASSWORD_REAUTHENTICATED',
+        tenantId: verifiedUser.organizationId,
+      })
+    })
+    this.#limiter.reset(username)
+    return { evidenceId, authenticatedAt }
   }
 
   async login(input: { username: string; password: string }): Promise<{
@@ -594,8 +662,11 @@ export class SelfHostedAuthService {
       return await this.#issueSession(client, user)
     })
     this.#userWorkspaces.add(user.workspaceId)
-    this.#issueLease(user, wrap.keyVersion, contentKey)
-    contentKey.fill(0)
+    try {
+      await this.#issueLease(user, wrap.keyVersion, contentKey)
+    } finally {
+      contentKey.fill(0)
+    }
     this.#limiter.reset(username)
     return {
       userId: user.userId,
@@ -689,8 +760,11 @@ export class SelfHostedAuthService {
       })
     })
     this.#userWorkspaces.add(user.workspaceId)
-    this.#issueLease(user, wrap.keyVersion, contentKey)
-    contentKey.fill(0)
+    try {
+      await this.#issueLease(user, wrap.keyVersion, contentKey)
+    } finally {
+      contentKey.fill(0)
+    }
     this.#limiter.reset(username)
     return { contentKeyUnlocked: true }
   }
@@ -719,10 +793,6 @@ export class SelfHostedAuthService {
         throw new SelfHostedAuthError('REFRESH_TOKEN_REVOKED', 401)
       if (row.status !== 'approved')
         throw new SelfHostedAuthError('USER_DISABLED', 403)
-      await client.query(
-        `UPDATE persistent_codex.user_refresh_tokens SET revoked_at=now() WHERE token_hash=$1`,
-        [tokenHash],
-      )
       const user: StoredUser = {
         userId: String(row.user_id),
         username: String(row.username),
@@ -732,17 +802,25 @@ export class SelfHostedAuthService {
         workspaceId: String(row.workspace_id),
         recoveryKeyHash: String(row.recovery_key_hash),
       }
+      // Check the broker before rotating the token. If it is temporarily
+      // unavailable, the transaction rolls back and the browser can retry with
+      // the same refresh token instead of being forced through login.
+      const contentKeyUnlocked = await this.#options.leases.hasActiveLease(
+        user.workspaceId,
+      )
+      await client.query(
+        `UPDATE persistent_codex.user_refresh_tokens SET revoked_at=now() WHERE token_hash=$1`,
+        [tokenHash],
+      )
       const session = await this.#issueSession(client, user)
-      return { user, session }
+      return { user, session, contentKeyUnlocked }
     })
     this.#userWorkspaces.add(result.user.workspaceId)
     return {
       username: result.user.username,
       scope: this.#scopeOf(result.user),
       session: result.session,
-      contentKeyUnlocked: this.#options.leases.hasActiveLease(
-        result.user.workspaceId,
-      ),
+      contentKeyUnlocked: result.contentKeyUnlocked,
     }
   }
 
@@ -884,8 +962,11 @@ export class SelfHostedAuthService {
       return await this.#issueSession(client, user)
     })
     this.#userWorkspaces.add(user.workspaceId)
-    this.#issueLease(user, nextKeyVersion, contentKey)
-    contentKey.fill(0)
+    try {
+      await this.#issueLease(user, nextKeyVersion, contentKey)
+    } finally {
+      contentKey.fill(0)
+    }
     this.#limiter.reset(username)
     return {
       username: user.username,
@@ -899,22 +980,21 @@ export class SelfHostedAuthService {
     const refreshToken = String(input.refreshToken ?? '')
     if (refreshToken.length === 0) return
     const tokenHash = createHash('sha256').update(refreshToken).digest('hex')
-    await this.#withAuthFlow(async (client) => {
+    const workspaceId = await this.#withAuthFlow(async (client) => {
       const stored = await client.query(
         `UPDATE persistent_codex.user_refresh_tokens SET revoked_at=now()
          WHERE token_hash=$1 AND revoked_at IS NULL
          RETURNING user_id`,
         [tokenHash],
       )
-      if (stored.rowCount === 0) return
+      if (stored.rowCount === 0) return null
       const userId = String((stored.rows[0] as { user_id: string }).user_id)
       const user = await client.query(
         `SELECT username,organization_id,workspace_id FROM persistent_codex.users WHERE user_id=$1`,
         [userId],
       )
-      if (user.rowCount === 0) return
+      if (user.rowCount === 0) return null
       const row = user.rows[0] as Record<string, string>
-      this.#options.leases.revoke(String(row.workspace_id))
       await this.#audit(client, {
         username: String(row.username),
         action: 'user.logout',
@@ -922,7 +1002,12 @@ export class SelfHostedAuthService {
         reasonCode: 'REFRESH_TOKEN_REVOKED',
         tenantId: String(row.organization_id),
       })
+      return String(row.workspace_id)
     })
+    // Refresh-token revocation commits even if the independent broker is
+    // temporarily unavailable. A failed lease revoke remains fail-closed for
+    // future content access once the lease expires.
+    if (workspaceId) await this.#options.leases.revoke(workspaceId)
   }
 
   // İçerik şifreleme kapsamındaki (kayıtlı kullanıcıya ait) workspace mi?

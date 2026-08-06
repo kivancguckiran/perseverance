@@ -12,6 +12,7 @@
     "alpha:dev": "node scripts/alpha-dev.mjs",
     "dev": "pnpm --parallel --filter @perseverance/control-plane --filter @perseverance/web dev",
     "deploy:remote": "bash scripts/deploy-self-hosted-remote.sh",
+    "deploy:self-hosted": "bash scripts/deploy-self-hosted.sh",
     "demo:smoke": "pnpm test -- --run services/control-plane/src/server.test.ts packages/codex-event-adapter/src/index.test.ts && pnpm --filter @perseverance/workspace-agent smoke:unknown-replay && pnpm --filter @perseverance/workspace-agent smoke:real-recovery",
     "provider:smoke:claude": "tsx scripts/provider-smoke.ts claude",
     "provider:smoke:gemini": "tsx scripts/provider-smoke.ts gemini",

@@ -99,6 +99,34 @@ services:
       timeout: 5s
       retries: 90
 
+  # ADR-0048: decrypted content keys live only in this memory-only process.
+  # Lifecycle commands preserve this container across routine product upgrades.
+  content-key-broker:
+    <<: *product
+    command: ['node', '/app/content-key-broker.mjs']
+    networks:
+      - content-key-broker
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=0700,uid=10001,gid=10001
+    environment:
+      HOST: 0.0.0.0
+      PORT: '3305'
+      CONTENT_KEY_LEASE_TTL_SECONDS: ${SELF_HOSTED_CONTENT_KEY_LEASE_TTL_SECONDS:-43200}
+      CONTENT_KEY_AUDIT_URL: http://control-plane:3300
+      INTERNAL_RUNTIME_TOKEN_FILE: /run/secrets/internal_runtime_token
+    secrets:
+      - internal_runtime_token
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3305/readyz']
+      interval: 2s
+      timeout: 3s
+      retries: 90
+
   identity:
     image: ${SELF_HOSTED_NODE_IMAGE}
     restart: unless-stopped
@@ -211,6 +239,9 @@ services:
     security_opt:
       - no-new-privileges:true
       - seccomp=unconfined
+    networks:
+      - self-hosted
+      - content-key-broker
     environment:
       TOPOLOGY_DATABASE_URL: postgresql://self_hosted_runtime:${SELF_HOSTED_POSTGRES_RUNTIME_PASSWORD}@postgres:5432/persistent_codex
       OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
@@ -230,7 +261,7 @@ services:
       PERSISTENT_BWRAP_BIN: /app/codex/bwrap
       # envelope-şifreli prompt'lar için content key lease'i iç
       # listener'dan alınır; anahtar diske yazılmaz.
-      CONTENT_KEY_SERVICE_URL: http://control-plane:3304
+      CONTENT_KEY_SERVICE_URL: http://content-key-broker:3305
       INTERNAL_RUNTIME_TOKEN_FILE: /run/secrets/internal_runtime_token
     secrets:
       - internal_runtime_token
@@ -242,6 +273,8 @@ services:
         condition: service_healthy
       object-storage:
         condition: service_healthy
+      content-key-broker:
+        condition: service_healthy
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3302/']
       interval: 2s
@@ -251,6 +284,9 @@ services:
   control-plane:
     <<: *product
     command: ['node', '/app/control-plane.mjs']
+    networks:
+      - self-hosted
+      - content-key-broker
     environment:
       HOST: 0.0.0.0
       PORT: '3300'
@@ -275,10 +311,11 @@ services:
       # (JWKS yayını identity'de kalır); allowlist env'den okunur; iç content
       # key listener'ı yalnız iç ağda dinler ve Caddy tarafından yayınlanmaz.
       SELF_HOSTED_ALLOWED_USERS: ${SELF_HOSTED_ALLOWED_USERS:-}
+      SELF_HOSTED_ADMIN_SUBJECT: ${SELF_HOSTED_ADMIN_SUBJECT:-self-hosted-admin}
       OIDC_SIGNING_KEY_FILE: /run/self-hosted/oidc-private.pem
       OIDC_SIGNING_KEY_ID: self-hosted
+      CONTENT_KEY_BROKER_URL: http://content-key-broker:3305
       INTERNAL_RUNTIME_TOKEN_FILE: /run/secrets/internal_runtime_token
-      CONTENT_KEY_SERVICE_PORT: '3304'
     secrets:
       - internal_runtime_token
     volumes:
@@ -291,6 +328,8 @@ services:
       object-storage:
         condition: service_healthy
       identity:
+        condition: service_healthy
+      content-key-broker:
         condition: service_healthy
       workspace-agent:
         condition: service_healthy
@@ -310,6 +349,9 @@ services:
       # (ADR-0038): base-path'li kurulumda SSR/statik servis base altından
       # yapılır; kök health endpoint'leri (healthcheck) korunur.
       BASE_PATH: ${SELF_HOSTED_BASE_PATH:-}
+      # Public commit marker changes sw.js bytes on every release so an open
+      # PWA can offer user-controlled activation of the new version.
+      SOURCE_COMMIT: ${SELF_HOSTED_SOURCE_COMMIT}
       # PWA identity ilk kurulum yolundan türetilir ve sonraki base-path
       # reconfigure işlemlerinde sabit kalır.
       PWA_ID: ${SELF_HOSTED_PWA_ID:-}
@@ -325,6 +367,10 @@ services:
 networks:
   self-hosted:
     name: perseverance-self-hosted
+    labels: *self-hosted-labels
+  content-key-broker:
+    name: perseverance-content-key-broker
+    internal: true
     labels: *self-hosted-labels
 
 volumes:

@@ -129,6 +129,74 @@ export const selfHostedSessionTokensSchema = z.object({
   // client compatible during a rolling upgrade from the former 30-day model.
   refreshTokenExpiresAt: z.iso.datetime().nullable(),
 })
+
+// Internal, authenticated content-key broker protocol (ADR-0048). The broker
+// is never exposed through the public proxy. Key material appears only in the
+// issue/acquire request path and is constrained to one 32-byte base64 value.
+export const CONTENT_KEY_BROKER_CONTRACT_VERSION = 1 as const
+export const CONTENT_KEY_BROKER_ROUTES = {
+  issue: '/internal/v1/content-key-leases/issue',
+  acquire: '/internal/v1/content-key-leases',
+  status: '/internal/v1/content-key-leases/status',
+  revoke: '/internal/v1/content-key-leases/revoke',
+  audit: '/internal/v1/content-key-lease-audit',
+  readiness: '/readyz',
+} as const
+
+export const contentKeyLeaseScopeSchema = z.object({
+  tenantId: identifierSchema,
+  organizationId: identifierSchema,
+  workspaceId: identifierSchema,
+})
+export const contentKeyBase64Schema = z.string().regex(/^[A-Za-z0-9+/]{43}=$/)
+const contentKeyLeaseIdentitySchema = z.object({
+  schemaVersion: z.literal(CONTENT_KEY_BROKER_CONTRACT_VERSION),
+  scope: contentKeyLeaseScopeSchema,
+  userId: identifierSchema,
+  keyVersion: identifierSchema,
+})
+export const contentKeyLeaseIssueRequestSchema =
+  contentKeyLeaseIdentitySchema.extend({ contentKey: contentKeyBase64Schema })
+export const contentKeyLeaseRecordSchema = contentKeyLeaseIdentitySchema.extend(
+  {
+    leaseId: identifierSchema,
+    expiresAt: z.number().int().nonnegative(),
+  },
+)
+export const contentKeyLeaseIssueResponseSchema = contentKeyLeaseRecordSchema
+export const contentKeyLeaseLookupRequestSchema = z.object({
+  schemaVersion: z.literal(CONTENT_KEY_BROKER_CONTRACT_VERSION),
+  workspaceId: identifierSchema,
+})
+export const contentKeyLeaseAcquireResponseSchema =
+  contentKeyLeaseRecordSchema.extend({ contentKey: contentKeyBase64Schema })
+export const contentKeyLeaseStatusResponseSchema = z.object({
+  schemaVersion: z.literal(CONTENT_KEY_BROKER_CONTRACT_VERSION),
+  active: z.boolean(),
+})
+export const contentKeyLeaseRevokeResponseSchema = z.object({
+  schemaVersion: z.literal(CONTENT_KEY_BROKER_CONTRACT_VERSION),
+  revoked: z.boolean(),
+})
+export const contentKeyLeaseAuditEventSchema = z.object({
+  schemaVersion: z.literal(CONTENT_KEY_BROKER_CONTRACT_VERSION),
+  scope: contentKeyLeaseScopeSchema,
+  userId: identifierSchema,
+  action: z.enum(['secret.lease_issued', 'secret.lease_revoked']),
+  leaseId: identifierSchema,
+})
+
+export type ContentKeyLeaseScope = z.infer<typeof contentKeyLeaseScopeSchema>
+export type ContentKeyLeaseIssueRequest = z.infer<
+  typeof contentKeyLeaseIssueRequestSchema
+>
+export type ContentKeyLeaseRecord = z.infer<typeof contentKeyLeaseRecordSchema>
+export type ContentKeyLeaseAcquireResponse = z.infer<
+  typeof contentKeyLeaseAcquireResponseSchema
+>
+export type ContentKeyLeaseAuditEvent = z.infer<
+  typeof contentKeyLeaseAuditEventSchema
+>
 export const authorizationActionSchema = z.enum([
   'session.read',
   'session.create',
@@ -1048,6 +1116,7 @@ export const attachmentFileNameSchema = z
   )
 export const attachmentContextStart = '<perseverance-attachments>'
 export const attachmentContextEnd = '</perseverance-attachments>'
+export const conversationAttachmentMaxBytes = 64 * 1024 * 1024
 export const conversationAttachmentSchema = scopeSchema.extend({
   attachmentId: identifierSchema,
   name: attachmentFileNameSchema,
@@ -1119,6 +1188,36 @@ export const usageCostItemSchema = usageCostSummarySchema.extend({
 export const conversationUsageCostSchema = z.object({
   total: usageCostSummarySchema,
   items: z.array(usageCostItemSchema),
+})
+
+export const codexRateLimitWindowSchema = z.object({
+  usedPercent: z.number().min(0).max(100),
+  windowDurationMins: z.number().nonnegative().nullable(),
+  resetsAt: z.number().int().nonnegative().nullable(),
+})
+
+export const codexRateLimitSnapshotSchema = z.object({
+  limitId: z.string().max(256).nullable(),
+  limitName: z.string().max(256).nullable(),
+  primary: codexRateLimitWindowSchema.nullable(),
+  secondary: codexRateLimitWindowSchema.nullable(),
+  planType: z.string().max(128).nullable(),
+  rateLimitReachedType: z.string().max(128).nullable(),
+  credits: z
+    .object({
+      hasCredits: z.boolean(),
+      unlimited: z.boolean(),
+      balance: z.string().max(256).nullable(),
+    })
+    .nullable(),
+})
+
+export const codexAccountLimitsResponseSchema = z.object({
+  status: z.enum(['available', 'unsupported', 'unavailable']),
+  observedAt: z.iso.datetime(),
+  authMode: z.enum(['chatgpt', 'apiKey', 'other', 'unknown']),
+  rateLimits: codexRateLimitSnapshotSchema.nullable(),
+  rateLimitsByLimitId: z.record(z.string(), codexRateLimitSnapshotSchema),
 })
 
 export const usageReconciliationResponseSchema = z.object({
@@ -1322,6 +1421,17 @@ export const createSupportGrantRequestSchema = z
     reason: z.string().trim().min(8).max(500),
     supportPrincipalId: identifierSchema,
     durationMinutes: z.number().int().min(5).max(60),
+  })
+  .strict()
+export const selfHostedSupportProfileSchema = z.object({
+  available: z.boolean(),
+  supportPrincipalId: identifierSchema.nullable(),
+  displayName: z.string().trim().min(1).max(120).nullable(),
+})
+export const supportGrantVerificationRequestSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    password: z.string().min(8).max(1024),
   })
   .strict()
 export const supportGrantListResponseSchema = z.object({
@@ -1618,6 +1728,9 @@ export type MetricsResponse = z.infer<typeof metricsResponseSchema>
 export type UsageCostSummary = z.infer<typeof usageCostSummarySchema>
 export type UsageCostItem = z.infer<typeof usageCostItemSchema>
 export type ConversationUsageCost = z.infer<typeof conversationUsageCostSchema>
+export type CodexAccountLimitsResponse = z.infer<
+  typeof codexAccountLimitsResponseSchema
+>
 export type UsageReconciliationResponse = z.infer<
   typeof usageReconciliationResponseSchema
 >
@@ -1628,6 +1741,12 @@ export type BillingFinancialOverview = z.infer<
 export type SupportGrant = z.infer<typeof supportGrantSchema>
 export type SupportGrantStatus = z.infer<typeof supportGrantStatusSchema>
 export type SupportAccessAction = z.infer<typeof supportAccessActionSchema>
+export type SelfHostedSupportProfile = z.infer<
+  typeof selfHostedSupportProfileSchema
+>
+export type SupportGrantVerificationRequest = z.infer<
+  typeof supportGrantVerificationRequestSchema
+>
 export type CreateSupportGrantRequest = z.infer<
   typeof createSupportGrantRequestSchema
 >

@@ -30,6 +30,8 @@ SSH_BIN="${PERSISTENT_DEPLOY_SSH_BIN:-ssh}"
 SSH_TARGET="${PERSISTENT_DEPLOY_SSH_TARGET:-}"
 REMOTE_ROOT="${PERSISTENT_DEPLOY_REMOTE_ROOT:-}"
 STATE_HOME="${PERSISTENT_DEPLOY_STATE_HOME:-${REMOTE_ROOT:+${REMOTE_ROOT}/state}}"
+IDLE_SECONDS="${PERSISTENT_DEPLOY_IDLE_SECONDS:-3600}"
+POLL_SECONDS="${PERSISTENT_DEPLOY_POLL_SECONDS:-60}"
 
 log() { printf '[remote-deploy] %s\n' "$*"; }
 fail() {
@@ -53,6 +55,8 @@ Environment overrides:
   PERSISTENT_DEPLOY_SSH_TARGET=deploy-host
   PERSISTENT_DEPLOY_REMOTE_ROOT=/srv/perseverance
   PERSISTENT_DEPLOY_STATE_HOME=/srv/perseverance/state
+  PERSISTENT_DEPLOY_IDLE_SECONDS=3600
+  PERSISTENT_DEPLOY_POLL_SECONDS=60
 EOF
 }
 
@@ -71,6 +75,12 @@ command -v "${SSH_BIN}" >/dev/null 2>&1 ||
   fail "PERSISTENT_DEPLOY_REMOTE_ROOT gerekli; config/local.example şablonunu kopyalayın"
 [[ -n "${STATE_HOME}" ]] ||
   fail "PERSISTENT_DEPLOY_STATE_HOME çözümlenemedi"
+[[ "${IDLE_SECONDS}" =~ ^[0-9]+$ ]] &&
+  ((IDLE_SECONDS >= 60 && IDLE_SECONDS <= 604800)) ||
+  fail "PERSISTENT_DEPLOY_IDLE_SECONDS 60..604800 aralığında olmalı"
+[[ "${POLL_SECONDS}" =~ ^[0-9]+$ ]] &&
+  ((POLL_SECONDS >= 5 && POLL_SECONDS <= 3600)) ||
+  fail "PERSISTENT_DEPLOY_POLL_SECONDS 5..3600 aralığında olmalı"
 SSH_COMMAND=("${SSH_BIN}")
 if [[ "$(basename "${SSH_BIN}")" = "tailscale" ]]; then
   SSH_COMMAND+=(ssh)
@@ -95,15 +105,18 @@ TARGET_SHA="$(git rev-parse "${DEPLOY_REF}^{commit}")" ||
 git branch -r --contains "${TARGET_SHA}" | grep -qE '^[[:space:]]*origin/' ||
   fail "${TARGET_SHA} origin'e push edilmemiş"
 
-log "remote deploy başlatılıyor commit=${TARGET_SHA}"
+log "remote deploy kuyruğa alınıyor commit=${TARGET_SHA} idle=${IDLE_SECONDS}s"
 
 "${SSH_COMMAND[@]}" "${SSH_TARGET}" bash -s -- \
-  "${TARGET_SHA}" "${REMOTE_ROOT}" "${STATE_HOME}" <<'REMOTE_SCRIPT'
+  "${TARGET_SHA}" "${REMOTE_ROOT}" "${STATE_HOME}" \
+  "${IDLE_SECONDS}" "${POLL_SECONDS}" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
 target_sha="$1"
 remote_root="$2"
 state_home="$3"
+idle_seconds="$4"
+poll_seconds="$5"
 release_root="${remote_root}/releases"
 env_file="${state_home}/config/self-hosted.env"
 release_state_file="${state_home}/state/current-release.env"
@@ -179,79 +192,25 @@ else
   incoming=""
 fi
 
-backup_before="$(find "${state_home}/backups" -maxdepth 1 -type f \
-  -name 'backup-*.tar.enc' -print 2>/dev/null | sort | tail -n 1)"
-
-cd "${target_release}"
-log "otomatik yedek + upgrade başlatılıyor: ${current_sha} -> ${target_sha}"
-bash infra/self-hosted/self-hosted.sh upgrade
-
-deployed_sha="$(read_env SELF_HOSTED_SOURCE_COMMIT)"
-[[ "${deployed_sha}" = "${target_sha}" ]] ||
-  fail "upgrade source commit uyuşmuyor: ${deployed_sha}"
-completed_sha="$(sed -n 's/^SELF_HOSTED_SOURCE_COMMIT=//p' "${release_state_file}" | tail -n 1)"
-[[ "${completed_sha}" = "${target_sha}" ]] ||
-  fail "upgrade tamamlanmış release state'ini güncellemedi: ${completed_sha}"
-validate_release "${target_release}" || fail "release upgrade sonrası temiz değil"
-
-backup_after="$(find "${state_home}/backups" -maxdepth 1 -type f \
-  -name 'backup-*.tar.enc' -print 2>/dev/null | sort | tail -n 1)"
-if [[ "${current_sha}" != "${target_sha}" ]]; then
-  [[ -n "${backup_after}" && "${backup_after}" != "${backup_before}" ]] ||
-    fail "upgrade yeni otomatik yedek üretmedi"
-  [[ -s "${backup_after}" ]] || fail "otomatik yedek boş: ${backup_after}"
-fi
-
-container_count=0
-unhealthy=""
-for ((attempt = 1; attempt <= 30; attempt++)); do
-  # `compose run --rm` helper'ları `docker ps -a` altında kısa süreli exited
-  # görünebilir. Yalnız çalışan stack container'larını say; durmuş bir gerçek
-  # servis sekizli sayıyı düşürerek yine fail-closed kalır.
-  container_rows="$(docker ps --filter label=persistent.self-hosted=true \
-    --format '{{.Names}}|{{.Image}}|{{.Status}}')"
-  container_count="$(printf '%s\n' "${container_rows}" | sed '/^$/d' | wc -l | tr -d ' ')"
-  unhealthy="$(printf '%s\n' "${container_rows}" | awk 'index($0,"(healthy)")==0')"
-  if [[ "${container_count}" -ge 8 && -z "${unhealthy}" ]]; then
-    break
-  fi
-  sleep 2
-done
-[[ "${container_count}" -ge 8 ]] ||
-  fail "beklenen çalışan self-hosted container sayısı yok: ${container_count}"
-[[ -z "${unhealthy}" ]] || fail "healthy olmayan container var: ${unhealthy}"
-
-public_origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
-base_path="$(read_env SELF_HOSTED_BASE_PATH)"
-ready_url="${public_origin}${base_path}/readyz"
-curl_args=(-fsS --max-time 20)
-[[ "$(read_env SELF_HOSTED_TLS_MODE)" = "acme" ]] || curl_args+=(-k)
-ready_ok=0
-for ((attempt = 1; attempt <= 10; attempt++)); do
-  if ready_body="$(curl "${curl_args[@]}" "${ready_url}" 2>/dev/null)" &&
-    printf '%s' "${ready_body}" |
-      grep -Eq '"ready"[[:space:]]*:[[:space:]]*true'; then
-    ready_ok=1
-    break
-  fi
-  sleep 2
-done
-[[ "${ready_ok}" -eq 1 ]] ||
-  fail "public readiness ready=true dönmedi: ${ready_url}"
-
 deploy_state_dir="${state_home}/state"
 mkdir -p "${deploy_state_dir}"
-state_tmp="${deploy_state_dir}/last-remote-deploy.env.tmp.$$"
 umask 077
+pending_file="${deploy_state_dir}/pending-remote-deploy.env"
+pending_tmp="${pending_file}.tmp.$$"
 {
-  printf 'SOURCE_COMMIT=%s\n' "${target_sha}"
-  printf 'DEPLOYED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf 'BACKUP_FILE=%s\n' "$(basename "${backup_after}")"
-  printf 'READY_URL=%s\n' "${ready_url}"
-} >"${state_tmp}"
-mv "${state_tmp}" "${deploy_state_dir}/last-remote-deploy.env"
+  printf 'TARGET_SHA=%s\n' "${target_sha}"
+  printf 'REQUESTED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'IDLE_SECONDS=%s\n' "${idle_seconds}"
+  printf 'POLL_SECONDS=%s\n' "${poll_seconds}"
+} >"${pending_tmp}"
+mv "${pending_tmp}" "${pending_file}"
 
-log "container health geçti (${container_count}/${container_count})"
-log "public readiness geçti: ${ready_url}"
-log "deploy tamam: ${target_sha}"
+worker_script="${target_release}/scripts/run-pending-self-hosted-deploy.sh"
+[[ -f "${worker_script}" ]] || fail "remote deploy worker bulunamadı: ${worker_script}"
+worker_log="${deploy_state_dir}/remote-deploy-worker.log"
+nohup bash "${worker_script}" "${remote_root}" "${state_home}" \
+  >>"${worker_log}" 2>&1 </dev/null &
+
+log "pending deploy kaydedildi: ${pending_file}"
+log "remote worker başlatıldı; log: ${worker_log}"
 REMOTE_SCRIPT

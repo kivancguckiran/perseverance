@@ -24,6 +24,11 @@ import {
 } from '@perseverance/billing-platform'
 import { codexV2 } from '@perseverance/codex-protocol-generated'
 import {
+  CONTENT_KEY_BROKER_CONTRACT_VERSION,
+  CONTENT_KEY_BROKER_ROUTES,
+  contentKeyLeaseAcquireResponseSchema,
+} from '@perseverance/control-plane-contracts'
+import {
   ZERO_CAPACITY,
   type CapacityVector,
 } from '@perseverance/production-topology'
@@ -52,15 +57,21 @@ import {
   type UserContentKeyMaterial,
 } from './user-content-crypto'
 import { CodexTitleProcessRunner } from './title-process-runner'
+import { normalizeCodexAccountLimits } from './codex-account-limits'
 import {
   decodeProductionTurnInput,
   productionAttachmentObjectKeys,
   productionPromptWithAttachmentContext,
   type MaterializedProductionAttachment,
 } from './production-turn-input'
+import {
+  loadProductionCodexRollout,
+  saveProductionCodexRollout,
+} from './production-codex-rollout'
+import { productionTurnRetryDelayMs } from './production-turn-retry'
 
-// workspace-agent, kullanıcı workspace'lerinin content key'ini
-// control-plane'in iç listener'ından alır (anahtar diske yazılmaz).
+// workspace-agent, kullanıcı workspace'lerinin content key'ini memory-only
+// broker'dan alır (anahtar diske yazılmaz).
 export interface ContentKeyResolver {
   resolve(scope: ProductionScope): Promise<UserContentKeyMaterial | null>
 }
@@ -78,22 +89,30 @@ export class HttpContentKeyResolver implements ContentKeyResolver {
     scope: ProductionScope,
   ): Promise<UserContentKeyMaterial | null> {
     const response = await fetch(
-      `${this.#endpoint}/internal/v1/content-key-leases`,
+      `${this.#endpoint}${CONTENT_KEY_BROKER_ROUTES.acquire}`,
       {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${this.#token}`,
         },
-        body: JSON.stringify({ workspaceId: scope.workspaceId }),
+        body: JSON.stringify({
+          schemaVersion: CONTENT_KEY_BROKER_CONTRACT_VERSION,
+          workspaceId: scope.workspaceId,
+        }),
       },
     )
     if (response.status === 404) return null
     if (!response.ok) throw new Error('CONTENT_KEY_SERVICE_UNAVAILABLE')
-    const body = (await response.json()) as {
-      contentKey: string
-      keyVersion: string
-    }
+    const body = contentKeyLeaseAcquireResponseSchema.parse(
+      await response.json(),
+    )
+    if (
+      body.scope.tenantId !== scope.tenantId ||
+      body.scope.organizationId !== scope.organizationId ||
+      body.scope.workspaceId !== scope.workspaceId
+    )
+      throw new Error('CONTENT_KEY_SCOPE_MISMATCH')
     return {
       contentKey: Buffer.from(body.contentKey, 'base64'),
       keyVersion: body.keyVersion,
@@ -127,6 +146,31 @@ export interface ProductionSchedulerWorkerOptions {
 
 export const CODEX_SCOPED_WORKSPACE_CWD = '/scoped-workspace'
 export const CODEX_SCOPED_HOME = '/codex-session'
+
+export function shouldAppendProductionTurnStarted(attempt: number) {
+  return attempt <= 1
+}
+
+export function productionFailureTerminal(input: {
+  upstreamStartIntent: boolean
+  attempt: number
+  maxAttempts: number
+  errorCode: string
+}) {
+  if (input.upstreamStartIntent)
+    return {
+      outcome: 'outcome_unknown' as const,
+      errorCode: 'UPSTREAM_OUTCOME_UNKNOWN',
+      suffix: 'outcome_unknown',
+    }
+  if (input.attempt >= input.maxAttempts)
+    return {
+      outcome: 'failed' as const,
+      errorCode: input.errorCode,
+      suffix: 'failed',
+    }
+  return null
+}
 
 function safeWorkspaceEnvironment(codexHome: string): NodeJS.ProcessEnv {
   return {
@@ -168,6 +212,40 @@ export async function ensureConversationWorkspaceRoot(
   if (scoped.startsWith('..') || isAbsolute(scoped))
     throw new Error('CONVERSATION_WORKSPACE_ESCAPE')
   return physical
+}
+
+export async function ensureCodexAccountProbeRoot(
+  workspaceCwd: string,
+  scope: ProductionScope,
+) {
+  const root = await realpath(workspaceCwd)
+  const scopeKey = createHash('sha256')
+    .update(
+      `${scope.tenantId}\0${scope.organizationId}\0${scope.workspaceId}`,
+      'utf8',
+    )
+    .digest('hex')
+  const requested = resolve(root, '.perseverance', 'account-probes', scopeKey)
+  await mkdir(requested, { recursive: true, mode: 0o700 })
+  const physical = await realpath(requested)
+  if (physical !== requested)
+    throw new Error('CODEX_ACCOUNT_PROBE_SYMLINK_REJECTED')
+  const scoped = relative(root, physical)
+  if (scoped.startsWith('..') || isAbsolute(scoped))
+    throw new Error('CODEX_ACCOUNT_PROBE_ESCAPE')
+  return physical
+}
+
+type CodexAccountLimitsClient = Pick<CodexAppServerClient, 'request'>
+
+export async function readCodexAccountLimitsSnapshot(
+  client: CodexAccountLimitsClient,
+) {
+  const response = await client.request<codexV2.GetAccountRateLimitsResponse>(
+    'account/rateLimits/read',
+    undefined,
+  )
+  return normalizeCodexAccountLimits(response)
 }
 
 export async function materializeProductionAttachments(input: {
@@ -454,6 +532,37 @@ export function productionThreadStartParams(
   }
 }
 
+type ProductionThreadClient = Pick<CodexAppServerClient, 'request'>
+
+export async function startOrResumeProductionThread(
+  client: ProductionThreadClient,
+  workspaceCwd: string,
+  threadId: string | null,
+): Promise<codexV2.ThreadStartResponse | codexV2.ThreadResumeResponse> {
+  if (!threadId)
+    return await client.request<codexV2.ThreadStartResponse>(
+      'thread/start',
+      productionThreadStartParams(workspaceCwd),
+    )
+  const read = await client.request<codexV2.ThreadReadResponse>('thread/read', {
+    threadId,
+    includeTurns: true,
+  } satisfies codexV2.ThreadReadParams)
+  if (read.thread.id !== threadId) throw new Error('THREAD_IDENTITY_MISMATCH')
+  const resumed = await client.request<codexV2.ThreadResumeResponse>(
+    'thread/resume',
+    {
+      threadId,
+      cwd: workspaceCwd,
+      approvalPolicy: 'never',
+      sandbox: 'workspace-write',
+    } satisfies codexV2.ThreadResumeParams,
+  )
+  if (resumed.thread.id !== threadId)
+    throw new Error('THREAD_IDENTITY_MISMATCH')
+  return resumed
+}
+
 export function productionTurnCompletion(
   input: unknown,
   latestAgentMessage?: string,
@@ -531,11 +640,33 @@ export async function settleTerminalRunBilling(
   }
 }
 
+export async function settlePoisonedRunBilling(
+  billing: Pick<
+    BillingPostgresRepository,
+    'settleOperation' | 'completeOperation'
+  >,
+  scope: ProductionScope,
+  runId: string,
+  markedTerminal: boolean,
+) {
+  if (!markedTerminal) return false
+  await settleTerminalRunBilling(billing, scope, runId, 'failed')
+  return true
+}
+
 export class ProductionSchedulerWorker {
   readonly options: ProductionSchedulerWorkerOptions
   #running = false
   #healthServer: Server | null = null
   #activeClient: CodexAppServerClient | null = null
+  readonly #codexAccountLimits = new Map<
+    string,
+    ReturnType<typeof normalizeCodexAccountLimits>
+  >()
+  readonly #codexAccountLimitProbes = new Map<
+    string,
+    Promise<ReturnType<typeof normalizeCodexAccountLimits>>
+  >()
   #activeTurn:
     | {
         runId: string
@@ -734,6 +865,41 @@ export class ProductionSchedulerWorker {
             }
             return
           }
+          if (url.pathname === '/internal/v1/codex-rate-limits') {
+            if (
+              !authorizedInternalRequest(
+                request.headers.authorization,
+                this.options.internalRuntimeToken,
+              )
+            ) {
+              response.writeHead(401)
+              response.end(JSON.stringify({ code: 'UNAUTHORIZED' }))
+              return
+            }
+            const scope = {
+              tenantId: url.searchParams.get('tenantId') ?? '',
+              organizationId: url.searchParams.get('organizationId') ?? '',
+              workspaceId: url.searchParams.get('workspaceId') ?? '',
+            }
+            if (
+              !scope.tenantId ||
+              !scope.organizationId ||
+              !scope.workspaceId
+            ) {
+              response.writeHead(400)
+              response.end(JSON.stringify({ code: 'INVALID_WORKSPACE_SCOPE' }))
+              return
+            }
+            try {
+              const snapshot = await this.#readCodexAccountLimits(scope)
+              response.writeHead(200)
+              response.end(JSON.stringify(snapshot))
+            } catch {
+              response.writeHead(503)
+              response.end(JSON.stringify({ code: 'CODEX_LIMITS_UNAVAILABLE' }))
+            }
+            return
+          }
           response.writeHead(200)
           response.end(
             JSON.stringify({
@@ -788,6 +954,93 @@ export class ProductionSchedulerWorker {
         this.#healthServer!.close(() => resolve()),
       )
     this.#healthServer = null
+  }
+
+  async #readCodexAccountLimits(scope: ProductionScope) {
+    const key = JSON.stringify([
+      scope.tenantId,
+      scope.organizationId,
+      scope.workspaceId,
+    ])
+    const cached = this.#codexAccountLimits.get(key)
+    if (cached && Date.now() - Date.parse(cached.observedAt) < 30_000)
+      return cached
+
+    const pending = this.#codexAccountLimitProbes.get(key)
+    if (pending) return pending
+
+    const probe = this.#probeCodexAccountLimits(scope)
+      .then((snapshot) => {
+        this.#codexAccountLimits.set(key, snapshot)
+        return snapshot
+      })
+      .finally(() => this.#codexAccountLimitProbes.delete(key))
+    this.#codexAccountLimitProbes.set(key, probe)
+    return probe
+  }
+
+  async #probeCodexAccountLimits(scope: ProductionScope) {
+    const activeClient = this.#activeClient
+    if (activeClient) {
+      try {
+        return await readCodexAccountLimitsSnapshot(activeClient)
+      } catch {
+        // The active turn may finish while settings is opening. Fall through
+        // to a read-only, isolated account probe rather than exposing a stale
+        // runtime lifecycle error to the user.
+      }
+    }
+
+    const physicalWorkspace = await ensureCodexAccountProbeRoot(
+      this.options.workspaceCwd,
+      scope,
+    )
+    const isolatedHomeRoot = resolve(
+      this.options.codexProvisioningSource ?? '/codex-home',
+      'runtime',
+    )
+    await mkdir(isolatedHomeRoot, { recursive: true, mode: 0o700 })
+    const isolatedHome = createIsolatedCodexHome({
+      ...(this.options.codexProvisioningSource
+        ? { sourceHome: this.options.codexProvisioningSource }
+        : {}),
+      temporaryRoot: isolatedHomeRoot,
+      includeConfig: false,
+    })
+    const sandboxed = Boolean(this.options.workspaceSandboxBin)
+    const client = new CodexAppServerClient({
+      command: this.options.workspaceSandboxBin ?? this.options.codexBin,
+      ...(sandboxed
+        ? {
+            args: productionWorkspaceSandboxArgs({
+              codexBin: this.options.codexBin,
+              physicalWorkspace,
+              isolatedCodexHome: isolatedHome.path,
+              sourceAuthFile: resolve(isolatedHome.sourceHome, 'auth.json'),
+            }),
+          }
+        : {}),
+      cwd: physicalWorkspace,
+      env: safeWorkspaceEnvironment(
+        sandboxed ? CODEX_SCOPED_HOME : isolatedHome.path,
+      ),
+      requestTimeoutMs: Math.min(
+        this.options.runtimeTimeoutMs ?? 180_000,
+        30_000,
+      ),
+      restart: { maxRestarts: 0 },
+    })
+    try {
+      await client.initialize({
+        name: 'perseverance_account_limits',
+        title: 'Perseverance Account Limits',
+        version: '1',
+      })
+      return await readCodexAccountLimitsSnapshot(client)
+    } finally {
+      await client.stop().catch(() => undefined)
+      isolatedHome.cleanup()
+    }
   }
 
   async #execute(claimed: ClaimedWork) {
@@ -887,27 +1140,32 @@ export class ProductionSchedulerWorker {
       return result
     }
     try {
-      await append(
-        'turn.started',
-        {
-          runId: stored.runId,
-          runtimeId,
-          regionId: claimed.regionId,
-          nodeId: claimed.nodeId,
-          fencingToken: claimed.lease.fencingToken,
-          attempt: stored.attempt,
-          recovery: stored.attempt > 1,
-        },
-        `started_${claimed.lease.fencingToken}`,
-      )
-      telemetry.recordMetric(
-        'turn_start_latency',
-        Math.max(0, Date.now() - new Date(stored.queuedAt).getTime()),
-        {
-          context: runtimeSpan.context,
-          attributes: { outcome: 'started' },
-        },
-      )
+      // A scheduler retry continues the same user turn. Persisting a fresh
+      // turn.started event for every attempt duplicates the user message in
+      // the public timeline and can leave several apparently-active turns.
+      if (shouldAppendProductionTurnStarted(stored.attempt)) {
+        await append(
+          'turn.started',
+          {
+            runId: stored.runId,
+            runtimeId,
+            regionId: claimed.regionId,
+            nodeId: claimed.nodeId,
+            fencingToken: claimed.lease.fencingToken,
+            attempt: stored.attempt,
+            recovery: false,
+          },
+          'started',
+        )
+        telemetry.recordMetric(
+          'turn_start_latency',
+          Math.max(0, Date.now() - new Date(stored.queuedAt).getTime()),
+          {
+            context: runtimeSpan.context,
+            attributes: { outcome: 'started' },
+          },
+        )
+      }
       await new Promise((resolve) =>
         setTimeout(resolve, this.options.runtimeHoldMs),
       )
@@ -941,6 +1199,9 @@ export class ProductionSchedulerWorker {
         stored.sessionId,
       )
       if (!currentSession) throw new Error('SESSION_NOT_FOUND')
+      if (!userContentKey && this.options.contentKeys)
+        userContentKey = await this.options.contentKeys.resolve(scope)
+      if (!userContentKey) throw new Error('CONTENT_KEY_LOCKED')
       const physicalWorkspace = await ensureConversationWorkspaceRoot(
         this.options.workspaceCwd,
         scope,
@@ -1030,6 +1291,15 @@ export class ProductionSchedulerWorker {
         temporaryRoot: isolatedHomeRoot,
         includeConfig: false,
       })
+      const rolloutRestored = currentSession.codexThreadId
+        ? await loadProductionCodexRollout({
+            objectStore: this.options.objectStore,
+            scope,
+            sessionId: stored.sessionId,
+            codexHome: isolatedHome.path,
+            contentKey: userContentKey,
+          })
+        : false
       const client = new CodexAppServerClient({
         command: this.options.workspaceSandboxBin ?? this.options.codexBin,
         ...(sandboxed
@@ -1051,18 +1321,30 @@ export class ProductionSchedulerWorker {
       })
       this.#activeClient = client
       let timeout: ReturnType<typeof setTimeout> | undefined
+      let clientStopped = false
       try {
         await client.initialize({
           name: 'perseverance_scheduler',
           title: 'Perseverance Scheduler',
           version: '1',
         })
+        const accountLimits = await readCodexAccountLimitsSnapshot(
+          client,
+        ).catch(() => null)
+        if (accountLimits)
+          this.#codexAccountLimits.set(
+            JSON.stringify([
+              scope.tenantId,
+              scope.organizationId,
+              scope.workspaceId,
+            ]),
+            accountLimits,
+          )
         await fence()
-        const thread = await client.request<codexV2.ThreadStartResponse>(
-          'thread/start',
-          productionThreadStartParams(
-            sandboxed ? CODEX_SCOPED_WORKSPACE_CWD : physicalWorkspace,
-          ),
+        const thread = await startOrResumeProductionThread(
+          client,
+          sandboxed ? CODEX_SCOPED_WORKSPACE_CWD : physicalWorkspace,
+          rolloutRestored ? currentSession.codexThreadId : null,
         )
         let resolveFinal!: (message: { text: string; itemId?: string }) => void
         let rejectFinal!: (error: Error) => void
@@ -1143,6 +1425,23 @@ export class ProductionSchedulerWorker {
             else resolveFinal(completion)
           }
         })
+        const stopAndPersistRollout = async () => {
+          if (!clientStopped) {
+            await client.stop()
+            clientStopped = true
+            this.#activeClient = null
+            this.#activeTurn = undefined
+          }
+          await activityWriteChain
+          if (activityWriteError) throw activityWriteError
+          await saveProductionCodexRollout({
+            objectStore: this.options.objectStore,
+            scope,
+            sessionId: stored.sessionId,
+            codexHome: isolatedHome.path,
+            contentKey: userContentKey,
+          })
+        }
         const startIntent =
           await this.options.repository.markUpstreamStartIntent({
             ...scope,
@@ -1205,17 +1504,26 @@ export class ProductionSchedulerWorker {
           codexTurnId: turn.turn.id,
         })
         if (!marked) throw new Error('STALE_FENCING_TOKEN')
-        const completedMessage = await Promise.race([
-          final,
-          new Promise<never>((_, reject) => {
-            timeout = setTimeout(
-              () => reject(new Error('RUNTIME_TIMEOUT')),
-              this.options.runtimeTimeoutMs ?? 180_000,
-            )
-          }),
-        ])
-        await activityWriteChain
-        if (activityWriteError) throw activityWriteError
+        let completedMessage: { text: string; itemId?: string }
+        try {
+          completedMessage = await Promise.race([
+            final,
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error('RUNTIME_TIMEOUT')),
+                this.options.runtimeTimeoutMs ?? 180_000,
+              )
+            }),
+          ])
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message === 'CODEX_TURN_INTERRUPTED'
+          )
+            await stopAndPersistRollout()
+          throw error
+        }
+        await stopAndPersistRollout()
         codexSpan.end('ok')
         await fence()
         const { text } = completedMessage
@@ -1288,7 +1596,7 @@ export class ProductionSchedulerWorker {
         })
       } finally {
         if (timeout) clearTimeout(timeout)
-        await client.stop().catch(() => undefined)
+        if (!clientStopped) await client.stop().catch(() => undefined)
         this.#activeClient = null
         this.#activeTurn = undefined
         isolatedHome.cleanup()
@@ -1346,6 +1654,23 @@ export class ProductionSchedulerWorker {
           error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message)
             ? error.message
             : 'RUNTIME_FAILED'
+        const failureTerminal = productionFailureTerminal({
+          upstreamStartIntent,
+          attempt: claimed.item.attempt,
+          maxAttempts: claimed.item.maxAttempts,
+          errorCode,
+        })
+        if (failureTerminal)
+          await append(
+            'turn.completed',
+            {
+              runId: claimed.item.runId,
+              outcome: failureTerminal.outcome,
+              errorCode: failureTerminal.errorCode,
+              reconciled: true,
+            },
+            failureTerminal.suffix,
+          ).catch(() => undefined)
         if (upstreamStartIntent) {
           const terminal = await this.options.repository
             .completeRun({
@@ -1375,7 +1700,7 @@ export class ProductionSchedulerWorker {
           throw error
         }
         const poisoned = claimed.item.attempt >= claimed.item.maxAttempts
-        await this.options.repository
+        const terminal = await this.options.repository
           .markRunRetry({
             ...scope,
             runId: claimed.item.runId,
@@ -1384,6 +1709,13 @@ export class ProductionSchedulerWorker {
             errorCode,
           })
           .catch(() => false)
+        if (poisoned)
+          await settlePoisonedRunBilling(
+            this.options.billing,
+            scope,
+            claimed.item.runId,
+            terminal,
+          ).catch(() => false)
         const released = await this.options.topology
           .releaseLease({
             ...scope,
@@ -1395,10 +1727,7 @@ export class ProductionSchedulerWorker {
           })
           .catch(() => false)
         if (released && !poisoned) {
-          const delay = Math.min(
-            30_000,
-            100 * 2 ** Math.max(0, claimed.item.attempt - 1),
-          )
+          const delay = productionTurnRetryDelayMs(claimed.item.attempt)
           await this.options.topology
             .rescheduleRecovery({
               ...scope,

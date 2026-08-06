@@ -140,6 +140,7 @@ import {
   gitSnapshotListResponseSchema,
   metricsResponseSchema,
   providerCatalogListResponseSchema,
+  codexAccountLimitsResponseSchema,
   conversationUsageCostSchema,
   usageReconciliationResponseSchema,
   usageCostSummarySchema,
@@ -152,6 +153,7 @@ import {
   type OrganizationMembership,
   type DependencyReadiness,
   meResponseSchema,
+  conversationAttachmentMaxBytes,
 } from '@perseverance/control-plane-contracts'
 import type {
   ModelAliasConfig,
@@ -669,6 +671,12 @@ export const PUBLIC_ROUTE_AUTHORIZATION_CATALOG: PublicRouteAuthorizationEntry[]
       route: '/v1/sessions/:sessionId/usage',
       action: 'usage.read',
       resourceType: 'usage',
+    },
+    {
+      method: 'GET',
+      route: '/v1/workspaces/:workspaceId/codex-rate-limits',
+      action: 'billing.financial.read',
+      resourceType: 'billing_financial',
     },
     {
       method: 'GET',
@@ -1381,7 +1389,7 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
   }
   app.addContentTypeParser(
     'application/octet-stream',
-    { parseAs: 'buffer', bodyLimit: 16 * 1024 * 1024 },
+    { parseAs: 'buffer', bodyLimit: conversationAttachmentMaxBytes },
     (_request, body, done) => done(null, body),
   )
   app.addContentTypeParser(
@@ -4724,6 +4732,21 @@ export async function buildControlPlane(options: ControlPlaneOptions = {}) {
             .send({ code: error.code, message: error.message })
         throw error
       }
+    },
+  )
+
+  app.get<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/codex-rate-limits',
+    async (request, reply) => {
+      const scopeValue = workspaceScope(request.headers)
+      if (!scopeValue || scopeValue.workspaceId !== request.params.workspaceId)
+        return reply.code(400).send({
+          code: 'MISSING_SCOPE',
+          message: 'x-tenant-id and x-workspace-id headers are required',
+        })
+      return codexAccountLimitsResponseSchema.parse(
+        await orchestrator.getCodexAccountLimits(scopeValue),
+      )
     },
   )
 

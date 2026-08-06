@@ -35,7 +35,9 @@ pnpm deploy:remote                 # local HEAD
 pnpm deploy:remote -- <git-ref>   # explicit pushed ref
 ```
 
-The wrapper fails closed and performs these steps:
+The wrapper submits the pushed commit and returns after the remote worker has
+been started. The worker is detached from the SSH session, so the invoking
+terminal does not need to remain open. It fails closed and performs these steps:
 
 1. Resolve the requested ref to a commit already reachable from `origin`.
 2. Connect to the configured remote over OpenSSH, or `tailscale ssh` when
@@ -46,16 +48,45 @@ The wrapper fails closed and performs these steps:
 4. Create an independent, clean, detached checkout at
    `<remote-root>/releases/<commit>`. A failed checkout is retained as
    `.failed-*`; an old release is never deleted by this flow.
-5. Run `self-hosted.sh upgrade`. Its mandatory pre-upgrade encrypted backup
+5. Atomically write the desired commit to
+   `<state-home>/state/pending-remote-deploy.env`. A newer submission replaces
+   the pending target; it does not start a competing upgrade.
+6. Observe durable run and event activity directly from PostgreSQL without
+   storing or printing user content.
+7. Wait until both conditions are true:
+   - no queued or executing turn remains; and
+   - the last observed activity is at least 3,600 seconds old.
+
+   If the installation is already idle for an hour, the upgrade starts
+   immediately. Otherwise the remote machine continues polling after SSH exits.
+
+8. Run `self-hosted.sh upgrade`. Its mandatory pre-upgrade encrypted backup
    must create a non-empty `backup-*.tar.enc` before service replacement.
-6. Build the commit-addressed product image, apply pending PostgreSQL
-   migrations, and recreate the application services through Docker Compose.
-7. Require at least eight labeled self-hosted containers and require every one
-   to report `healthy`.
-8. Read the canonical public origin and base path from remote state and require
-   public readiness at `<origin><base-path>/readyz` to return `"ready": true`.
-9. Write the successful commit, timestamp, backup filename, and readiness URL
-   to `<state-home>/state/last-remote-deploy.env`.
+9. Build the commit-addressed product image, apply pending PostgreSQL
+   migrations, preserve the memory-only content-key broker, and recreate the
+   remaining application services through Docker Compose.
+10. Require at least nine labeled self-hosted containers and require every one
+    to report `healthy`.
+11. Read the canonical public origin and base path from remote state and require
+    public readiness at `<origin><base-path>/readyz` to return `"ready": true`.
+12. Write the successful commit, timestamp, backup filename, and readiness URL
+    to `<state-home>/state/last-remote-deploy.env`.
+
+The defaults can be changed only in ignored local configuration:
+
+```bash
+PERSISTENT_DEPLOY_IDLE_SECONDS=3600
+PERSISTENT_DEPLOY_POLL_SECONDS=60
+```
+
+Both values are validated before any SSH action. The idle window accepts
+60 seconds through 7 days; polling accepts 5 seconds through 1 hour.
+
+Worker state and diagnostics stay outside release checkouts:
+
+- pending target: `<state-home>/state/pending-remote-deploy.env`
+- worker PID/lock: `<state-home>/state/remote-deploy-worker.{pid,lock}`
+- worker log: `<state-home>/state/remote-deploy-worker.log`
 
 The wrapper never copies env files or secrets into the release checkout and
 never prints their values.
@@ -97,3 +128,7 @@ for inspection or fix forward with a new commit. Rollback and restore use the
 canonical `self-hosted.sh` commands from the currently deployed release and are
 consequential operator actions; the remote wrapper never performs them
 automatically.
+
+If a worker is interrupted by a host reboot, the pending state remains intact.
+Re-running `pnpm deploy:remote -- <same-or-newer-ref>` safely restarts the worker;
+the exact detached release is reused after validation.

@@ -8,6 +8,7 @@ import {
   approvalSchema,
   artifactDownloadTokenSchema,
   conversationAttachmentSchema,
+  conversationAttachmentMaxBytes,
   conversationFolderListResponseSchema,
   conversationFolderSchema,
   sessionResponseSchema,
@@ -17,22 +18,25 @@ import {
   sessionListResponseSchema,
   gitSnapshotListResponseSchema,
   gitSnapshotSchema,
+  jitLeaseIssueResponseSchema,
   auditListResponseSchema,
   providerCatalogListResponseSchema,
   conversationUsageCostSchema,
+  codexAccountLimitsResponseSchema,
   billingOverviewSchema,
   billingFinancialOverviewSchema,
   meResponseSchema,
-  createSupportGrantRequestSchema,
-  supportGrantListResponseSchema,
-  supportGrantSchema,
-  securityAuditListResponseSchema,
   acceptFolderInvitationResponseSchema,
   createFolderInvitationResponseSchema,
   folderListResponseSchema,
   folderMemberListResponseSchema,
   folderMembershipSchema,
   sharedFolderSchema,
+  selfHostedSupportProfileSchema,
+  supportGrantListResponseSchema,
+  supportGrantSchema,
+  securityAuditListResponseSchema,
+  protectedContentResponseSchema,
   apiErrorResponseSchema,
   type SessionResponse,
   type Approval,
@@ -46,15 +50,16 @@ import {
   type DurableRun,
   type ProviderCatalogListResponse,
   type ConversationUsageCost,
+  type CodexAccountLimitsResponse,
   type UsageCostSummary,
   type BillingOverview,
   type BillingFinancialOverview,
   type MeResponse,
-  type SupportGrant,
-  type SupportAccessAction,
-  type SecurityAuditRecord,
   type FolderMembership,
   type SharedFolder,
+  type SelfHostedSupportProfile,
+  type SupportGrant,
+  type SecurityAuditRecord,
   type ApiErrorResponse,
 } from '@perseverance/control-plane-contracts'
 import type { TimelineEvent } from '@perseverance/domain-events'
@@ -83,7 +88,13 @@ import {
   offlineHistoryKey,
   tenantCacheNamespace,
 } from './tenant-cache'
-import { LanguageSwitcher, localize, useTranslations } from './i18n'
+import {
+  LanguageSwitcher,
+  localize,
+  type Locale,
+  useLocale,
+  useTranslations,
+} from './i18n'
 
 export const conversationTitleRefreshDelaysMs = [1_000, 3_000, 10_000, 30_000]
 
@@ -149,14 +160,21 @@ const locationScope =
   typeof window === 'undefined'
     ? undefined
     : new URLSearchParams(window.location.search)
+const supportScopeRequested = locationScope?.get('support') === '1'
 // son kullanıcı akışında scope ve token login yanıtından (storage)
 // gelir; query param ve sessionStorage enjeksiyonu operatör/acil ve yerel
 // geliştirme yolları olarak kalır.
 const storedAuth = readStoredAuth()
 const tenantId =
-  storedAuth?.tenantId ?? locationScope?.get('organization') ?? 'ten_local'
+  (supportScopeRequested ? locationScope?.get('organization') : null) ??
+  storedAuth?.tenantId ??
+  locationScope?.get('organization') ??
+  'ten_local'
 const workspaceId =
-  storedAuth?.workspaceId ?? locationScope?.get('workspace') ?? 'wsp_local'
+  (supportScopeRequested ? locationScope?.get('workspace') : null) ??
+  storedAuth?.workspaceId ??
+  locationScope?.get('workspace') ??
+  'wsp_local'
 const runtimeAuth =
   typeof window === 'undefined'
     ? undefined
@@ -195,6 +213,121 @@ export function serverOwnedRunLabel(
         'Running in the background · reconnecting',
         'Arka planda çalışıyor · bağlantı yeniden kuruluyor',
       )
+}
+
+export interface AcceptedTurnState {
+  sessionId: string
+  runId: string
+  turnId: string
+  afterSequence: number
+  submittedAt: string
+}
+
+export function acceptedTurnForSession(
+  acceptedTurn: AcceptedTurnState | undefined,
+  sessionId: string,
+) {
+  return acceptedTurn?.sessionId === sessionId ? acceptedTurn : undefined
+}
+
+const acceptedTurnNavigationHandoffs = new Map<string, AcceptedTurnState>()
+
+export function stageAcceptedTurnNavigationHandoff(
+  acceptedTurn: AcceptedTurnState,
+) {
+  acceptedTurnNavigationHandoffs.set(acceptedTurn.sessionId, acceptedTurn)
+}
+
+export function acceptedTurnNavigationHandoff(sessionId?: string) {
+  return sessionId ? acceptedTurnNavigationHandoffs.get(sessionId) : undefined
+}
+
+export function clearAcceptedTurnNavigationHandoff(
+  acceptedTurn: Pick<AcceptedTurnState, 'sessionId' | 'turnId'>,
+) {
+  if (
+    acceptedTurnNavigationHandoffs.get(acceptedTurn.sessionId)?.turnId ===
+    acceptedTurn.turnId
+  )
+    acceptedTurnNavigationHandoffs.delete(acceptedTurn.sessionId)
+}
+
+export function resolveTurnActivity(
+  events: TimelineEvent[],
+  activeRun?:
+    | (Pick<DurableRun, 'status' | 'turnId'> &
+        Partial<Pick<DurableRun, 'queuedAt'>>)
+    | null,
+  acceptedTurn?: {
+    runId: string
+    turnId: string
+    afterSequence: number
+    submittedAt: string
+  },
+) {
+  let timelineActive = false
+  let timelineTurnId: string | undefined
+  const unscopedTerminals: TimelineEvent[] = []
+  const terminalTurnIds = new Set<string>()
+
+  for (const event of [...events].sort(
+    (left, right) => left.sequence - right.sequence,
+  )) {
+    if (event.type === 'turn.started') {
+      timelineActive = true
+      timelineTurnId = event.codexTurnId ?? undefined
+    }
+    if (event.type === 'turn.completed') {
+      const completedTurnId = event.codexTurnId ?? timelineTurnId
+      if (completedTurnId) terminalTurnIds.add(completedTurnId)
+      else unscopedTerminals.push(event)
+      if (
+        !event.codexTurnId ||
+        !timelineTurnId ||
+        timelineTurnId === event.codexTurnId
+      ) {
+        timelineActive = false
+        timelineTurnId = undefined
+      }
+    }
+  }
+
+  const snapshotIsActive =
+    activeRun?.status === 'queued' ||
+    activeRun?.status === 'running' ||
+    activeRun?.status === 'interrupting'
+  const snapshotIsTerminal = Boolean(
+    (activeRun?.turnId && terminalTurnIds.has(activeRun.turnId)) ||
+    (activeRun?.queuedAt &&
+      unscopedTerminals.some(
+        (event) => event.occurredAt >= activeRun.queuedAt!,
+      )),
+  )
+  const acceptedIsTerminal = Boolean(
+    acceptedTurn &&
+    (terminalTurnIds.has(acceptedTurn.turnId) ||
+      unscopedTerminals.some(
+        (event) =>
+          event.sequence > acceptedTurn.afterSequence &&
+          event.occurredAt >= acceptedTurn.submittedAt,
+      )),
+  )
+
+  const activeTurnId = timelineActive
+    ? timelineTurnId
+    : snapshotIsActive && !snapshotIsTerminal
+      ? (activeRun?.turnId ?? undefined)
+      : acceptedTurn && !acceptedIsTerminal
+        ? acceptedTurn.turnId
+        : undefined
+
+  return {
+    activeTurnId,
+    turnActive:
+      timelineActive ||
+      Boolean(snapshotIsActive && !snapshotIsTerminal) ||
+      Boolean(acceptedTurn && !acceptedIsTerminal),
+  }
 }
 
 export function attachmentMediaType(file: Pick<File, 'name' | 'type'>) {
@@ -450,6 +583,51 @@ async function readMe(): Promise<MeResponse> {
   return meResponseSchema.parse(await response.json())
 }
 
+async function readSupportProfile(): Promise<SelfHostedSupportProfile> {
+  const response = await fetch(`${apiBaseUrl}/v1/support-profile`, {
+    headers: scopeHeaders,
+  })
+  if (!response.ok) throw await apiError(response)
+  return selfHostedSupportProfileSchema.parse(await response.json())
+}
+
+async function readSupportGrants(sessionId: string): Promise<SupportGrant[]> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-grants`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return supportGrantListResponseSchema.parse(await response.json()).grants
+}
+
+async function readSupportAudit(
+  sessionId: string,
+): Promise<{ records: SecurityAuditRecord[]; chainValid: boolean }> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-audit`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return securityAuditListResponseSchema.parse(await response.json())
+}
+
+async function supportJsonRequest(
+  path: string,
+  body: unknown,
+  idempotent = false,
+) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      ...scopeHeaders,
+      ...(idempotent ? { 'idempotency-key': crypto.randomUUID() } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw await apiError(response)
+  return response.json() as Promise<unknown>
+}
+
 async function readReadiness(retry = false): Promise<ReadinessResponse> {
   const response = await fetch(`${apiBaseUrl}/readyz`, {
     headers: {
@@ -516,6 +694,50 @@ async function readUsage(sessionId: string): Promise<ConversationUsageCost> {
   )
   if (!response.ok) throw await apiError(response)
   return conversationUsageCostSchema.parse(await response.json())
+}
+
+async function readCodexAccountLimits(): Promise<CodexAccountLimitsResponse> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/codex-rate-limits`,
+    { headers: scopeHeaders },
+  )
+  if (!response.ok) throw await apiError(response)
+  return codexAccountLimitsResponseSchema.parse(await response.json())
+}
+
+export function formatCodexWindowLabel(
+  durationMins: number | null,
+  index: number,
+  locale: Locale,
+) {
+  if (durationMins !== null && durationMins >= 6 * 24 * 60)
+    return locale === 'tr' ? 'Haftalık' : 'Weekly'
+  if (durationMins !== null && durationMins >= 24 * 60) {
+    const days = Math.round(durationMins / (24 * 60))
+    return locale === 'tr' ? `${days} günlük` : `${days} day`
+  }
+  if (durationMins !== null && durationMins >= 60) {
+    const hours = Math.round(durationMins / 60)
+    return locale === 'tr' ? `${hours} saatlik` : `${hours} hour`
+  }
+  if (locale === 'tr') return index === 0 ? 'Mevcut dönem' : 'Uzun dönem'
+  return index === 0 ? 'Current window' : 'Long-term window'
+}
+
+export function formatCodexRemainingPercent(
+  usedPercent: number,
+  locale: Locale,
+) {
+  const remaining = Math.max(0, 100 - Math.round(usedPercent))
+  return locale === 'tr' ? `%${remaining}` : `${remaining}%`
+}
+
+export function formatCodexResetDate(resetsAt: number | null, locale: Locale) {
+  if (!resetsAt) return '—'
+  return new Intl.DateTimeFormat(locale === 'tr' ? 'tr-TR' : 'en-US', {
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(resetsAt * 1_000))
 }
 
 async function readBilling(sessionId: string): Promise<BillingOverview> {
@@ -814,317 +1036,6 @@ async function readAudit(sessionId: string, cursor: string | null) {
   return auditListResponseSchema.parse(await response.json())
 }
 
-async function readSupportGrants(sessionId: string) {
-  const response = await fetch(
-    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-grants`,
-    { headers: scopeHeaders },
-  )
-  if (!response.ok) throw await apiError(response)
-  return supportGrantListResponseSchema.parse(await response.json()).grants
-}
-async function readSupportAudit(sessionId: string) {
-  const response = await fetch(
-    `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-audit`,
-    { headers: scopeHeaders },
-  )
-  if (!response.ok) throw await apiError(response)
-  return securityAuditListResponseSchema.parse(await response.json())
-}
-
-export function supportGrantStatusLabel(status: SupportGrant['status']) {
-  return {
-    pending_verification: localize(
-      'Awaiting MFA verification',
-      'MFA doğrulaması bekliyor',
-    ),
-    pending_approval: localize(
-      'Awaiting authorized approval',
-      'Yetkili onayı bekliyor',
-    ),
-    active: localize('Active', 'Aktif'),
-    revoked: localize('Revoked early', 'Erken iptal edildi'),
-    expired: localize('Expired', 'Süresi doldu'),
-    denied: localize('Denied', 'Reddedildi'),
-  }[status]
-}
-
-function SupportAccessPanel({
-  sessionId,
-  grants,
-  pending,
-  audit,
-  auditChainValid,
-  onChanged,
-  onClose,
-}: {
-  sessionId: string
-  grants: SupportGrant[]
-  pending: boolean
-  audit: SecurityAuditRecord[]
-  auditChainValid: boolean
-  onChanged(): void
-  onClose(): void
-}) {
-  const t = useTranslations()
-  const [reason, setReason] = useState('')
-  const [supportPrincipalId, setSupportPrincipalId] = useState('')
-  const [durationMinutes, setDurationMinutes] = useState(15)
-  const [actions, setActions] = useState<SupportAccessAction[]>([
-    'content.view',
-  ])
-  const [submitting, setSubmitting] = useState(false)
-  const [panelError, setPanelError] = useState<string>()
-
-  function toggleAction(action: SupportAccessAction) {
-    setActions((current) =>
-      current.includes(action)
-        ? current.filter((value) => value !== action)
-        : [...current, action],
-    )
-  }
-
-  async function createGrant(event: React.FormEvent) {
-    event.preventDefault()
-    setSubmitting(true)
-    setPanelError(undefined)
-    try {
-      const body = createSupportGrantRequestSchema.parse({
-        sessionId,
-        actions,
-        reason,
-        supportPrincipalId,
-        durationMinutes,
-      })
-      const response = await fetch(
-        `${apiBaseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/support-grants`,
-        {
-          method: 'POST',
-          headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
-          body: JSON.stringify(body),
-        },
-      )
-      if (!response.ok) throw await apiError(response)
-      supportGrantSchema.parse(await response.json())
-      setReason('')
-      onChanged()
-    } catch (cause) {
-      setPanelError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  async function revoke(grant: SupportGrant) {
-    setSubmitting(true)
-    setPanelError(undefined)
-    try {
-      const response = await fetch(
-        `${apiBaseUrl}/v1/support-grants/${encodeURIComponent(grant.grantId)}/revoke`,
-        {
-          method: 'POST',
-          headers: { ...scopeHeaders, 'idempotency-key': crypto.randomUUID() },
-          body: JSON.stringify({ expectedVersion: grant.version }),
-        },
-      )
-      if (!response.ok) throw await apiError(response)
-      supportGrantSchema.parse(await response.json())
-      onChanged()
-    } catch (cause) {
-      setPanelError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <aside
-      className="workspace-drawer support-access-panel"
-      aria-labelledby="support-access-title"
-    >
-      <div className="support-access-heading">
-        <div>
-          <p className="section-label">
-            {t('User-controlled access', 'Kullanıcı kontrollü erişim')}
-          </p>
-          <h2 id="support-access-title">
-            {t('Support access', 'Support erişimi')}
-          </h2>
-        </div>
-        <button
-          type="button"
-          className="drawer-close"
-          aria-label={t(
-            'Close support access panel',
-            'Support erişimi panelini kapat',
-          )}
-          onClick={onClose}
-        >
-          ×
-        </button>
-      </div>
-      <p className="support-access-note">
-        {t(
-          'Only this conversation and the actions you select are shared. Access to the whole account is never granted.',
-          'Yalnız bu sohbet ve seçtiğiniz eylemler paylaşılır. Tüm hesaba erişim verilmez.',
-        )}
-      </p>
-      {panelError ? (
-        <p className="form-error" role="alert">
-          {panelError}
-        </p>
-      ) : null}
-      <form
-        className="support-access-form"
-        onSubmit={(event) => void createGrant(event)}
-      >
-        <p>
-          <strong>{t('Shared object', 'Paylaşılan nesne')}:</strong> session{' '}
-          <code>{sessionId}</code>
-        </p>
-        <fieldset>
-          <legend>{t('Allowed actions', 'İzin verilen eylemler')}</legend>
-          {(
-            [
-              [
-                'content.view',
-                t('View prompts and output', 'Prompt ve output görüntüleme'),
-              ],
-              [
-                'artifact.download',
-                t(
-                  'Download artifacts (dual approval)',
-                  'Artifact indirme (çift onay)',
-                ),
-              ],
-              [
-                'attachment.download',
-                t(
-                  'Download attachments (dual approval)',
-                  'Attachment indirme (çift onay)',
-                ),
-              ],
-              [
-                'content.decrypt',
-                t(
-                  'Decrypt content (KMS role + dual approval)',
-                  'İçerik decrypt (KMS rolü + çift onay)',
-                ),
-              ],
-            ] as const
-          ).map(([action, label]) => (
-            <label key={action}>
-              <input
-                type="checkbox"
-                checked={actions.includes(action)}
-                onChange={() => toggleAction(action)}
-              />
-              <span>{label}</span>
-            </label>
-          ))}
-        </fieldset>
-        <label>
-          <span>Atanan support principal</span>
-          <input
-            value={supportPrincipalId}
-            required
-            maxLength={160}
-            onChange={(event) => setSupportPrincipalId(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>{t('User justification', 'Kullanıcı gerekçesi')}</span>
-          <textarea
-            value={reason}
-            required
-            minLength={8}
-            maxLength={500}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>{t('Duration', 'Süre')}</span>
-          <select
-            value={durationMinutes}
-            onChange={(event) => setDurationMinutes(Number(event.target.value))}
-          >
-            <option value={5}>5 dakika</option>
-            <option value={15}>15 dakika</option>
-            <option value={30}>30 dakika</option>
-            <option value={60}>60 dakika</option>
-          </select>
-        </label>
-        <button
-          type="submit"
-          disabled={
-            submitting ||
-            actions.length === 0 ||
-            reason.trim().length < 8 ||
-            !supportPrincipalId.trim()
-          }
-        >
-          {submitting
-            ? t('Creating…', 'Oluşturuluyor…')
-            : t('Create scoped grant', 'Dar kapsamlı grant oluştur')}
-        </button>
-      </form>
-      {pending ? <p>{t('Loading grants…', 'Grant’ler yükleniyor…')}</p> : null}
-      <ul className="support-grant-list">
-        {grants.map((grant) => (
-          <li key={grant.grantId} data-status={grant.status}>
-            <div>
-              <strong>{supportGrantStatusLabel(grant.status)}</strong>
-              <span>{grant.actions.join(' · ')}</span>
-              <small>
-                {t('Expires', 'Son kullanım')}:{' '}
-                {new Date(grant.expiresAt).toLocaleString(
-                  localize('en-US', 'tr-TR'),
-                )}
-              </small>
-            </div>
-            {['pending_verification', 'pending_approval', 'active'].includes(
-              grant.status,
-            ) ? (
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => void revoke(grant)}
-              >
-                Erken iptal et
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      {audit.length ? (
-        <details className="support-audit-list">
-          <summary>
-            Immutable support audit · {audit.length} {t('records', 'kayıt')} ·{' '}
-            {auditChainValid
-              ? t('chain verified', 'zincir doğrulandı')
-              : t('chain error', 'zincir hatası')}
-          </summary>
-          <ol>
-            {audit
-              .slice()
-              .reverse()
-              .map((record) => (
-                <li key={record.sequence}>
-                  <strong>{record.action}</strong>
-                  <span>{record.outcome}</span>
-                  <time dateTime={record.occurredAt}>
-                    {new Date(record.occurredAt).toLocaleString(
-                      localize('en-US', 'tr-TR'),
-                    )}
-                  </time>
-                </li>
-              ))}
-          </ol>
-        </details>
-      ) : null}
-    </aside>
-  )
-}
-
 function AuditPanel({
   records,
   pending,
@@ -1372,9 +1283,20 @@ export function coalesceTimelineEvents(
   incoming: TimelineEvent[],
 ) {
   const next = new Map(current)
-  const sequences = new Set([...current.values()].map((e) => e.sequence))
+  const startedTurnIds = new Set(
+    [...current.values()]
+      .filter((event) => event.type === 'turn.started' && event.codexTurnId)
+      .map((event) => event.codexTurnId!),
+  )
   for (const event of incoming) {
-    if (next.has(event.eventId) || sequences.has(event.sequence)) continue
+    // Production may fan one durable sequence out into a user-message event
+    // and its lifecycle event. eventId is the normalized identity; sequence
+    // remains the replay cursor and is intentionally shared by that pair.
+    if (next.has(event.eventId)) continue
+    if (event.type === 'turn.started' && event.codexTurnId) {
+      if (startedTurnIds.has(event.codexTurnId)) continue
+      startedTurnIds.add(event.codexTurnId)
+    }
     const item = itemKey(event)
     if (
       item &&
@@ -1412,7 +1334,6 @@ export function coalesceTimelineEvents(
         })
       } else next.set(event.eventId, event)
     } else next.set(event.eventId, event)
-    sequences.add(event.sequence)
   }
   while (next.size > MAX_TIMELINE_EVENTS) {
     const oldest = next.keys().next().value as string | undefined
@@ -1611,8 +1532,19 @@ function isHousekeepingCard(card: TimelineCard): boolean {
 
 export function conversationFeed(
   events: TimelineEvent[],
-  optimisticTurnId?: string,
+  optimisticTurn?:
+    string | { turnId: string; afterSequence: number; submittedAt: string },
 ): ConversationFeedItem[] {
+  const optimisticTurnId =
+    typeof optimisticTurn === 'string' ? optimisticTurn : optimisticTurn?.turnId
+  const optimisticAfterSequence =
+    typeof optimisticTurn === 'string'
+      ? Number.NEGATIVE_INFINITY
+      : (optimisticTurn?.afterSequence ?? Number.NEGATIVE_INFINITY)
+  const optimisticSubmittedAt =
+    typeof optimisticTurn === 'string'
+      ? ''
+      : (optimisticTurn?.submittedAt ?? '')
   const messages = conversationMessages(events)
   const cards = reconcile(events).filter((card) => !isMessageCard(card))
   const assistantMessages = messages.filter(
@@ -1638,7 +1570,10 @@ export function conversationFeed(
     !events.some(
       (event) =>
         event.type === 'turn.completed' &&
-        event.codexTurnId === optimisticTurnId,
+        (event.codexTurnId === optimisticTurnId ||
+          (!event.codexTurnId &&
+            event.sequence > optimisticAfterSequence &&
+            event.occurredAt >= optimisticSubmittedAt)),
     )
   ) {
     turnIsActive = true
@@ -1728,6 +1663,7 @@ export function turnSubmitBlocked(input: {
   session: Pick<SessionResponse, 'status' | 'provider'> | undefined
   prompt: string
   attachmentCount: number
+  attachmentPending: boolean
   turnPending: boolean
   turnActive: boolean
   online: boolean
@@ -1738,6 +1674,7 @@ export function turnSubmitBlocked(input: {
   return (
     (input.session !== undefined && input.session.status !== 'active') ||
     (!input.prompt.trim() && input.attachmentCount === 0) ||
+    input.attachmentPending ||
     input.turnPending ||
     input.turnActive ||
     !input.online ||
@@ -3083,8 +3020,373 @@ export function conversationFolderDisplayName({
   )
 }
 
+function SupportPanel({
+  sessionId,
+  isSupportOperator,
+  onClose,
+}: {
+  sessionId: string | undefined
+  isSupportOperator: boolean
+  onClose(): void
+}) {
+  const t = useTranslations()
+  const [reason, setReason] = useState('Bu sohbetteki sorunu incelemek için')
+  const [durationMinutes, setDurationMinutes] = useState(10)
+  const [password, setPassword] = useState('')
+  const [pending, setPending] = useState<string>()
+  const [error, setError] = useState<string>()
+  const [supportContent, setSupportContent] = useState<unknown[]>()
+  const profile = useQuery({
+    queryKey: ['support-profile', cacheNamespace],
+    queryFn: readSupportProfile,
+    enabled: Boolean(sessionId),
+  })
+  const grants = useQuery({
+    queryKey: ['support-grants', cacheNamespace, sessionId],
+    queryFn: () => readSupportGrants(sessionId!),
+    enabled: Boolean(sessionId),
+  })
+  const audit = useQuery({
+    queryKey: ['support-audit', cacheNamespace, sessionId],
+    queryFn: () => readSupportAudit(sessionId!),
+    enabled: Boolean(sessionId),
+  })
+  const refresh = async () => {
+    await Promise.all([grants.refetch(), audit.refetch()])
+  }
+  const perform = async (key: string, action: () => Promise<void>) => {
+    setPending(key)
+    setError(undefined)
+    try {
+      await action()
+      await refresh()
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : t('Support request failed', 'Destek işlemi başarısız oldu'),
+      )
+    } finally {
+      setPending(undefined)
+    }
+  }
+  const activeGrants = (grants.data ?? []).filter(
+    (grant) => !['revoked', 'expired', 'denied'].includes(grant.status),
+  )
+
+  return (
+    <div className="modal-layer" role="presentation">
+      <button
+        className="modal-backdrop"
+        type="button"
+        aria-label={t('Close support', 'Destek bölümünü kapat')}
+        onClick={onClose}
+      />
+      <section
+        className="provider-sheet support-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="support-title"
+      >
+        <header>
+          <div>
+            <p className="section-label">
+              {t('User-controlled access', 'Kullanıcı kontrollü erişim')}
+            </p>
+            <h2 id="support-title">
+              {t('Conversation support', 'Sohbet desteği')}
+            </h2>
+          </div>
+          <button
+            type="button"
+            aria-label={t('Close support', 'Destek bölümünü kapat')}
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </header>
+        <p className="support-sheet-intro">
+          {t(
+            'Access is limited to this conversation, expires automatically, and is recorded in the immutable security audit.',
+            'Erişim yalnızca bu sohbetle sınırlıdır, otomatik sona erer ve değiştirilemez güvenlik kaydına işlenir.',
+          )}
+        </p>
+        {!sessionId ? (
+          <p className="support-notice">
+            {t(
+              'Open a conversation before granting access.',
+              'Erişim vermek için önce bir sohbet açın.',
+            )}
+          </p>
+        ) : profile.isLoading || grants.isLoading ? (
+          <p className="support-notice">{t('Loading…', 'Yükleniyor…')}</p>
+        ) : profile.data?.available !== true ? (
+          <p className="support-notice is-error">
+            {t(
+              'The support administrator is not configured.',
+              'Destek yöneticisi yapılandırılmamış.',
+            )}
+          </p>
+        ) : isSupportOperator ? (
+          <div className="support-access-stack">
+            <p className="support-notice">
+              {t(
+                'You are in the restricted administrator view. Regular conversation routes remain unavailable.',
+                'Kısıtlı yönetici görünümündesiniz. Normal sohbet yolları erişime kapalı kalır.',
+              )}
+            </p>
+            {activeGrants.length === 0 ? (
+              <p className="support-notice">
+                {t('No pending access request.', 'Bekleyen erişim talebi yok.')}
+              </p>
+            ) : (
+              activeGrants.map((grant) => (
+                <article className="support-grant-card" key={grant.grantId}>
+                  <strong>{grant.reason}</strong>
+                  <span>
+                    {grant.status} ·{' '}
+                    {new Date(grant.expiresAt).toLocaleString()}
+                  </span>
+                  <div className="support-inline-actions">
+                    {grant.status === 'pending_approval' ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={Boolean(pending)}
+                          onClick={() =>
+                            void perform(
+                              `approve:${grant.grantId}`,
+                              async () => {
+                                await supportJsonRequest(
+                                  `/v1/support-grants/${encodeURIComponent(grant.grantId)}/decision`,
+                                  {
+                                    decision: 'approve',
+                                    expectedVersion: grant.version,
+                                    mfaEvidenceId: 'token-assurance',
+                                  },
+                                  true,
+                                )
+                              },
+                            )
+                          }
+                        >
+                          {t('Approve', 'Onayla')}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={Boolean(pending)}
+                          onClick={() =>
+                            void perform(`deny:${grant.grantId}`, async () => {
+                              await supportJsonRequest(
+                                `/v1/support-grants/${encodeURIComponent(grant.grantId)}/decision`,
+                                {
+                                  decision: 'deny',
+                                  expectedVersion: grant.version,
+                                  mfaEvidenceId: 'token-assurance',
+                                },
+                                true,
+                              )
+                            })
+                          }
+                        >
+                          {t('Deny', 'Reddet')}
+                        </button>
+                      </>
+                    ) : null}
+                    {grant.status === 'active' ? (
+                      <button
+                        type="button"
+                        disabled={Boolean(pending)}
+                        onClick={() =>
+                          void perform(`view:${grant.grantId}`, async () => {
+                            const issued = jitLeaseIssueResponseSchema.parse(
+                              await supportJsonRequest(
+                                '/v1/support-access/leases',
+                                {
+                                  schemaVersion: 1,
+                                  grantId: grant.grantId,
+                                  sessionId,
+                                  objectId: null,
+                                  action: 'content.view',
+                                },
+                                true,
+                              ),
+                            )
+                            const protectedContent =
+                              protectedContentResponseSchema.parse(
+                                await supportJsonRequest(
+                                  `/v1/support-access/leases/${encodeURIComponent(issued.lease.leaseId)}/consume`,
+                                  {
+                                    schemaVersion: 1,
+                                    token: issued.token,
+                                    sessionId,
+                                    objectId: null,
+                                    action: 'content.view',
+                                  },
+                                ),
+                              )
+                            setSupportContent(
+                              Array.isArray(protectedContent.content)
+                                ? protectedContent.content
+                                : [protectedContent.content],
+                            )
+                          })
+                        }
+                      >
+                        {t('View once', 'Bir kez görüntüle')}
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              ))
+            )}
+            {supportContent ? (
+              <pre className="support-protected-content">
+                {JSON.stringify(supportContent, null, 2)}
+              </pre>
+            ) : null}
+          </div>
+        ) : (
+          <div className="support-access-stack">
+            {activeGrants.length === 0 ? (
+              <form
+                className="support-access-form"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void perform('create', async () => {
+                    const created = supportGrantSchema.parse(
+                      await supportJsonRequest(
+                        `/v1/sessions/${encodeURIComponent(sessionId)}/support-grants`,
+                        {
+                          sessionId,
+                          actions: ['content.view'],
+                          reason,
+                          supportPrincipalId: profile.data!.supportPrincipalId!,
+                          durationMinutes,
+                        },
+                        true,
+                      ),
+                    )
+                    await supportJsonRequest(
+                      `/v1/support-grants/${encodeURIComponent(created.grantId)}/verify`,
+                      { expectedVersion: created.version, password },
+                    )
+                    setPassword('')
+                  })
+                }}
+              >
+                <label>
+                  <span>{t('Reason', 'Gerekçe')}</span>
+                  <textarea
+                    value={reason}
+                    minLength={8}
+                    maxLength={500}
+                    required
+                    onChange={(event) => setReason(event.currentTarget.value)}
+                  />
+                </label>
+                <label>
+                  <span>{t('Duration', 'Süre')}</span>
+                  <select
+                    value={durationMinutes}
+                    onChange={(event) =>
+                      setDurationMinutes(Number(event.currentTarget.value))
+                    }
+                  >
+                    {[5, 10, 15, 30, 60].map((minutes) => (
+                      <option key={minutes} value={minutes}>
+                        {minutes} {t('minutes', 'dakika')}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>{t('Your password', 'Parolanız')}</span>
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    minLength={8}
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.currentTarget.value)}
+                  />
+                </label>
+                <button type="submit" disabled={Boolean(pending)}>
+                  {pending === 'create'
+                    ? t('Verifying…', 'Doğrulanıyor…')
+                    : t('Grant access', 'Erişim ver')}
+                </button>
+              </form>
+            ) : (
+              activeGrants.map((grant) => (
+                <article className="support-grant-card" key={grant.grantId}>
+                  <strong>{grant.reason}</strong>
+                  <span>
+                    {grant.status} ·{' '}
+                    {new Date(grant.expiresAt).toLocaleString()}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={Boolean(pending)}
+                    onClick={() =>
+                      void perform(`revoke:${grant.grantId}`, async () => {
+                        await supportJsonRequest(
+                          `/v1/support-grants/${encodeURIComponent(grant.grantId)}/revoke`,
+                          { expectedVersion: grant.version },
+                          true,
+                        )
+                      })
+                    }
+                  >
+                    {t('Revoke now', 'Şimdi iptal et')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const url = new URL(window.location.href)
+                      url.searchParams.set('support', '1')
+                      url.searchParams.set('organization', tenantId)
+                      url.searchParams.set('workspace', workspaceId)
+                      await navigator.clipboard.writeText(url.toString())
+                    }}
+                  >
+                    {t(
+                      'Copy administrator link',
+                      'Yönetici bağlantısını kopyala',
+                    )}
+                  </button>
+                </article>
+              ))
+            )}
+          </div>
+        )}
+        {error ? <p className="support-notice is-error">{error}</p> : null}
+        {audit.data ? (
+          <details className="support-audit">
+            <summary>
+              {t('Security audit', 'Güvenlik kaydı')} ·{' '}
+              {audit.data.chainValid
+                ? t('verified', 'doğrulandı')
+                : t('invalid', 'geçersiz')}
+            </summary>
+            <ol>
+              {audit.data.records.slice(-12).map((record) => (
+                <li key={record.sequence}>
+                  <span>{record.action}</span>
+                  <time>{new Date(record.occurredAt).toLocaleString()}</time>
+                </li>
+              ))}
+            </ol>
+          </details>
+        ) : null}
+      </section>
+    </div>
+  )
+}
+
 export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const t = useTranslations()
+  const { locale } = useLocale()
   const navigate = useNavigate()
   const online = useOnlineStatus()
   const meta = useQuery({
@@ -3176,18 +3478,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     enabled: Boolean(sessionId) && online && identity.isSuccess,
     staleTime: 30_000,
   })
-  const supportGrants = useQuery({
-    queryKey: ['support-grants', cacheNamespace, sessionId],
-    queryFn: () => readSupportGrants(sessionId!),
-    enabled: Boolean(sessionId) && online && identity.isSuccess,
-    staleTime: 10_000,
-  })
-  const supportAudit = useQuery({
-    queryKey: ['support-audit', cacheNamespace, sessionId],
-    queryFn: () => readSupportAudit(sessionId!),
-    enabled: Boolean(sessionId) && online && identity.isSuccess,
-    staleTime: 10_000,
-  })
   const [session, setSession] = useState<SessionResponse>()
   const [events, setEvents] = useState<Map<string, TimelineEvent>>(new Map())
   const [sessionPending, setSessionPending] = useState(false)
@@ -3195,10 +3485,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [turnPendingAction, setTurnPendingAction] = useState<
     'submit' | 'steer' | 'interrupt' | null
   >(null)
-  const [acceptedTurn, setAcceptedTurn] = useState<{
-    runId: string
-    turnId: string
-  }>()
+  const [acceptedTurn, setAcceptedTurn] = useState<
+    AcceptedTurnState | undefined
+  >(() => acceptedTurnNavigationHandoff(sessionId))
   const stopAfterSubmitRef = useRef(false)
   const [gitRefreshPending, setGitRefreshPending] = useState(false)
   const [gitError, setGitError] = useState<string>()
@@ -3249,8 +3538,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [activityOpen, setActivityOpen] = useState(false)
   const [providerSheetOpen, setProviderSheetOpen] = useState(false)
+  const [supportOpen, setSupportOpen] = useState(supportScopeRequested)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [supportAccessOpen, setSupportAccessOpen] = useState(false)
   const [attachmentItems, setAttachmentItems] = useState<
     ComposerAttachmentItem[]
   >([])
@@ -3470,12 +3759,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   const timelineRef = useRef<HTMLDivElement>(null)
   const chatSurfaceRef = useRef<HTMLElement>(null)
   const chatContentRef = useRef<HTMLDivElement>(null)
+  const promptInputRef = useRef<HTMLTextAreaElement>(null)
   const followChatRef = useRef(true)
   const forceChatScrollRef = useRef(false)
   const previousChatScrollTopRef = useRef<number | null>(null)
 
   function closeHistoryOverlay() {
     setHistoryOpen(false)
+  }
+
+  function focusPromptComposer() {
+    requestAnimationFrame(() => promptInputRef.current?.focus())
   }
 
   useEffect(() => {
@@ -3493,7 +3787,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       previousChatScrollTopRef.current = null
       setSession(undefined)
       setEvents(new Map())
-      setAcceptedTurn(undefined)
+      setAcceptedTurn((current) => acceptedTurnForSession(current, sessionId))
       setApprovals(new Map())
       setError(undefined)
       setRealtimeState('kapalı')
@@ -3727,12 +4021,18 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     () =>
       conversationFeed(
         [...events.values()].sort((a, b) => a.sequence - b.sequence),
-        acceptedTurn?.turnId ??
+        acceptedTurn ??
           (turnPendingAction === 'submit' || turnPendingAction === 'interrupt'
             ? 'optimistic_turn'
             : undefined),
       ),
-    [acceptedTurn?.turnId, events, turnPendingAction],
+    [
+      acceptedTurn?.afterSequence,
+      acceptedTurn?.submittedAt,
+      acceptedTurn?.turnId,
+      events,
+      turnPendingAction,
+    ],
   )
   const displayedChatFeed =
     chatFeed.length > 0 || online ? chatFeed : offlineMessages
@@ -3770,34 +4070,34 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     estimateSize: () => 150,
     overscan: 8,
   })
-  const turnActive = useMemo(() => {
-    let active = false
-    for (const event of [...events.values()].sort(
-      (left, right) => left.sequence - right.sequence,
-    )) {
-      if (event.type === 'turn.started') active = true
-      if (event.type === 'turn.completed') active = false
-    }
-    return (
-      active ||
-      acceptedTurn !== undefined ||
-      session?.activeRun?.status === 'queued' ||
-      session?.activeRun?.status === 'running' ||
-      session?.activeRun?.status === 'interrupting'
-    )
-  }, [acceptedTurn, events, session?.activeRun?.status])
+  const turnActivity = useMemo(
+    () =>
+      resolveTurnActivity(
+        [...events.values()],
+        session?.activeRun,
+        acceptedTurn,
+      ),
+    [acceptedTurn, events, session?.activeRun],
+  )
+  const turnActive = turnActivity.turnActive
 
   useEffect(() => {
     if (!acceptedTurn) return
     const completedByEvent = [...events.values()].some(
       (event) =>
         event.type === 'turn.completed' &&
-        event.codexTurnId === acceptedTurn.turnId,
+        (event.codexTurnId === acceptedTurn.turnId ||
+          (!event.codexTurnId &&
+            event.sequence > acceptedTurn.afterSequence &&
+            event.occurredAt >= acceptedTurn.submittedAt)),
     )
     const completedBySnapshot =
       session?.latestRun?.runId === acceptedTurn.runId &&
       session.latestRun.terminalOutcome !== null
-    if (completedByEvent || completedBySnapshot) setAcceptedTurn(undefined)
+    if (completedByEvent || completedBySnapshot) {
+      clearAcceptedTurnNavigationHandoff(acceptedTurn)
+      setAcceptedTurn(undefined)
+    }
   }, [acceptedTurn, events, session?.latestRun])
   const usage = useQuery({
     queryKey: ['session-usage', cacheNamespace, sessionId],
@@ -3807,6 +4107,27 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     refetchInterval: turnActive ? 2_000 : false,
   })
   const usageDisplay = formatUsageCost(usage.data?.total)
+  const canReadCodexLimits =
+    identity.data?.memberships.some(
+      (membership) =>
+        membership.organizationId === identity.data?.activeOrganizationId &&
+        membership.status === 'active' &&
+        ['owner', 'admin', 'billing'].includes(membership.role),
+    ) ?? false
+  const codexLimits = useQuery({
+    queryKey: ['codex-account-limits', cacheNamespace, workspaceId],
+    queryFn: readCodexAccountLimits,
+    enabled: settingsOpen && online && canReadCodexLimits,
+    staleTime: 30_000,
+    refetchInterval: settingsOpen ? (turnActive ? 15_000 : 60_000) : false,
+    retry: false,
+  })
+  const codexLimitSnapshot = codexLimits.data?.rateLimits
+  const codexLimitWindows = codexLimitSnapshot
+    ? [codexLimitSnapshot.primary, codexLimitSnapshot.secondary].flatMap(
+        (window) => (window ? [window] : []),
+      )
+    : []
   const billing = useQuery({
     queryKey: ['workspace-billing', cacheNamespace, workspaceId, sessionId],
     queryFn: () => readBilling(sessionId!),
@@ -3907,6 +4228,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
   function beginConversationDraft(folderId = selectedFolderId) {
     setSelectedFolderId(folderId)
     closeHistoryOverlay()
+    focusPromptComposer()
     void recentSessions.refetch()
     if (!sessionId) return
     lastSequence.current = 0
@@ -4293,27 +4615,24 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
     }
   }
 
-  const activeTurnId = useMemo(() => {
-    let current: string | undefined
-    for (const event of [...events.values()].sort(
-      (a, b) => a.sequence - b.sequence,
-    )) {
-      if (event.type === 'turn.started')
-        current = event.codexTurnId ?? undefined
-      if (
-        event.type === 'turn.completed' &&
-        (!current || current === event.codexTurnId)
-      )
-        current = undefined
-    }
-    return (
-      current ?? session?.activeRun?.turnId ?? acceptedTurn?.turnId ?? undefined
-    )
-  }, [acceptedTurn?.turnId, events, session?.activeRun?.turnId])
+  const activeTurnId = turnActivity.activeTurnId
   const composerBusy =
     turnActive ||
     turnPendingAction === 'submit' ||
     turnPendingAction === 'interrupt'
+  const composerDisabled =
+    (session !== undefined && session.status !== 'active') ||
+    !online ||
+    turnPending ||
+    readOnly ||
+    contentKeyLocked ||
+    (!authReady && (session?.provider ?? selectedProvider) === 'codex')
+
+  useEffect(() => {
+    if (sessionId || composerDisabled) return
+    const frame = requestAnimationFrame(() => promptInputRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [composerDisabled, sessionId])
 
   async function steerOrInterrupt(action: 'steer' | 'interrupt') {
     if (!session || !activeTurnId) return
@@ -4341,8 +4660,10 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       if (!response.ok) throw await apiError(response)
       const result = turnActionResponseSchema.parse(await response.json())
       if (action === 'steer') setPrompt('')
-      if (action === 'interrupt' && result.status === 'interrupted')
+      if (action === 'interrupt' && result.status === 'interrupted') {
+        if (acceptedTurn) clearAcceptedTurnNavigationHandoff(acceptedTurn)
         setAcceptedTurn(undefined)
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -4370,6 +4691,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         session,
         prompt,
         attachmentCount: attachments.length,
+        attachmentPending,
         turnPending,
         turnActive,
         online,
@@ -4395,6 +4717,8 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         prompt: trimmed,
         attachmentIds: attachments.map((attachment) => attachment.attachmentId),
       })
+      const submittedAfterSequence = lastSequence.current
+      const submittedAt = new Date().toISOString()
       const response = await fetch(
         `${apiBaseUrl}/v1/sessions/${activeSession.sessionId}/turns`,
         {
@@ -4406,10 +4730,14 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
       )
       if (!response.ok) throw await apiError(response)
       const accepted = turnAcceptedResponseSchema.parse(await response.json())
-      setAcceptedTurn({
+      const acceptedTurnState = {
+        sessionId: activeSession.sessionId,
         runId: accepted.runId,
         turnId: accepted.codexTurnId,
-      })
+        afterSequence: submittedAfterSequence,
+        submittedAt,
+      }
+      setAcceptedTurn(acceptedTurnState)
       if (stopAfterSubmitRef.current) {
         const interrupted = await fetch(
           `${apiBaseUrl}/v1/sessions/${activeSession.sessionId}/turns/${accepted.codexTurnId}/interrupt`,
@@ -4425,11 +4753,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
         if (!interrupted.ok) throw await apiError(interrupted)
       }
       void recentSessions.refetch()
-      if (!sessionId)
+      if (!sessionId) {
+        stageAcceptedTurnNavigationHandoff(acceptedTurnState)
         await navigate({
           to: '/sessions/$sessionId',
           params: { sessionId: activeSession.sessionId },
         })
+      }
       setPrompt('')
       setAttachmentItems([])
     } catch (cause) {
@@ -4501,6 +4831,13 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 t(
                   `${file.name}: file must not be empty`,
                   `${file.name}: dosya boş olmamalı`,
+                ),
+              )
+            if (file.size > conversationAttachmentMaxBytes)
+              throw new Error(
+                t(
+                  `${file.name}: file must not exceed 64 MB`,
+                  `${file.name}: dosya 64 MB'ı aşmamalı`,
                 ),
               )
             const uploaded = await uploadConversationAttachment(
@@ -4804,23 +5141,6 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </button>
               </div>
             }
-            tools={
-              session ? (
-                <button
-                  className="history-tool-button"
-                  type="button"
-                  onClick={() => setSupportAccessOpen(true)}
-                >
-                  <span>{t('Support access', 'Support erişimi')}</span>
-                  <small>
-                    {supportGrants.data?.filter(
-                      (grant) => grant.status === 'active',
-                    ).length ?? 0}{' '}
-                    aktif
-                  </small>
-                </button>
-              ) : null
-            }
           />
           <section
             className="shared-folder-panel"
@@ -5092,7 +5412,9 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   'Choose provider and model',
                   'Provider ve model seç',
                 )}
-                onClick={() => setProviderSheetOpen(true)}
+                onClick={() => {
+                  setProviderSheetOpen(true)
+                }}
               >
                 <span className="provider-chip-status" aria-hidden="true" />
                 <span className="provider-chip-provider">
@@ -5136,6 +5458,19 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 onClick={() => setActivityOpen((open) => !open)}
               >
                 {t('Activity', 'Faaliyet')}
+              </button>
+              <button
+                className="support-icon-button"
+                type="button"
+                aria-label={t('Open support', 'Destek bölümünü aç')}
+                title={t('Support', 'Destek')}
+                onClick={() => setSupportOpen(true)}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="m5.64 5.64 4.24 4.24m4.24 4.24 4.24 4.24m0-12.72-4.24 4.24m-4.24 4.24-4.24 4.24" />
+                </svg>
               </button>
             </nav>
             {sessionId ? (
@@ -5700,15 +6035,25 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                     &gt;_
                   </div>
                   <h3>
-                    {session
-                      ? t('Ready for the first turn', 'İlk turn için hazır')
-                      : t('Create a conversation first', 'Önce sohbet oluştur')}
+                    {acceptedTurn
+                      ? t('Turn accepted', 'Turn kabul edildi')
+                      : session
+                        ? t('Ready for the first turn', 'İlk turn için hazır')
+                        : t(
+                            'Create a conversation first',
+                            'Önce sohbet oluştur',
+                          )}
                   </h3>
                   <p>
-                    {t(
-                      'Normalized events appear here live after the durable store commit.',
-                      'Normalize event’ler durable store commit’inden sonra burada canlı görünür.',
-                    )}
+                    {acceptedTurn
+                      ? t(
+                          'Waiting for live timeline events…',
+                          'Canlı timeline event’leri bekleniyor…',
+                        )
+                      : t(
+                          'Normalized events appear here live after the durable store commit.',
+                          'Normalize event’ler durable store commit’inden sonra burada canlı görünür.',
+                        )}
                   </p>
                 </div>
               )}
@@ -5872,6 +6217,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 <span aria-hidden="true">＋</span>
               </label>
               <textarea
+                ref={promptInputRef}
                 id="prompt"
                 name="prompt"
                 value={prompt}
@@ -5886,6 +6232,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   )
                     return
                   event.preventDefault()
+                  if (attachmentPending) return
                   if (turnActive) void steerOrInterrupt('steer')
                   else void submitTurn()
                 }}
@@ -5894,15 +6241,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                   `${session?.provider ?? selectedProvider}'e görev ver…`,
                 )}
                 rows={2}
-                disabled={
-                  (session !== undefined && session.status !== 'active') ||
-                  !online ||
-                  turnPending ||
-                  readOnly ||
-                  contentKeyLocked ||
-                  (!authReady &&
-                    (session?.provider ?? selectedProvider) === 'codex')
-                }
+                disabled={composerDisabled}
               />
               <button
                 type={composerBusy ? 'button' : 'submit'}
@@ -5931,7 +6270,7 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
               {turnActive && !readOnly && online ? (
                 <button
                   type="button"
-                  disabled={!prompt.trim() || turnPending}
+                  disabled={!prompt.trim() || turnPending || attachmentPending}
                   onClick={() => void steerOrInterrupt('steer')}
                 >
                   {t('Steer', 'Yönlendir')}
@@ -5941,28 +6280,17 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
           </form>
         </section>
       </section>
-      {supportAccessOpen ? (
-        <button
-          className="drawer-backdrop"
-          type="button"
-          aria-label="Yan paneli kapat"
-          onClick={() => {
-            setSupportAccessOpen(false)
-          }}
-        />
-      ) : null}
-      {supportAccessOpen && session ? (
-        <SupportAccessPanel
-          sessionId={session.sessionId}
-          grants={supportGrants.data ?? []}
-          pending={supportGrants.isPending}
-          audit={supportAudit.data?.records ?? []}
-          auditChainValid={supportAudit.data?.chainValid ?? true}
-          onClose={() => setSupportAccessOpen(false)}
-          onChanged={() => {
-            void supportGrants.refetch()
-            void supportAudit.refetch()
-          }}
+      {supportOpen ? (
+        <SupportPanel
+          sessionId={sessionId}
+          isSupportOperator={Boolean(
+            identity.data?.memberships.some(
+              (membership) =>
+                membership.organizationId === tenantId &&
+                membership.role === 'support',
+            ),
+          )}
+          onClose={() => setSupportOpen(false)}
         />
       ) : null}
       {providerSheetOpen ? (
@@ -6127,6 +6455,105 @@ export function WorkspacePage({ sessionId }: { sessionId?: string }) {
                 </div>
               </dl>
             </section>
+            {canReadCodexLimits ? (
+              <section>
+                <p className="settings-label">
+                  {t('CODEX ACCOUNT LIMITS', 'CODEX HESAP LİMİTLERİ')}
+                </p>
+                <div className="settings-limit-panel" aria-live="polite">
+                  {!online ? (
+                    <p className="settings-limit-state">
+                      {t(
+                        'Connect to read Codex limits.',
+                        'Codex limitlerini okumak için bağlantı kurun.',
+                      )}
+                    </p>
+                  ) : codexLimits.isPending ? (
+                    <p className="settings-limit-state">
+                      {t('Reading Codex limits…', 'Codex limitleri okunuyor…')}
+                    </p>
+                  ) : codexLimits.data?.status === 'available' &&
+                    codexLimitSnapshot ? (
+                    <>
+                      <div className="settings-limit-list">
+                        {codexLimitWindows.map((window, index) => (
+                          <div className="settings-limit-row" key={index}>
+                            <strong>
+                              {formatCodexWindowLabel(
+                                window.windowDurationMins,
+                                index,
+                                locale,
+                              )}
+                            </strong>
+                            <span>
+                              {formatCodexRemainingPercent(
+                                window.usedPercent,
+                                locale,
+                              )}{' '}
+                              {t('remaining', 'kaldı')}
+                            </span>
+                            <time
+                              dateTime={
+                                window.resetsAt
+                                  ? new Date(
+                                      window.resetsAt * 1_000,
+                                    ).toISOString()
+                                  : undefined
+                              }
+                            >
+                              {t('Resets', 'Sıfırlanma')}:{' '}
+                              {formatCodexResetDate(window.resetsAt, locale)}
+                            </time>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="settings-limit-meta">
+                        <span>{codexLimitSnapshot.planType}</span>
+                        {codexLimitSnapshot.credits ? (
+                          <span>
+                            {codexLimitSnapshot.credits.unlimited
+                              ? t('Unlimited credits', 'Sınırsız kredi')
+                              : codexLimitSnapshot.credits.balance
+                                ? t(
+                                    `${codexLimitSnapshot.credits.balance} credits`,
+                                    `${codexLimitSnapshot.credits.balance} kredi`,
+                                  )
+                                : null}
+                          </span>
+                        ) : null}
+                      </div>
+                      {codexLimitSnapshot.rateLimitReachedType ? (
+                        <p className="settings-limit-alert" role="alert">
+                          {codexLimitSnapshot.rateLimitReachedType}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="settings-limit-state">
+                      <p>
+                        {codexLimits.data?.status === 'unsupported'
+                          ? t(
+                              'This Codex account uses API billing instead of ChatGPT usage limits.',
+                              'Bu Codex hesabı ChatGPT kullanım limitleri yerine API faturalandırması kullanıyor.',
+                            )
+                          : t(
+                              'Codex limits could not be read from the connected account.',
+                              'Bağlı Codex hesabının limitleri okunamadı.',
+                            )}
+                      </p>
+                      {codexLimits.data?.status !== 'unsupported' ? (
+                        <button
+                          type="button"
+                          onClick={() => void codexLimits.refetch()}
+                        >
+                          {t('Try again', 'Tekrar dene')}
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              </section>
+            ) : null}
             <section>
               <p className="settings-label">OTURUM</p>
               <dl className="settings-rows">

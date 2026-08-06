@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import {
@@ -7,10 +8,13 @@ import {
 } from '@perseverance/domain-events'
 import {
   boundedTail,
+  acceptedTurnNavigationHandoff,
+  acceptedTurnForSession,
   attachmentMediaType,
   attachmentUploadPercent,
   approvalRiskLevel,
   chatFollowStateAfterScroll,
+  clearAcceptedTurnNavigationHandoff,
   coalesceTimelineEvents,
   ComposerAttachmentList,
   ConversationHistory,
@@ -24,9 +28,13 @@ import {
   isNearScrollEnd,
   normalizeReadinessResponse,
   readStoredProviderSelection,
+  resolveTurnActivity,
   providerPickerSelection,
   providerAuthMessage,
   formatUsageCost,
+  formatCodexRemainingPercent,
+  formatCodexResetDate,
+  formatCodexWindowLabel,
   IdentityRequestError,
   identityRetryInterval,
   MessageCopyButton,
@@ -36,8 +44,8 @@ import {
   sessionScopedCursor,
   serverOwnedRunLabel,
   shouldRetryIdentityAfterRefresh,
-  supportGrantStatusLabel,
   shouldSubmitComposer,
+  stageAcceptedTurnNavigationHandoff,
   turnSubmitBlocked,
   userFacingApiError,
 } from './workspace-page'
@@ -47,6 +55,22 @@ import {
   offlineHistoryKey,
   tenantCacheNamespace,
 } from './tenant-cache'
+
+describe('localized Codex usage limits', () => {
+  const resetAt = Date.UTC(2026, 7, 8, 12) / 1_000
+
+  it('formats the compact row in Turkish when Turkish is selected', () => {
+    expect(formatCodexWindowLabel(7 * 24 * 60, 1, 'tr')).toBe('Haftalık')
+    expect(formatCodexRemainingPercent(80, 'tr')).toBe('%20')
+    expect(formatCodexResetDate(resetAt, 'tr')).toBe('8 Ağu')
+  })
+
+  it('formats the same row in English when English is selected', () => {
+    expect(formatCodexWindowLabel(7 * 24 * 60, 1, 'en')).toBe('Weekly')
+    expect(formatCodexRemainingPercent(80, 'en')).toBe('20%')
+    expect(formatCodexResetDate(resetAt, 'en')).toBe('Aug 8')
+  })
+})
 
 describe('tenant-aware client cache namespace', () => {
   it('changes for principal, organization and workspace switches', () => {
@@ -76,6 +100,76 @@ describe('tenant-aware client cache namespace', () => {
       expect(
         snapshots.get(offlineConversationKey(nextNamespace, 'ses-a')),
       ).toBeUndefined()
+  })
+})
+
+describe('turn activity reconciliation', () => {
+  const lifecycleBase = {
+    schemaVersion: 1 as const,
+    tenantId: 'ten_activity',
+    workspaceId: 'wsp_activity',
+    sessionId: 'ses_activity',
+    codexThreadId: 'thr_activity',
+    codexTurnId: 'turn_finished',
+    sequence: 1,
+    occurredAt: '2026-08-05T10:00:00.000Z',
+    receivedAt: '2026-08-05T10:00:00.000Z',
+    source: 'codex-app-server' as const,
+    sourceVersion: 'test',
+    visibility: 'user' as const,
+  }
+
+  const terminal = parseTimelineEvent({
+    ...lifecycleBase,
+    eventId: 'evt_activity_terminal',
+    sourceMethod: 'turn/completed',
+    type: 'turn.completed',
+    payload: { status: 'completed' },
+  })
+
+  it('lets a terminal event override a stale running snapshot', () => {
+    expect(
+      resolveTurnActivity(
+        [terminal],
+        { status: 'running', turnId: 'turn_finished' },
+        {
+          runId: 'run_finished',
+          turnId: 'turn_finished',
+          afterSequence: 0,
+          submittedAt: '2026-08-05T09:59:00.000Z',
+        },
+      ),
+    ).toEqual({ activeTurnId: undefined, turnActive: false })
+  })
+
+  it('keeps a different server-owned turn active', () => {
+    expect(
+      resolveTurnActivity([terminal], {
+        status: 'running',
+        turnId: 'turn_new',
+      }),
+    ).toEqual({ activeTurnId: 'turn_new', turnActive: true })
+  })
+
+  it('does not revive a finished turn when the terminal event has no id', () => {
+    expect(
+      resolveTurnActivity([{ ...terminal, codexTurnId: undefined }], {
+        status: 'interrupting',
+        turnId: 'turn_finished',
+        queuedAt: '2026-08-05T09:59:00.000Z',
+      }),
+    ).toEqual({ activeTurnId: undefined, turnActive: false })
+  })
+
+  it('does not let an old unscoped terminal close a newly accepted turn', () => {
+    expect(
+      resolveTurnActivity([{ ...terminal, codexTurnId: undefined }], null, {
+        runId: 'run_new',
+        turnId: 'turn_new',
+        afterSequence: 0,
+        submittedAt: '2026-08-05T10:01:00.000Z',
+      }),
+    ).toEqual({ activeTurnId: 'turn_new', turnActive: true })
   })
 })
 
@@ -172,12 +266,21 @@ describe('readiness response compatibility', () => {
   })
 })
 
-describe('support access presentation', () => {
-  it('distinguishes pending, active, revoked and expired states', () => {
-    expect(supportGrantStatusLabel('pending_approval')).toContain('Awaiting')
-    expect(supportGrantStatusLabel('active')).toBe('Active')
-    expect(supportGrantStatusLabel('revoked')).toContain('Revoked')
-    expect(supportGrantStatusLabel('expired')).toContain('Expired')
+describe('self-hosted public surface', () => {
+  it('exposes the scoped user-controlled support grant workflow', () => {
+    const source = readFileSync(
+      new URL('./workspace-page.tsx', import.meta.url),
+      'utf8',
+    )
+    expect(source).toContain('/support-grants')
+    expect(source).toContain('/support-access/leases')
+    expect(source).toContain('type="password"')
+    expect(source).toContain(
+      'durationMinutes, setDurationMinutes] = useState(10)',
+    )
+    expect(source).toContain('className="support-icon-button"')
+    expect(source).not.toContain('perseverance-baba/issues/new')
+    expect(source).not.toContain('mailto:')
   })
 })
 
@@ -604,6 +707,53 @@ describe('bounded browser timeline state', () => {
     if (event.type === 'command.output.delta')
       expect(new TextEncoder().encode(event.payload.text).length).toBe(65536)
   })
+  it('keeps distinct materialized events that share a replay sequence', () => {
+    const userMessage = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_user',
+      sequence: 8,
+      type: 'codex.unknown',
+      sourceMethod: 'item/completed',
+      payload: {
+        envelopeKind: 'notification',
+        method: 'item/completed',
+        params: { item: { type: 'userMessage' } },
+      },
+    })
+    const turnStarted = parseTimelineEvent({
+      ...base,
+      eventId: 'evt_started',
+      sequence: 8,
+      type: 'turn.started',
+      sourceMethod: 'turn/started',
+      payload: { status: 'running' },
+    })
+
+    expect(
+      coalesceTimelineEvents(new Map(), [userMessage, turnStarted]).size,
+    ).toBe(2)
+  })
+  it('collapses legacy scheduler retry starts for the same turn', () => {
+    const started = (eventId: string, sequence: number) =>
+      parseTimelineEvent({
+        ...base,
+        eventId,
+        sequence,
+        codexTurnId: 'run_retry',
+        type: 'turn.started',
+        sourceMethod: 'turn/started',
+        payload: { status: 'running' },
+      })
+
+    expect(
+      coalesceTimelineEvents(new Map(), [
+        started('evt_started_1', 56),
+        started('evt_started_2', 57),
+        started('evt_started_3', 58),
+        started('evt_started_4', 59),
+      ]).size,
+    ).toBe(1)
+  })
   it('keeps UTF-8 tails bounded', () =>
     expect(
       new TextEncoder().encode(boundedTail('', '🙂'.repeat(40000))).length,
@@ -684,6 +834,50 @@ describe('Codex-style timeline presentation', () => {
 })
 
 describe('conversation projection', () => {
+  it('keeps an accepted first turn while routing to its new session', () => {
+    const acceptedTurn = {
+      sessionId: 'session_new',
+      runId: 'run_new',
+      turnId: 'turn_new',
+      afterSequence: 0,
+      submittedAt: '2026-08-06T12:00:00.000Z',
+    }
+
+    expect(acceptedTurnForSession(acceptedTurn, 'session_new')).toBe(
+      acceptedTurn,
+    )
+    expect(
+      acceptedTurnForSession(acceptedTurn, 'session_other'),
+    ).toBeUndefined()
+  })
+
+  it('hands an accepted turn to the remounted session route', () => {
+    const acceptedTurn = {
+      sessionId: 'session_handoff',
+      runId: 'run_handoff',
+      turnId: 'turn_handoff',
+      afterSequence: 0,
+      submittedAt: '2026-08-06T12:00:00.000Z',
+    }
+
+    stageAcceptedTurnNavigationHandoff(acceptedTurn)
+
+    expect(acceptedTurnNavigationHandoff('session_handoff')).toBe(acceptedTurn)
+    expect(acceptedTurnNavigationHandoff('session_other')).toBeUndefined()
+    expect(
+      conversationFeed([], acceptedTurnNavigationHandoff('session_handoff')),
+    ).toEqual([
+      expect.objectContaining({
+        key: 'work:turn_handoff:pending',
+        role: 'work',
+        running: true,
+      }),
+    ])
+
+    clearAcceptedTurnNavigationHandoff(acceptedTurn)
+    expect(acceptedTurnNavigationHandoff('session_handoff')).toBeUndefined()
+  })
+
   it('shows pending work immediately for an accepted turn', () => {
     expect(conversationFeed([], 'turn_accepted')).toEqual([
       expect.objectContaining({
@@ -692,6 +886,49 @@ describe('conversation projection', () => {
         running: true,
       }),
     ])
+  })
+
+  it('closes optimistic work on a later unscoped terminal despite replayed user items', () => {
+    const terminal = parseTimelineEvent({
+      ...base,
+      codexTurnId: undefined,
+      codexItemId: undefined,
+      eventId: 'evt_unscoped_terminal',
+      sequence: 20,
+      sourceMethod: 'turn/completed',
+      type: 'turn.completed',
+      payload: { status: 'completed' },
+    })
+    const replayedUserItems = [21, 22, 23, 24].map((sequence) =>
+      parseTimelineEvent({
+        ...base,
+        codexTurnId: 'turn_finished',
+        codexItemId: `user_replay_${sequence}`,
+        eventId: `evt_user_replay_${sequence}`,
+        sequence,
+        sourceMethod: 'item/completed',
+        type: 'codex.unknown',
+        payload: {
+          envelopeKind: 'notification',
+          method: 'item/completed',
+          params: {
+            item: {
+              type: 'userMessage',
+              content: [{ type: 'text', text: 'İkinci mesaj' }],
+            },
+          },
+        },
+      }),
+    )
+
+    const feed = conversationFeed([terminal, ...replayedUserItems], {
+      turnId: 'turn_finished',
+      afterSequence: 0,
+      submittedAt: '2026-07-13T23:59:00.000Z',
+    })
+    expect(feed.some((item) => item.role === 'work' && item.running)).toBe(
+      false,
+    )
   })
 
   it('projects upstream user items and normalized assistant messages into chat', () => {
@@ -1262,6 +1499,7 @@ describe('draft conversation and lazy session provisioning', () => {
     session: undefined,
     prompt: 'merhaba',
     attachmentCount: 0,
+    attachmentPending: false,
     turnPending: false,
     turnActive: false,
     online: true,
@@ -1315,6 +1553,7 @@ describe('draft conversation and lazy session provisioning', () => {
   })
 
   it('blocks while a turn is pending, active, or the client is offline', () => {
+    expect(turnSubmitBlocked({ ...base, attachmentPending: true })).toBe(true)
     expect(turnSubmitBlocked({ ...base, turnPending: true })).toBe(true)
     expect(turnSubmitBlocked({ ...base, turnActive: true })).toBe(true)
     expect(turnSubmitBlocked({ ...base, online: false })).toBe(true)

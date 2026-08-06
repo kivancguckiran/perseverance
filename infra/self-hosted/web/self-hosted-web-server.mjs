@@ -44,6 +44,11 @@ if (
   )
   process.exit(1)
 }
+const sourceCommit = process.env.SOURCE_COMMIT ?? ''
+if (!/^[a-f0-9]{40}$/.test(sourceCommit)) {
+  process.stderr.write('SOURCE_COMMIT geçerli bir git commit SHA olmalıdır\n')
+  process.exit(1)
+}
 let pwaId
 try {
   pwaId = normalizePwaId(process.env.PWA_ID ?? '', basePath)
@@ -60,6 +65,18 @@ const imageServerBundle = '/app/web-server.mjs'
 const runtimeRoot = mkdtempSync(join(tmpdir(), 'self-hosted-web-'))
 const clientRoot = join(runtimeRoot, 'client')
 cpSync(imageClientRoot, clientRoot, { recursive: true })
+
+const serviceWorkerPath = join(clientRoot, 'sw.js')
+const releaseMarker = '__PERSISTENT_RELEASE_ID__'
+const serviceWorker = readFileSync(serviceWorkerPath, 'utf8')
+if (!serviceWorker.includes(releaseMarker)) {
+  process.stderr.write('sw.js release marker içermiyor\n')
+  process.exit(1)
+}
+writeFileSync(
+  serviceWorkerPath,
+  serviceWorker.replaceAll(releaseMarker, sourceCommit),
+)
 
 // PWA identity is durable installation state, while start_url/scope follow the
 // currently configured base path. Keeping those concerns separate allows a
@@ -152,10 +169,14 @@ const server = createServer(async (request, response) => {
       existsSync(staticPath) &&
       lstatSync(staticPath).isFile()
     ) {
-      response.writeHead(200, {
+      const headers = {
         'content-type':
           types[extname(staticPath)] ?? 'application/octet-stream',
-      })
+        ...(relative === 'sw.js'
+          ? { 'cache-control': 'no-cache, no-store, must-revalidate' }
+          : {}),
+      }
+      response.writeHead(200, headers)
       createReadStream(staticPath).pipe(response)
       return
     }

@@ -147,6 +147,20 @@ describe('production attachments', () => {
       ),
     ).toBe(true)
 
+    const largeUpload = await app.inject({
+      method: 'POST',
+      url: '/v1/sessions/ses_a/attachments',
+      headers: {
+        ...headers,
+        'content-type': 'application/octet-stream',
+        'x-attachment-name': encodeURIComponent('large-project.zip'),
+        'x-attachment-media-type': 'application/zip',
+      },
+      payload: Buffer.alloc(22 * 1024 * 1024, 1),
+    })
+    expect(largeUpload.statusCode, largeUpload.body).toBe(201)
+    expect(largeUpload.json().byteLength).toBe(22 * 1024 * 1024)
+
     const turn = await app.inject({
       method: 'POST',
       url: '/v1/sessions/ses_a/turns',
@@ -157,6 +171,7 @@ describe('production attachments', () => {
       },
     })
     expect(turn.statusCode, turn.body).toBe(202)
+    expect(enqueued?.maxAttempts).toBe(5)
     const promptObjectKey = String(enqueued?.promptObjectKey)
     const storedPrompt = objects.get(promptObjectKey)!
     const promptEnvelope = parseUserContentEnvelope(storedPrompt)

@@ -7,6 +7,14 @@ import { useTranslations } from './i18n'
 // edilir; kökte withBase no-op'tur. Sürüm fixture-v2: sw.js scope-türevli precache
 // listesine geçti.
 export const serviceWorkerUrl = withBase('/sw.js?v=self-hosted-v2')
+export const pwaUpdateCheckIntervalMs = 60_000
+
+export function shouldCheckForPwaUpdate(input: {
+  online: boolean
+  visibilityState: DocumentVisibilityState
+}): boolean {
+  return input.online && input.visibilityState === 'visible'
+}
 
 function applicationServerKey(value: string) {
   const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
@@ -185,8 +193,43 @@ export function PwaRuntime() {
   }, [])
   useEffect(() => {
     if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return
+    let active = true
+    let registration: ServiceWorkerRegistration | undefined
+    let installingWorker: ServiceWorker | undefined
+    let updateTimer: number | undefined
     const controllerChanged = () => {
       if (reloadOnControllerChange.current) window.location.reload()
+    }
+    const installingStateChanged = () => {
+      if (
+        active &&
+        installingWorker?.state === 'installed' &&
+        navigator.serviceWorker.controller
+      )
+        setWaitingWorker(installingWorker)
+    }
+    const updateFound = () => {
+      installingWorker?.removeEventListener(
+        'statechange',
+        installingStateChanged,
+      )
+      installingWorker = registration?.installing ?? undefined
+      installingWorker?.addEventListener('statechange', installingStateChanged)
+      installingStateChanged()
+    }
+    const checkForUpdate = () => {
+      if (
+        !registration ||
+        !shouldCheckForPwaUpdate({
+          online: navigator.onLine,
+          visibilityState: document.visibilityState,
+        })
+      )
+        return
+      void registration.update().catch(() => undefined)
+    }
+    const becameVisible = () => {
+      if (document.visibilityState === 'visible') checkForUpdate()
     }
     navigator.serviceWorker.addEventListener(
       'controllerchange',
@@ -194,22 +237,35 @@ export function PwaRuntime() {
     )
     void navigator.serviceWorker
       .register(serviceWorkerUrl, { scope: baseUrl, updateViaCache: 'none' })
-      .then((registration) => {
-        if (registration.waiting && navigator.serviceWorker.controller)
-          setWaitingWorker(registration.waiting)
-        registration.addEventListener('updatefound', () => {
-          const installing = registration.installing
-          installing?.addEventListener('statechange', () => {
-            if (
-              installing.state === 'installed' &&
-              navigator.serviceWorker.controller
-            )
-              setWaitingWorker(installing)
-          })
-        })
+      .then((registered) => {
+        if (!active) return
+        registration = registered
+        if (registered.waiting && navigator.serviceWorker.controller)
+          setWaitingWorker(registered.waiting)
+        registered.addEventListener('updatefound', updateFound)
+        if (registered.installing) updateFound()
+        window.addEventListener('focus', checkForUpdate)
+        window.addEventListener('online', checkForUpdate)
+        document.addEventListener('visibilitychange', becameVisible)
+        updateTimer = window.setInterval(
+          checkForUpdate,
+          pwaUpdateCheckIntervalMs,
+        )
+        checkForUpdate()
       })
+      .catch(() => undefined)
     return () => {
+      active = false
       reloadOnControllerChange.current = false
+      if (updateTimer !== undefined) window.clearInterval(updateTimer)
+      registration?.removeEventListener('updatefound', updateFound)
+      installingWorker?.removeEventListener(
+        'statechange',
+        installingStateChanged,
+      )
+      window.removeEventListener('focus', checkForUpdate)
+      window.removeEventListener('online', checkForUpdate)
+      document.removeEventListener('visibilitychange', becameVisible)
       navigator.serviceWorker.removeEventListener(
         'controllerchange',
         controllerChanged,
