@@ -12,21 +12,37 @@ import {
   apiErrorResponseSchema,
   attachmentMediaTypeSchema,
   conversationAttachmentSchema,
+  conversationAttachmentMaxBytes,
   conversationFolderListResponseSchema,
   conversationFolderSchema,
   createConversationFolderRequestSchema,
+  codexAccountLimitsResponseSchema,
+  CONTENT_KEY_BROKER_ROUTES,
+  contentKeyLeaseAuditEventSchema,
   createSessionRequestSchema,
   createSharedFolderRequestSchema,
+  createSupportGrantRequestSchema,
   createTurnRequestSchema,
   folderListResponseSchema,
   folderMembershipSchema,
   interruptTurnRequestSchema,
+  jitLeaseConsumeRequestSchema,
+  jitLeaseIssueRequestSchema,
+  jitLeaseIssueResponseSchema,
   imageAttachmentMediaTypeSchema,
   productionTurnAttachmentSchema,
   productionTurnInputEnvelopeSchema,
+  protectedContentResponseSchema,
+  securityAuditListResponseSchema,
+  selfHostedSupportProfileSchema,
   sessionResponseSchema,
   sessionListResponseSchema,
   sharedFolderSchema,
+  supportGrantDecisionRequestSchema,
+  supportGrantListResponseSchema,
+  supportGrantRevokeRequestSchema,
+  supportGrantSchema,
+  supportGrantVerificationRequestSchema,
   subscribeMessageSchema,
   updateConversationRequestSchema,
   updateSessionArchiveRequestSchema,
@@ -68,6 +84,7 @@ import {
 } from '@perseverance/production-topology/durable-dependencies'
 import { ProductionRolloutAuthority } from './production-rollout-authority'
 import {
+  constantTimeTokenEquals,
   SelfHostedAuthError,
   type SelfHostedAuthService,
 } from './self-hosted-auth'
@@ -91,6 +108,14 @@ import {
   decodeProductionTurnInput,
   productionAttachmentObjectKeys,
 } from './production-turn-input'
+import { unavailableCodexAccountLimits } from './codex-account-limits'
+import {
+  PostgresSupportAccessRepository,
+  SupportAccessError,
+  type SupportActor,
+  type SupportAccessRepository,
+} from '@perseverance/support-access'
+import { PRODUCTION_TURN_RETRY_POLICY } from './production-turn-retry'
 
 export interface ProductionControlPlaneOptions {
   instanceId: string
@@ -99,6 +124,7 @@ export interface ProductionControlPlaneOptions {
   broker: DurableEventBroker
   runtimeControlReadinessUrl: string
   kmsReadinessUrl: string
+  contentKeyBrokerReadinessUrl?: string
   requiredRegionId: string
   billing: BillingPostgresRepository
   logger?: boolean
@@ -111,6 +137,8 @@ export interface ProductionControlPlaneOptions {
   selfHostedAuth?: SelfHostedAuthService
   sharedFolders?: SharedFolderRepository
   internalRuntimeToken?: string
+  supportAccess?: SupportAccessRepository
+  supportPrincipal?: { issuer: string; subject: string; displayName: string }
 }
 
 export const DEFAULT_CONVERSATION_FOLDER_ID = 'fol_default'
@@ -149,6 +177,18 @@ function scope(headers: Record<string, string | string[] | undefined>) {
   const workspaceId = header(headers['x-workspace-id'])
   if (!tenantId || !organizationId || !workspaceId) return null
   return { tenantId, organizationId, workspaceId } satisfies ProductionScope
+}
+
+function isSupportGovernancePath(url: string) {
+  const path = url.split('?')[0] ?? url
+  return (
+    path === '/v1/me' ||
+    path === '/v1/support-profile' ||
+    /^\/v1\/sessions\/[^/]+\/support-(grants|audit)$/.test(path) ||
+    /^\/v1\/support-grants\/[^/]+\/(verify|decision|revoke)$/.test(path) ||
+    path === '/v1/support-access/leases' ||
+    /^\/v1\/support-access\/leases\/[^/]+\/consume$/.test(path)
+  )
 }
 
 export function productionRealtimeSubscription(input: unknown) {
@@ -220,6 +260,9 @@ export function productionTimelineEvent(
           typeof stored.payload.outcome === 'string'
             ? stored.payload.outcome
             : 'completed',
+        ...(typeof stored.payload.errorCode === 'string'
+          ? { errorCode: stored.payload.errorCode }
+          : {}),
       },
     })
   return timelineEventSchema.parse({
@@ -300,10 +343,31 @@ export function productionUserMessageEvent(
   })
 }
 
-function opaquePrincipalId(principal: AuthPrincipal) {
+function opaquePrincipalIdentity(issuer: string, subject: string) {
   return `sha256:${createHash('sha256')
-    .update(`${principal.issuer}\0${principal.subject}`)
+    .update(`${issuer}\0${subject}`)
     .digest('hex')}`
+}
+
+function opaquePrincipalId(principal: AuthPrincipal) {
+  return opaquePrincipalIdentity(principal.issuer, principal.subject)
+}
+
+function productionSupportActor(
+  principal: AuthPrincipal,
+  membershipRole: string | undefined,
+): SupportActor {
+  return {
+    principalId: opaquePrincipalId(principal),
+    role:
+      membershipRole === 'support' ||
+      membershipRole === 'operator' ||
+      membershipRole === 'security_approver' ||
+      membershipRole === 'kms_operator' ||
+      membershipRole === 'admin'
+        ? membershipRole
+        : 'tenant_user',
+  }
 }
 
 export function productionSessionResponse(
@@ -370,7 +434,7 @@ export async function buildProductionControlPlane(
   const app = Fastify({ logger: options.logger ?? false })
   app.addContentTypeParser(
     'application/octet-stream',
-    { parseAs: 'buffer', bodyLimit: 16 * 1024 * 1024 },
+    { parseAs: 'buffer', bodyLimit: conversationAttachmentMaxBytes },
     (_request, body, done) => done(null, body),
   )
   await app.register(websocket)
@@ -392,6 +456,7 @@ export async function buildProductionControlPlane(
     }
   >()
   const requestPrincipals = new WeakMap<object, AuthPrincipal>()
+  const requestMemberships = new WeakMap<object, { role: string }>()
   const rolloutAuthority = new ProductionRolloutAuthority(
     options.repository.pool,
   )
@@ -446,7 +511,7 @@ export async function buildProductionControlPlane(
       !(await options.selfHostedAuth.isUserWorkspace(requestScope.workspaceId))
     )
       return null
-    const lease = options.selfHostedAuth.leases.acquire(
+    const lease = await options.selfHostedAuth.leases.acquire(
       requestScope.workspaceId,
     )
     if (!lease) throw new Error('CONTENT_KEY_LOCKED')
@@ -544,6 +609,8 @@ export async function buildProductionControlPlane(
       request.url === '/healthz' ||
       request.url === '/readyz' ||
       request.url === '/v1/meta' ||
+      (request.url === CONTENT_KEY_BROKER_ROUTES.audit &&
+        Boolean(options.internalRuntimeToken)) ||
       request.url.startsWith('/v1/realtime') ||
       // kayıt/giriş uçları pre-auth'tur; kendi doğrulama, rate-limit
       // ve audit denetimlerini self-hosted-auth-api içinde uygular.
@@ -565,7 +632,14 @@ export async function buildProductionControlPlane(
       const membership = await authorizedMembership(principal, requestScope)
       if (!membership.rowCount)
         return reply.code(403).send({ code: 'AUTHORIZATION_DENIED' })
+      const membershipRow = membership.rows[0] as { role: string }
+      if (
+        membershipRow.role === 'support' &&
+        !isSupportGovernancePath(request.url)
+      )
+        return reply.code(403).send({ code: 'SUPPORT_ROUTE_REQUIRED' })
       requestPrincipals.set(request, principal)
+      requestMemberships.set(request, membershipRow)
     } catch (error) {
       if (error instanceof AuthenticationError)
         return reply.code(401).send({ code: error.code })
@@ -585,6 +659,16 @@ export async function buildProductionControlPlane(
             : 400
       return reply.code(status).send({ code: error.code })
     }
+    if (error instanceof SupportAccessError) {
+      const missing = error.code.endsWith('_NOT_FOUND')
+      const conflict =
+        error.code === 'VERSION_CONFLICT' || error.code === 'INVALID_STATE'
+      return reply
+        .code(missing ? 404 : conflict ? 409 : 403)
+        .send({ code: error.code })
+    }
+    if (error instanceof SelfHostedAuthError)
+      return reply.code(error.statusCode).send({ code: error.message })
     throw error
   })
   app.addHook('onResponse', async (request, reply) => {
@@ -606,23 +690,32 @@ export async function buildProductionControlPlane(
   })
 
   const dependencyReadiness = async () => {
-    const probes = await Promise.allSettled([
-      bounded(timeoutMs, () => options.repository.pool.query('SELECT 1')),
-      bounded(timeoutMs, () => options.broker.ready()),
-      bounded(timeoutMs, () => options.objectStore.ready()),
-      bounded(timeoutMs, () =>
-        httpDependencyReady(options.runtimeControlReadinessUrl),
-      ),
-      bounded(timeoutMs, () => httpDependencyReady(options.kmsReadinessUrl)),
-    ])
-    const names = [
-      'postgresql',
-      'event-broker',
-      'object-storage',
-      'runtime-control',
-      'kms',
-    ] as const
-    const dependencies = names.map((name, index) => ({
+    const checks: Array<{ name: string; run: () => Promise<unknown> }> = [
+      {
+        name: 'postgresql',
+        run: () => options.repository.pool.query('SELECT 1'),
+      },
+      { name: 'event-broker', run: () => options.broker.ready() },
+      { name: 'object-storage', run: () => options.objectStore.ready() },
+      {
+        name: 'runtime-control',
+        run: () => httpDependencyReady(options.runtimeControlReadinessUrl),
+      },
+      { name: 'kms', run: () => httpDependencyReady(options.kmsReadinessUrl) },
+      ...(options.contentKeyBrokerReadinessUrl
+        ? [
+            {
+              name: 'content-key-broker',
+              run: () =>
+                httpDependencyReady(options.contentKeyBrokerReadinessUrl!),
+            },
+          ]
+        : []),
+    ]
+    const probes = await Promise.allSettled(
+      checks.map((check) => bounded(timeoutMs, check.run)),
+    )
+    const dependencies = checks.map(({ name }, index) => ({
       name,
       ready:
         probes[index]?.status === 'fulfilled' &&
@@ -674,6 +767,43 @@ export async function buildProductionControlPlane(
     instanceId: options.instanceId,
     codexVersion: '0.144.2',
   }))
+  if (options.internalRuntimeToken) {
+    app.post(CONTENT_KEY_BROKER_ROUTES.audit, async (request, reply) => {
+      const header = request.headers.authorization
+      const token =
+        typeof header === 'string' && header.startsWith('Bearer ')
+          ? header.slice(7)
+          : ''
+      if (
+        !token ||
+        !constantTimeTokenEquals(token, options.internalRuntimeToken!)
+      )
+        return reply.code(401).send({ code: 'INTERNAL_TOKEN_INVALID' })
+      const event = contentKeyLeaseAuditEventSchema.parse(request.body)
+      const client = await options.repository.pool.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query(
+          `SELECT set_config('app.organization_id',$1,true),
+                  set_config('app.workspace_id',$2,true)`,
+          [event.scope.organizationId, event.scope.workspaceId],
+        )
+        await client.query(
+          `INSERT INTO persistent_codex.workspace_security_audit
+             (organization_id,workspace_id,action,outcome,reason_code,key_version)
+           VALUES ($1,$2,$3,'success','SELF_HOSTED_CONTENT_KEY_BROKER',NULL)`,
+          [event.scope.organizationId, event.scope.workspaceId, event.action],
+        )
+        await client.query('COMMIT')
+        return reply.code(204).send()
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        client.release()
+      }
+    })
+  }
   if (options.selfHostedAuth) {
     registerSelfHostedAuthRoutes(app, { service: options.selfHostedAuth })
     app.post('/v1/auth/unlock', async (request, reply) => {
@@ -712,7 +842,7 @@ export async function buildProductionControlPlane(
       return reply.code(200).send({
         subject: principal?.subject ?? null,
         ...requestScope,
-        contentKeyUnlocked: options.selfHostedAuth!.leases.hasActiveLease(
+        contentKeyUnlocked: await options.selfHostedAuth!.leases.hasActiveLease(
           requestScope.workspaceId,
         ),
       })
@@ -1182,6 +1312,46 @@ export async function buildProductionControlPlane(
     })
   })
 
+  app.get<{ Params: { workspaceId: string } }>(
+    '/v1/workspaces/:workspaceId/codex-rate-limits',
+    async (request, reply) => {
+      const requestScope = scope(request.headers)
+      if (
+        !requestScope ||
+        requestScope.workspaceId !== request.params.workspaceId
+      )
+        return reply.code(400).send({ code: 'MISSING_SCOPE' })
+      if (options.authentication) {
+        const principal = requestPrincipals.get(request as object)
+        if (!principal)
+          return reply.code(403).send({ code: 'AUTHORIZATION_DENIED' })
+        const membership = await authorizedMembership(principal, requestScope)
+        const role = membership.rows[0]?.role
+        if (!['owner', 'admin', 'billing'].includes(String(role)))
+          return reply.code(403).send({ code: 'AUTHORIZATION_DENIED' })
+      }
+      if (!options.internalRuntimeToken)
+        return unavailableCodexAccountLimits('unknown', 'unavailable')
+      const endpoint = new URL(
+        '/internal/v1/codex-rate-limits',
+        options.runtimeControlReadinessUrl,
+      )
+      endpoint.searchParams.set('tenantId', requestScope.tenantId)
+      endpoint.searchParams.set('organizationId', requestScope.organizationId)
+      endpoint.searchParams.set('workspaceId', requestScope.workspaceId)
+      const runtimeResponse = await fetch(endpoint, {
+        headers: {
+          authorization: `Bearer ${options.internalRuntimeToken}`,
+        },
+      }).catch(() => null)
+      if (!runtimeResponse?.ok)
+        return unavailableCodexAccountLimits('unknown', 'unavailable')
+      return codexAccountLimitsResponseSchema.parse(
+        await runtimeResponse.json(),
+      )
+    },
+  )
+
   app.get<{ Params: { sessionId: string } }>(
     '/v1/sessions/:sessionId',
     async (request, reply) => {
@@ -1557,7 +1727,7 @@ export async function buildProductionControlPlane(
             : {}),
         },
         requiredRegionId: options.requiredRegionId,
-        maxAttempts: 4,
+        maxAttempts: PRODUCTION_TURN_RETRY_POLICY.maxAttempts,
         traceId: admissionSpan.context.traceId,
         ...(approvalContext
           ? {
@@ -1787,7 +1957,7 @@ export async function buildProductionControlPlane(
     const bytes = await options.objectStore.get(objectKey)
     const envelope = parseUserContentEnvelope(bytes)
     if (!envelope) return decoder.decode(bytes)
-    const lease = options.selfHostedAuth?.leases.acquire(
+    const lease = await options.selfHostedAuth?.leases.acquire(
       requestScope.workspaceId,
     )
     if (!lease) throw new Error('CONTENT_KEY_LOCKED')
@@ -1809,6 +1979,30 @@ export async function buildProductionControlPlane(
     stored: ProductionEvent,
   ): Promise<TimelineEvent[]> => {
     if (stored.eventType === 'turn.started' && stored.runId) {
+      const attempt =
+        typeof stored.payload.attempt === 'number' ? stored.payload.attempt : 1
+      // Compatibility for runs written before scheduler retries stopped
+      // emitting turn.started: retain the durable retry event but never
+      // synthesize another copy of the original user prompt.
+      if (attempt > 1) {
+        const run = await options.repository.getRun(requestScope, stored.runId)
+        const retryEvent = productionTimelineEvent(stored)
+        if (run?.state === 'poisoned' && attempt === run.attempt)
+          return [
+            retryEvent,
+            productionTimelineEvent({
+              ...stored,
+              eventId: `${stored.eventId}_terminal`,
+              eventType: 'turn.completed',
+              payload: {
+                outcome: 'failed',
+                errorCode: 'RUN_RETRY_EXHAUSTED',
+                reconciled: true,
+              },
+            }),
+          ]
+        return [retryEvent]
+      }
       const run = await options.repository.getRun(requestScope, stored.runId)
       const prompt = run?.promptObjectKey
         ? await readRunContentText(
@@ -1859,6 +2053,316 @@ export async function buildProductionControlPlane(
     }
     return [productionTimelineEvent(stored)]
   }
+
+  const supportScope = (request: {
+    headers: Record<string, string | string[] | undefined>
+  }) => {
+    const requestScope = scope(request.headers)
+    if (!requestScope) throw new SupportAccessError('SUPPORT_SCOPE_REQUIRED')
+    return requestScope
+  }
+  const supportRepository = () => {
+    if (!options.supportAccess)
+      throw new SupportAccessError('SUPPORT_ACCESS_UNAVAILABLE')
+    return options.supportAccess
+  }
+  const supportActorFor = (request: object) => {
+    const principal = requestPrincipals.get(request)
+    if (!principal) throw new SupportAccessError('SUPPORT_AUTH_REQUIRED')
+    return {
+      principal,
+      actor: productionSupportActor(
+        principal,
+        requestMemberships.get(request)?.role,
+      ),
+    }
+  }
+  const supportTransactionScope = (requestScope: ProductionScope) => ({
+    tenantId: requestScope.tenantId,
+    organizationId: requestScope.organizationId,
+    workspaceId: requestScope.workspaceId,
+  })
+
+  app.get('/v1/support-profile', async () =>
+    selfHostedSupportProfileSchema.parse({
+      available: Boolean(options.supportAccess && options.supportPrincipal),
+      supportPrincipalId: options.supportPrincipal
+        ? opaquePrincipalIdentity(
+            options.supportPrincipal.issuer,
+            options.supportPrincipal.subject,
+          )
+        : null,
+      displayName: options.supportPrincipal?.displayName ?? null,
+    }),
+  )
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/support-grants',
+    async (request, reply) => {
+      const requestScope = supportScope(request)
+      const stored = await options.repository.getSession(
+        requestScope,
+        request.params.sessionId,
+      )
+      if (!stored) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      const grants = await supportRepository().transaction(
+        supportTransactionScope(requestScope),
+        (service) =>
+          service
+            .listGrants(requestScope)
+            .filter((grant) => grant.sessionId === request.params.sessionId),
+      )
+      return supportGrantListResponseSchema.parse({ grants })
+    },
+  )
+
+  app.get<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/support-audit',
+    async (request, reply) => {
+      const requestScope = supportScope(request)
+      const stored = await options.repository.getSession(
+        requestScope,
+        request.params.sessionId,
+      )
+      if (!stored) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      const repository = supportRepository()
+      const repositoryScope = supportTransactionScope(requestScope)
+      const records = await repository.transaction(repositoryScope, (service) =>
+        service.listAudit(requestScope).filter((record) => {
+          try {
+            return (
+              JSON.parse(record.scope).sessionId === request.params.sessionId
+            )
+          } catch {
+            return false
+          }
+        }),
+      )
+      return securityAuditListResponseSchema.parse({
+        records,
+        chainValid: await repository.verifyAuditChain(repositoryScope),
+      })
+    },
+  )
+
+  app.post<{ Params: { sessionId: string } }>(
+    '/v1/sessions/:sessionId/support-grants',
+    async (request, reply) => {
+      const requestScope = supportScope(request)
+      const stored = await options.repository.getSession(
+        requestScope,
+        request.params.sessionId,
+      )
+      if (!stored) return reply.code(404).send({ code: 'SESSION_NOT_FOUND' })
+      const configured = options.supportPrincipal
+      if (!configured)
+        throw new SupportAccessError('SUPPORT_ACCESS_UNAVAILABLE')
+      const body = createSupportGrantRequestSchema.parse(request.body)
+      const configuredPrincipalId = opaquePrincipalIdentity(
+        configured.issuer,
+        configured.subject,
+      )
+      if (
+        body.supportPrincipalId !== configuredPrincipalId ||
+        (body.sessionId !== undefined &&
+          body.sessionId !== null &&
+          body.sessionId !== request.params.sessionId) ||
+        body.artifactId != null ||
+        body.attachmentId != null ||
+        body.actions.length !== 1 ||
+        body.actions[0] !== 'content.view'
+      )
+        throw new SupportAccessError('SUPPORT_SCOPE_NOT_ALLOWED')
+      const { actor } = supportActorFor(request)
+      const grant = await supportRepository().transaction(
+        supportTransactionScope(requestScope),
+        (service) =>
+          service.createGrant({
+            ...requestScope,
+            sessionId: request.params.sessionId,
+            actions: ['content.view'],
+            reason: body.reason,
+            requester: actor,
+            supportPrincipalId: configuredPrincipalId,
+            durationMinutes: body.durationMinutes,
+            idempotencyKey:
+              header(request.headers['idempotency-key']) ?? request.id,
+            correlationId: request.id,
+          }),
+      )
+      return reply.code(201).send(supportGrantSchema.parse(grant))
+    },
+  )
+
+  app.post<{ Params: { grantId: string } }>(
+    '/v1/support-grants/:grantId/verify',
+    async (request) => {
+      const requestScope = supportScope(request)
+      if (!options.selfHostedAuth)
+        throw new SupportAccessError('SUPPORT_VERIFICATION_UNAVAILABLE')
+      const body = supportGrantVerificationRequestSchema.parse(request.body)
+      const { principal, actor } = supportActorFor(request)
+      if (actor.role !== 'tenant_user')
+        throw new SupportAccessError('REQUESTER_VERIFICATION_REQUIRED')
+      const evidence = await options.selfHostedAuth.verifySupportStepUp({
+        password: body.password,
+        expectedSubject: principal.subject,
+        expectedScope: requestScope,
+      })
+      const grant = await supportRepository().transaction(
+        supportTransactionScope(requestScope),
+        (service) =>
+          service.verifyGrantMfa({
+            grantId: request.params.grantId,
+            actor,
+            mfaEvidenceId: evidence.evidenceId,
+            expectedVersion: body.expectedVersion,
+            idempotencyKey: `reauth:${request.params.grantId}:${evidence.evidenceId}`,
+            correlationId: request.id,
+          }),
+      )
+      return supportGrantSchema.parse(grant)
+    },
+  )
+
+  app.post<{ Params: { grantId: string } }>(
+    '/v1/support-grants/:grantId/decision',
+    async (request) => {
+      const requestScope = supportScope(request)
+      const body = supportGrantDecisionRequestSchema.parse(request.body)
+      const { principal, actor } = supportActorFor(request)
+      if (actor.role !== 'support' || !principal.assurance.mfa)
+        throw new SupportAccessError('STRONG_MFA_SUPPORT_REQUIRED')
+      const grant = await supportRepository().transaction(
+        supportTransactionScope(requestScope),
+        (service) =>
+          service.decideGrant({
+            grantId: request.params.grantId,
+            actor,
+            decision: body.decision,
+            expectedVersion: body.expectedVersion,
+            mfaEvidenceId: `oidc:${principal.authenticatedAt}`,
+            idempotencyKey:
+              header(request.headers['idempotency-key']) ?? request.id,
+            correlationId: request.id,
+          }),
+      )
+      return supportGrantSchema.parse(grant)
+    },
+  )
+
+  app.post<{ Params: { grantId: string } }>(
+    '/v1/support-grants/:grantId/revoke',
+    async (request) => {
+      const requestScope = supportScope(request)
+      const body = supportGrantRevokeRequestSchema.parse(request.body)
+      const { actor } = supportActorFor(request)
+      const grant = await supportRepository().transaction(
+        supportTransactionScope(requestScope),
+        (service) =>
+          service.revokeGrant({
+            grantId: request.params.grantId,
+            actor,
+            expectedVersion: body.expectedVersion,
+            idempotencyKey:
+              header(request.headers['idempotency-key']) ?? request.id,
+            correlationId: request.id,
+          }),
+      )
+      return supportGrantSchema.parse(grant)
+    },
+  )
+
+  app.post('/v1/support-access/leases', async (request) => {
+    const requestScope = supportScope(request)
+    const body = jitLeaseIssueRequestSchema.parse(request.body)
+    if (
+      !body.grantId ||
+      body.action !== 'content.view' ||
+      body.objectId !== null
+    )
+      throw new SupportAccessError('SUPPORT_SCOPE_NOT_ALLOWED')
+    const { principal, actor } = supportActorFor(request)
+    if (actor.role !== 'support' || !principal.assurance.mfa)
+      throw new SupportAccessError('STRONG_MFA_SUPPORT_REQUIRED')
+    const issued = await supportRepository().transaction(
+      supportTransactionScope(requestScope),
+      (service) =>
+        service.issueLease({
+          grantId: body.grantId!,
+          actor,
+          sessionId: body.sessionId,
+          objectId: null,
+          action: 'content.view',
+          idempotencyKey:
+            header(request.headers['idempotency-key']) ?? request.id,
+          correlationId: request.id,
+        }),
+    )
+    return jitLeaseIssueResponseSchema.parse({
+      ...issued,
+      lease: { schemaVersion: 1, ...issued.lease },
+    })
+  })
+
+  app.post<{ Params: { leaseId: string } }>(
+    '/v1/support-access/leases/:leaseId/consume',
+    async (request, reply) => {
+      const requestScope = supportScope(request)
+      const body = jitLeaseConsumeRequestSchema.parse(request.body)
+      if (
+        body.action !== 'content.view' ||
+        !body.sessionId ||
+        body.objectId !== null
+      )
+        throw new SupportAccessError('SUPPORT_SCOPE_NOT_ALLOWED')
+      const { principal, actor } = supportActorFor(request)
+      if (actor.role !== 'support' || !principal.assurance.mfa)
+        throw new SupportAccessError('STRONG_MFA_SUPPORT_REQUIRED')
+      const repository = supportRepository()
+      const repositoryScope = supportTransactionScope(requestScope)
+      await repository.transaction(repositoryScope, (service) =>
+        service.consumeLease({
+          leaseId: request.params.leaseId,
+          token: body.token,
+          ...requestScope,
+          sessionId: body.sessionId,
+          objectId: null,
+          action: 'content.view',
+          principalId: actor.principalId,
+          correlationId: request.id,
+        }),
+      )
+      const replay = await options.repository.replay(
+        requestScope,
+        body.sessionId,
+        0,
+        500,
+      )
+      try {
+        const events = (
+          await Promise.all(
+            replay.events.map((stored) =>
+              materializeProductionEvents(requestScope, stored),
+            ),
+          )
+        ).flat()
+        return protectedContentResponseSchema.parse({
+          schemaVersion: 1,
+          action: 'content.view',
+          mediaType: 'application/json',
+          encoding: 'json',
+          content: events,
+        })
+      } catch (error) {
+        if (error instanceof Error && error.message === 'CONTENT_KEY_LOCKED')
+          return reply.code(428).send({ code: 'CONTENT_KEY_LOCKED' })
+        if (error instanceof Error && error.message === 'CONTENT_UNRECOVERABLE')
+          return reply.code(410).send({ code: 'CONTENT_UNRECOVERABLE' })
+        throw error
+      }
+    },
+  )
 
   app.get<{
     Params: { sessionId: string }
@@ -2124,14 +2628,14 @@ export async function buildProductionControlPlaneFromEnv(
     Number(env.TELEMETRY_MAX_RECORDS ?? 2_048),
   )
   // OIDC_SIGNING_KEY_FILE tanımlıysa self-hosted kullanıcı hesapları
-  // etkinleşir; content key lease'leri için iç listener da burada başlar.
+  // etkinleşir; decrypted content-key lease'leri ayrı broker'da tutulur.
   const selfHostedAuth = createSelfHostedAuthFromEnv(
     env,
     repository.pool,
     required('TOPOLOGY_DATABASE_URL'),
   )
-  if (selfHostedAuth) await selfHostedAuth.startInternalListener()
   const sharedFolders = new PostgresSharedFolderRepository(repository.pool)
+  const supportAccess = new PostgresSupportAccessRepository(repository.pool)
   const app = await buildProductionControlPlane({
     instanceId: required('PERSISTENT_INSTANCE_ID'),
     repository,
@@ -2139,6 +2643,11 @@ export async function buildProductionControlPlaneFromEnv(
     broker,
     runtimeControlReadinessUrl: required('RUNTIME_CONTROL_READINESS_URL'),
     kmsReadinessUrl: required('KMS_READINESS_URL'),
+    ...(env.CONTENT_KEY_BROKER_URL
+      ? {
+          contentKeyBrokerReadinessUrl: `${env.CONTENT_KEY_BROKER_URL.replace(/\/$/, '')}${CONTENT_KEY_BROKER_ROUTES.readiness}`,
+        }
+      : {}),
     requiredRegionId: required('PERSISTENT_REGION_ID'),
     billing,
     logger: env.PERSISTENT_LOGGER === '1',
@@ -2153,6 +2662,16 @@ export async function buildProductionControlPlaneFromEnv(
       : {}),
     ...(selfHostedAuth ? { selfHostedAuth: selfHostedAuth.service } : {}),
     sharedFolders,
+    supportAccess,
+    ...(env.SELF_HOSTED_ADMIN_SUBJECT
+      ? {
+          supportPrincipal: {
+            issuer: required('OIDC_ISSUER'),
+            subject: env.SELF_HOSTED_ADMIN_SUBJECT,
+            displayName: 'Self-hosted administrator',
+          },
+        }
+      : {}),
     ...(env.INTERNAL_RUNTIME_TOKEN_FILE
       ? {
           internalRuntimeToken: readFileSync(
@@ -2163,6 +2682,7 @@ export async function buildProductionControlPlaneFromEnv(
       : {}),
   })
   app.addHook('onClose', async () => sharedFolders.close())
+  app.addHook('onClose', async () => supportAccess.close())
   if (selfHostedAuth) app.addHook('onClose', async () => selfHostedAuth.close())
   const exporter = env.OTEL_EXPORTER_OTLP_ENDPOINT
     ? new OtlpHttpExporter(telemetry, env.OTEL_EXPORTER_OTLP_ENDPOINT)

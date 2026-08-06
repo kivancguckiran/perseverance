@@ -24,6 +24,7 @@ COPY infra/self-hosted/bootstrap infra/self-hosted/bootstrap
 RUN pnpm install --frozen-lockfile --ignore-scripts
 RUN pnpm exec esbuild services/control-plane/src/production-api-process.ts --bundle --platform=node --format=esm --external:pg-native --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/control-plane.mjs \
  && pnpm exec esbuild services/control-plane/src/production-worker-process.ts --bundle --platform=node --format=esm --external:pg-native --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/workspace-agent.mjs \
+ && pnpm exec esbuild services/content-key-broker/src/entrypoint.ts --bundle --platform=node --format=esm --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/content-key-broker.mjs \
  && pnpm exec esbuild infra/self-hosted/bootstrap/self-hosted-bootstrap.ts --bundle --platform=node --format=esm --external:pg-native --banner:js="import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" --outfile=/out/self-hosted-bootstrap.mjs \
  && VITE_BASE_PATH="${SELF_HOSTED_BASE_PATH}" VITE_CONTROL_PLANE_URL=https://public-origin.invalid pnpm --filter @perseverance/web build \
  && pnpm exec esbuild apps/web/dist/server/server.js --bundle --platform=node --format=esm --outfile=/out/web-server.mjs \
@@ -47,6 +48,7 @@ RUN apk add --no-cache \
       git=2.54.0-r0 \
       openssh-client-default=10.3_p1-r0 \
       poppler-utils=25.12.0-r1 \
+      python3=3.14.5-r0 \
       ripgrep=15.1.0-r0 \
       util-linux-misc=2.42.1-r0
 RUN addgroup -S workspace && adduser -S -G workspace -u 10001 workspace

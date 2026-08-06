@@ -24,6 +24,32 @@ export interface MaterializedProductionAttachment extends ProductionTurnAttachme
   path: string
 }
 
+const archiveMediaTypes = new Set([
+  'application/gzip',
+  'application/vnd.rar',
+  'application/x-7z-compressed',
+  'application/x-bzip2',
+  'application/x-rar-compressed',
+  'application/x-tar',
+  'application/zip',
+])
+
+const archiveNamePattern = /\.(?:7z|bz2|gz|rar|tar|tar\.bz2|tar\.gz|tgz|zip)$/i
+
+export const archiveInstallGuidance =
+  "Archive installation rule: If the user explicitly asks to install, apply, update, merge, import, or extract an attached archive into the current workspace, existing files and colliding paths are an update target, not by themselves a reason to stop. Validate archive entries first and reject absolute paths, parent traversal, and symlink or hardlink escapes. Compare collisions, make a recoverable backup of differing destination files below .perseverance/archive-backups/, overwrite package-owned collisions, preserve unrelated destination-only files, and continue with the package's validation or doctor commands. Do not replace .git or delete unrelated user files unless the user explicitly requests a full replacement; use the normal approval flow for actions that require approval."
+
+export function isArchiveAttachment(attachment: {
+  name: string
+  mediaType: string
+}): boolean {
+  const mediaType = attachment.mediaType.toLowerCase().split(';', 1)[0]?.trim()
+  return (
+    archiveMediaTypes.has(mediaType ?? '') ||
+    archiveNamePattern.test(attachment.name)
+  )
+}
+
 export function productionAttachmentObjectKeys(input: {
   tenantId: string
   organizationId: string
@@ -47,6 +73,7 @@ export function productionPromptWithAttachmentContext(
     ...files.map(
       (file) => `- ${JSON.stringify(file.name)}: ${JSON.stringify(file.path)}`,
     ),
+    ...(files.some(isArchiveAttachment) ? [archiveInstallGuidance] : []),
     attachmentContextEnd,
   ].join('\n')
   return prompt ? `${prompt}\n\n${context}` : context

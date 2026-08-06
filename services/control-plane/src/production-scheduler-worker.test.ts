@@ -5,28 +5,115 @@ import { describe, expect, it, vi } from 'vitest'
 import { PrepaidCreditError } from '@perseverance/billing-platform'
 import {
   settleTerminalRunBilling,
+  settlePoisonedRunBilling,
   deleteConversationWorkspaceRoot,
+  ensureCodexAccountProbeRoot,
   ensureConversationWorkspaceRoot,
   materializeProductionAttachments,
   productionWorkspaceSandboxArgs,
   productionThreadStartParams,
   productionTurnCompletion,
+  readCodexAccountLimitsSnapshot,
   normalizeGeneratedConversationTitle,
+  productionFailureTerminal,
   readWorkspaceEntry,
+  shouldAppendProductionTurnStarted,
   shouldPersistProductionActivityNotification,
+  startOrResumeProductionThread,
 } from './production-scheduler-worker'
+import { productionTurnRetryDelayMs } from './production-turn-retry'
 import {
   productionAttachmentObjectKeys,
   productionPromptWithAttachmentContext,
 } from './production-turn-input'
 
 describe('production scheduler Codex boundary', () => {
+  it('keeps scheduler retries inside one visible user turn', () => {
+    expect(shouldAppendProductionTurnStarted(1)).toBe(true)
+    expect(shouldAppendProductionTurnStarted(2)).toBe(false)
+    expect(shouldAppendProductionTurnStarted(4)).toBe(false)
+  })
+
+  it('emits a terminal lifecycle event only when failure becomes final', () => {
+    expect(
+      productionFailureTerminal({
+        upstreamStartIntent: false,
+        attempt: 4,
+        maxAttempts: 5,
+        errorCode: 'RUNTIME_FAILED',
+      }),
+    ).toBeNull()
+    expect(
+      productionFailureTerminal({
+        upstreamStartIntent: false,
+        attempt: 5,
+        maxAttempts: 5,
+        errorCode: 'RUNTIME_FAILED',
+      }),
+    ).toEqual({
+      outcome: 'failed',
+      errorCode: 'RUNTIME_FAILED',
+      suffix: 'failed',
+    })
+    expect(
+      productionFailureTerminal({
+        upstreamStartIntent: true,
+        attempt: 1,
+        maxAttempts: 5,
+        errorCode: 'RUNTIME_FAILED',
+      }),
+    ).toEqual({
+      outcome: 'outcome_unknown',
+      errorCode: 'UPSTREAM_OUTCOME_UNKNOWN',
+      suffix: 'outcome_unknown',
+    })
+  })
+
+  it('backs off five-attempt production turn recovery long enough for reconnects', () => {
+    expect([1, 2, 3, 4, 5].map(productionTurnRetryDelayMs)).toEqual([
+      750, 1_500, 3_000, 6_000, 6_000,
+    ])
+  })
+
   it('permits workspace writes without approval escalation', () => {
     expect(productionThreadStartParams('/workspace')).toEqual({
       cwd: '/workspace',
       approvalPolicy: 'never',
       sandbox: 'workspace-write',
     })
+  })
+
+  it('starts only the first thread and resumes the persisted thread afterwards', async () => {
+    const requests: Array<{ method: string; params: unknown }> = []
+    const client = {
+      request: async (method: string, params: unknown) => {
+        requests.push({ method, params })
+        if (method === 'thread/read')
+          return { thread: { id: 'thread-a', turns: [] } }
+        return { thread: { id: 'thread-a', turns: [] } }
+      },
+    } as never
+
+    await startOrResumeProductionThread(client, '/workspace', null)
+    expect(requests.map(({ method }) => method)).toEqual(['thread/start'])
+    requests.length = 0
+
+    await startOrResumeProductionThread(client, '/workspace', 'thread-a')
+    expect(requests).toEqual([
+      {
+        method: 'thread/read',
+        params: { threadId: 'thread-a', includeTurns: true },
+      },
+      {
+        method: 'thread/resume',
+        params: {
+          threadId: 'thread-a',
+          cwd: '/workspace',
+          approvalPolicy: 'never',
+          sandbox: 'workspace-write',
+        },
+      },
+    ])
   })
 
   it('maps folders to separate tenant-scoped homes', async () => {
@@ -56,6 +143,62 @@ describe('production scheduler Codex boundary', () => {
     await expect(
       ensureConversationWorkspaceRoot(root, scope, '../escape'),
     ).rejects.toThrow('INVALID_CONVERSATION_FOLDER_ID')
+  })
+
+  it('isolates account probes by tenant scope without using conversation data', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'perseverance-probes-'))
+    const scope = {
+      tenantId: 'tenant-a',
+      organizationId: 'organization-a',
+      workspaceId: 'workspace-a',
+    }
+    const first = await ensureCodexAccountProbeRoot(root, scope)
+    const repeated = await ensureCodexAccountProbeRoot(root, scope)
+    const otherTenant = await ensureCodexAccountProbeRoot(root, {
+      ...scope,
+      tenantId: 'tenant-b',
+    })
+
+    expect(first).toBe(repeated)
+    expect(first).not.toBe(otherTenant)
+    expect(first).toContain(join('.perseverance', 'account-probes'))
+  })
+
+  it('reads only the normalized account limit snapshot from app-server', async () => {
+    const request = vi.fn(async () => ({
+      rateLimits: {
+        limitId: 'codex',
+        limitName: null,
+        primary: {
+          usedPercent: 25,
+          windowDurationMins: 300,
+          resetsAt: 1_730_947_200,
+        },
+        secondary: null,
+        credits: null,
+        individualLimit: null,
+        planType: 'plus',
+        rateLimitReachedType: null,
+      },
+      rateLimitsByLimitId: null,
+      rateLimitResetCredits: null,
+    }))
+
+    const snapshot = await readCodexAccountLimitsSnapshot({ request } as never)
+
+    expect(request).toHaveBeenCalledWith('account/rateLimits/read', undefined)
+    expect(snapshot).toMatchObject({
+      status: 'available',
+      authMode: 'chatgpt',
+      rateLimits: {
+        limitId: 'codex',
+        primary: { usedPercent: 25 },
+        planType: 'plus',
+      },
+    })
+    expect(JSON.stringify(snapshot)).not.toMatch(
+      /email|token|credential|authorization/i,
+    )
   })
 
   it('deletes only a named conversation home and protects Default', async () => {
@@ -163,9 +306,15 @@ describe('production scheduler Codex boundary', () => {
         ),
       ),
     ).toEqual(bytes)
-    expect(
-      productionPromptWithAttachmentContext('Arşivi incele', materialized),
-    ).toContain('project.zip')
+    const prompt = productionPromptWithAttachmentContext(
+      'Arşivi kur',
+      materialized,
+    )
+    expect(prompt).toContain('project.zip')
+    expect(prompt).toContain(
+      'existing files and colliding paths are an update target',
+    )
+    expect(prompt).toContain('.perseverance/archive-backups/')
   })
 })
 
@@ -359,5 +508,38 @@ describe('production scheduler billing cleanup', () => {
     ).rejects.toBe(settlementError)
 
     expect(billing.completeOperation).toHaveBeenCalledWith(scope, 'run-bad')
+  })
+
+  it('releases admission only after a poisoned run is durably terminal', async () => {
+    const billing = {
+      settleOperation: vi.fn(async () => {
+        throw new PrepaidCreditError('RESERVATION_NOT_FOUND')
+      }),
+      completeOperation: vi.fn(async () => undefined),
+    }
+    const scope = {
+      tenantId: 'tenant-a',
+      organizationId: 'organization-a',
+      workspaceId: 'workspace-a',
+    }
+
+    await expect(
+      settlePoisonedRunBilling(
+        billing as never,
+        scope,
+        'run-not-terminal',
+        false,
+      ),
+    ).resolves.toBe(false)
+    expect(billing.completeOperation).not.toHaveBeenCalled()
+
+    await expect(
+      settlePoisonedRunBilling(billing as never, scope, 'run-poisoned', true),
+    ).resolves.toBe(true)
+    expect(billing.completeOperation).toHaveBeenCalledOnce()
+    expect(billing.completeOperation).toHaveBeenCalledWith(
+      scope,
+      'run-poisoned',
+    )
   })
 })

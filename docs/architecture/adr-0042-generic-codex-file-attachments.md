@@ -40,6 +40,17 @@ pinned Codex app-server as a `mention` with its original filename and canonical
 local path. Codex may inspect or extract an archive through its normal tools and
 sandbox; the control-plane does not extract it automatically.
 
+For archive attachments, the turn context also defines an explicit safe-update
+contract. When the user's request is to install, apply, update, merge, import,
+or extract the archive into the current workspace, a non-empty destination and
+path collisions do not stop the turn. Codex validates archive paths, rejects
+path and link escapes, compares collisions, backs up differing destination
+files below the private `.perseverance/archive-backups/` area, overwrites only
+package-owned collisions, preserves unrelated destination-only files, and then
+runs the package's validation commands. Replacing `.git` or deleting unrelated
+files still requires an explicit full-replacement request and the normal
+approval policy.
+
 ## Consequences
 
 - The composer accepts any local file that the browser can upload.
@@ -50,6 +61,8 @@ sandbox; the control-plane does not extract it automatically.
   host mount.
 - Archive extraction remains visible in the Codex turn and subject to the
   workspace sandbox and approval policy.
+- Explicit archive installation requests can update a populated conversation
+  workspace without treating ordinary package collisions as a blocker.
 - Upload storage requirements remain unchanged because files are not expanded.
 
 ## Verification and rollback

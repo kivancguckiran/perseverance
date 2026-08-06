@@ -7,3 +7,7 @@
 : "${PERSISTENT_DEPLOY_SSH_TARGET:=deploy-host}"
 : "${PERSISTENT_DEPLOY_REMOTE_ROOT:=/srv/perseverance}"
 : "${PERSISTENT_DEPLOY_STATE_HOME:=${PERSISTENT_DEPLOY_REMOTE_ROOT}/state}"
+# A deploy proceeds immediately when the most recent product/run activity is
+# already older than this window. Otherwise the remote worker waits by itself.
+: "${PERSISTENT_DEPLOY_IDLE_SECONDS:=3600}"
+: "${PERSISTENT_DEPLOY_POLL_SECONDS:=60}"

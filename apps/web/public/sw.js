@@ -4,7 +4,11 @@
 // korunur.
 const BASE = new URL('./', self.location).pathname
 const CACHE_PREFIX = 'persistent-workspace-shell-'
-const CACHE_VERSION = `${CACHE_PREFIX}self-hosted-v2`
+// Self-hosted web server replaces this public, non-secret release marker at
+// startup. Changing the worker bytes lets an already-open client discover a
+// deployment without requiring a manual reload first.
+const RELEASE_ID = '__PERSISTENT_RELEASE_ID__'
+const CACHE_VERSION = `${CACHE_PREFIX}self-hosted-v2-${RELEASE_ID}`
 const SHELL = [
   'manifest.webmanifest',
   'perseverance-pwa-v2-192.png',

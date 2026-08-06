@@ -299,6 +299,45 @@ prepare_workspace_volume() {
     'mkdir -p /mnt/workspace-data && chown -R 10001:10001 /mnt/workspace-data'
 }
 
+# Content-key broker process memory is the only home of decrypted user keys.
+# Preserve it when the exact broker bundle is unchanged, even though the shared
+# product image tag changes. A real broker code/dependency update intentionally
+# recreates it so security fixes are never pinned behind an old process.
+content_key_broker_bundle_hash() {
+  local image="$1"
+  docker run --rm --entrypoint sha256sum "${image}" \
+    /app/content-key-broker.mjs | awk '{print $1}'
+}
+
+installed_content_key_broker_bundle_hash() {
+  local container_id image_id
+  container_id="$(compose ps -q --all content-key-broker)"
+  [ -n "${container_id}" ] || return 1
+  image_id="$(docker inspect --format '{{.Image}}' "${container_id}")"
+  [ -n "${image_id}" ] || return 1
+  content_key_broker_bundle_hash "${image_id}"
+}
+
+start_application_services() {
+  local desired_hash installed_hash=""
+  desired_hash="$(content_key_broker_bundle_hash "$(read_env SELF_HOSTED_PRODUCT_IMAGE)")" ||
+    fail "content-key broker bundle hash'i okunamadı"
+  installed_hash="$(installed_content_key_broker_bundle_hash 2>/dev/null || true)"
+  if [ -z "${installed_hash}" ] || [ "${installed_hash}" = "${desired_hash}" ]; then
+    compose up -d --wait --wait-timeout 600 --no-recreate content-key-broker
+  else
+    log "content-key broker bundle değişti; broker yeniden başlatılıyor (aktif içerik lease'leri kilitlenecek)"
+    compose up -d --wait --wait-timeout 600 --no-deps --force-recreate \
+      content-key-broker
+  fi
+  compose up -d --wait --wait-timeout 600 --no-deps \
+    workspace-agent control-plane web proxy
+}
+
+recreate_proxy() {
+  compose up -d --wait --wait-timeout 600 --no-deps --force-recreate proxy
+}
+
 generate_identity_keys() {
   local node_image="$1"
   if [ -f "$(secrets_dir)/oidc-private.pem" ]; then return 0; fi
@@ -368,6 +407,7 @@ render_env_file() {
     echo "SELF_HOSTED_OIDC_AUDIENCE=${SELF_HOSTED_OIDC_AUDIENCE:-persistent-codex-self-hosted}"
     echo "SELF_HOSTED_ADMIN_SUBJECT=${SELF_HOSTED_ADMIN_SUBJECT:-self-hosted-admin}"
     echo "SELF_HOSTED_ALLOWED_USERS=${SELF_HOSTED_ALLOWED_USERS:-}"
+    echo "SELF_HOSTED_CONTENT_KEY_LEASE_TTL_SECONDS=${SELF_HOSTED_CONTENT_KEY_LEASE_TTL_SECONDS:-43200}"
     echo "SELF_HOSTED_ORGANIZATION_NAME=${SELF_HOSTED_ORGANIZATION_NAME:-Self-hosted organization}"
     echo "SELF_HOSTED_ORGANIZATION_ID=org_$(openssl rand -hex 8)"
     echo "SELF_HOSTED_WORKSPACE_ID=wsp_$(openssl rand -hex 8)"
@@ -480,7 +520,7 @@ cmd_install() {
   compose run --rm bootstrap
 
   log "uygulama servisleri başlatılıyor"
-  compose up -d --wait --wait-timeout 600 workspace-agent control-plane web proxy
+  start_application_services
 
   local origin
   origin="$(read_env SELF_HOSTED_PUBLIC_ORIGIN)"
@@ -590,8 +630,8 @@ cmd_reconfigure() {
       update_env_value SELF_HOSTED_PRODUCT_IMAGE "${current_image}"
       render_caddyfile "${current_domain}" "$(read_env SELF_HOSTED_TLS_MODE)" \
         "${SELF_HOSTED_ACME_EMAIL:-}" "${current_base}"
-      compose up -d --wait --wait-timeout 600
-      compose up -d --wait --wait-timeout 600 --force-recreate proxy
+      start_application_services
+      recreate_proxy
       set -e
     fi
     exit "${status}"
@@ -608,11 +648,11 @@ cmd_reconfigure() {
     "${SELF_HOSTED_ACME_EMAIL:-}" "${target_base}"
 
   log "servisler yeni public origin/base ile yeniden oluşturuluyor"
-  compose up -d --wait --wait-timeout 600
+  start_application_services
   # Caddyfile bind mount içeriği Compose service hash'ini değiştirmez. Proxy
   # container'ı zorla yeniden oluşturulmazsa eski domain/site config'i bellekte
   # tutar ve dış nginx yeni SNI için 502 döner.
-  compose up -d --wait --wait-timeout 600 --force-recreate proxy
+  recreate_proxy
   wait_public_ready "${target_origin}" 60 ||
     fail "reconfigure sonrası public readiness doğrulanamadı: ${target_origin}${target_base}/readyz"
   write_release_state "${current_commit}" "${target_image}"
@@ -887,7 +927,7 @@ cmd_restore() {
   [ -f "${workdir}/database.dump" ] || fail "arşivde database.dump yok"
 
   log "uygulama servisleri durduruluyor"
-  compose stop proxy web control-plane workspace-agent
+  compose stop proxy web control-plane workspace-agent content-key-broker
 
   log "postgres geri yükleniyor (pg_restore --clean)"
   compose exec -T postgres sh -c \
@@ -907,7 +947,7 @@ cmd_restore() {
   compose run --rm migrate
 
   log "servisler başlatılıyor"
-  compose up -d --wait --wait-timeout 600 workspace-agent control-plane web proxy
+  start_application_services
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "restore sonrası readiness doğrulanamadı"
   log "restore tamam"
@@ -983,11 +1023,14 @@ cmd_upgrade() {
   log "migration'lar uygulanıyor"
   compose run --rm migrate
 
+  log "self-hosted üyelikleri ve çalışma alanları uzlaştırılıyor"
+  compose run --rm bootstrap
+
   log "servisler yeni sürüme geçiriliyor"
-  compose up -d --wait --wait-timeout 600
+  start_application_services
   # Template veya render edilmiş Caddyfile değişmiş olabilir; bind mount içerik
   # değişikliği tek başına Compose recreate tetiklemez.
-  compose up -d --wait --wait-timeout 600 --force-recreate proxy
+  recreate_proxy
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "upgrade sonrası readiness doğrulanamadı  'self-hosted.sh rollback' kullanılabilir"
   write_release_state "${new_commit}" "${product_image}"
@@ -1027,8 +1070,8 @@ cmd_rollback() {
     render_caddyfile "${previous_domain}" "$(read_env SELF_HOSTED_TLS_MODE)" \
       "${SELF_HOSTED_ACME_EMAIL:-}" "${previous_base}"
   fi
-  compose up -d --wait --wait-timeout 600
-  compose up -d --wait --wait-timeout 600 --force-recreate proxy
+  start_application_services
+  recreate_proxy
   wait_public_ready "$(read_env SELF_HOSTED_PUBLIC_ORIGIN)" 60 ||
     fail "rollback sonrası readiness doğrulanamadı"
   mv "$(previous_release_file)" "$(state_dir)/rolled-back-from.env"

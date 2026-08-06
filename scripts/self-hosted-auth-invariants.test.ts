@@ -25,6 +25,7 @@ import { provisionWorkspace } from '../services/control-plane/src/self-hosted-pr
 import {
   ContentKeyLeaseManager,
   generateContentKey,
+  hashUserPassword,
 } from '../packages/workspace-security/src/index'
 import type pg from 'pg'
 
@@ -63,6 +64,19 @@ describe('self-hosted-auth deneme sınırlayıcı', () => {
 })
 
 describe('self-hosted-auth kayıt provisioning RLS kapsamı', () => {
+  it('database membership rolleri support sınırını kabul eder', () => {
+    const migration = readFileSync(
+      new URL(
+        '../infra/postgres/migrations/0045_support_membership_roles.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    )
+    expect(migration).toContain("'support'")
+    expect(migration).toContain("'security_approver'")
+    expect(migration).toContain('organization_memberships_role_check')
+  })
+
   it('workspace insertinden önce transaction-local tenant kapsamını bağlar', async () => {
     const calls: Array<{ text: string; values: unknown[] }> = []
     const client = {
@@ -92,6 +106,123 @@ describe('self-hosted-auth kayıt provisioning RLS kapsamı', () => {
         text.includes('INSERT INTO persistent_codex.workspaces'),
       ),
     ).toBeGreaterThan(0)
+  })
+
+  it('support yöneticisini normal owner yerine dar support rolüyle provision eder', async () => {
+    const calls: Array<{ text: string; values: unknown[] }> = []
+    const client = {
+      query: async (text: string, values: unknown[] = []) => {
+        calls.push({ text, values })
+        return { rowCount: 1, rows: [] }
+      },
+    } as unknown as pg.PoolClient
+
+    await provisionWorkspace(client, {
+      issuer: 'https://identity.test',
+      subject: 'user:alice',
+      supportSubject: 'self-hosted-admin',
+      organizationId: 'org_u_test',
+      organizationName: 'Test organization',
+      workspaceId: 'wsp_u_test',
+      workspaceName: 'Test workspace',
+    })
+
+    const supportMembership = calls.find(
+      ({ text, values }) =>
+        text.includes("'support','active'") &&
+        values.includes('self-hosted-admin'),
+    )
+    expect(supportMembership?.values).toEqual([
+      'org_u_test',
+      'https://identity.test',
+      'self-hosted-admin',
+    ])
+    expect(
+      calls.some(
+        ({ text, values }) =>
+          text.includes('workspace_membership_overrides') &&
+          values.includes('self-hosted-admin'),
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('self-hosted support step-up', () => {
+  it('support grant session doğrulaması generic ve production tablolarını kabul eder', () => {
+    const migration = readFileSync(
+      new URL(
+        '../infra/postgres/migrations/0046_polymorphic_support_session_reference.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    )
+    expect(migration).toContain('FROM persistent_codex.sessions')
+    expect(migration).toContain('FROM persistent_codex.ha_sessions')
+    expect(migration).toContain('session_row.tenant_id = NEW.tenant_id')
+    expect(migration).toContain("ERRCODE = '23503'")
+    expect(migration).toContain('support_grants_session_reference')
+  })
+
+  it('stores only opaque evidence and audit metadata, never the password', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+    const password = 'correct horse battery staple'
+    const passwordHash = await hashUserPassword(password)
+    const queries: Array<{ text: string; values: unknown[] }> = []
+    const client = {
+      query: async (text: string, values: unknown[] = []) => {
+        queries.push({ text, values })
+        if (text.includes('FROM persistent_codex.users WHERE username=$1'))
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                user_id: 'usr_1',
+                username: 'alice',
+                password_hash: passwordHash,
+                status: 'approved',
+                organization_id: 'org_u_1',
+                workspace_id: 'wsp_u_1',
+                recovery_key_hash: 'unused',
+              },
+            ],
+          }
+        return { rowCount: 1, rows: [] }
+      },
+      release: () => undefined,
+    } as unknown as pg.PoolClient
+    const service = new SelfHostedAuthService({
+      pool: { connect: async () => client } as unknown as pg.Pool,
+      databaseUrl: 'postgres://unused',
+      allowedUsers: ['alice'],
+      issuer: 'http://identity.test',
+      audience: 'persistent-codex-self-hosted',
+      signingKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      signingKeyId: 'self-hosted',
+      leases: new ContentKeyLeaseManager({ ttlMs: 1_000 }),
+      now: () => new Date('2026-08-05T10:00:00.000Z'),
+    })
+
+    const evidence = await service.verifySupportStepUp({
+      password,
+      expectedSubject: 'user:alice',
+      expectedScope: {
+        tenantId: 'org_u_1',
+        organizationId: 'org_u_1',
+        workspaceId: 'wsp_u_1',
+      },
+    })
+
+    expect(evidence.evidenceId).toMatch(/^reauth_[a-f0-9]{36}$/)
+    expect(evidence.authenticatedAt).toBe('2026-08-05T10:00:00.000Z')
+    expect(JSON.stringify(queries)).not.toContain(password)
+    expect(queries.some(({ values }) => values.includes(passwordHash))).toBe(
+      false,
+    )
+    expect(
+      queries.some(({ values }) =>
+        values.includes('user.support_access_verified'),
+      ),
+    ).toBe(true)
   })
 })
 
@@ -191,6 +322,63 @@ describe('self-hosted-auth persistent refresh session', () => {
     expect(insert?.values[3]).toBeNull()
   })
 
+  it('does not consume a refresh token while the lease broker is unavailable', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
+    const queries: string[] = []
+    const client = {
+      query: async (text: string) => {
+        queries.push(text)
+        if (text.includes('SELECT t.user_id'))
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                user_id: 'usr_1',
+                revoked_at: null,
+                username: 'alice',
+                status: 'approved',
+                organization_id: 'org_u_1',
+                workspace_id: 'wsp_u_1',
+                password_hash: 'unused',
+                recovery_key_hash: 'unused',
+              },
+            ],
+          }
+        return { rowCount: 1, rows: [] }
+      },
+      release: () => undefined,
+    } as unknown as pg.PoolClient
+    const service = new SelfHostedAuthService({
+      pool: { connect: async () => client } as unknown as pg.Pool,
+      databaseUrl: 'postgres://unused',
+      allowedUsers: ['alice'],
+      issuer: 'http://identity.test',
+      audience: 'persistent-codex-self-hosted',
+      signingKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      signingKeyId: 'self-hosted',
+      leases: {
+        issue: () => {
+          throw new Error('unused')
+        },
+        acquire: () => null,
+        hasActiveLease: async () => {
+          throw new Error('CONTENT_KEY_BROKER_UNAVAILABLE')
+        },
+        revoke: () => false,
+      },
+    })
+
+    await expect(
+      service.refresh({ refreshToken: 'rt1_existing_refresh_token' }),
+    ).rejects.toThrow('CONTENT_KEY_BROKER_UNAVAILABLE')
+    expect(
+      queries.some((query) =>
+        query.includes('UPDATE persistent_codex.user_refresh_tokens'),
+      ),
+    ).toBe(false)
+    expect(queries).toContain('ROLLBACK')
+  })
+
   it('revokes expired rows before making only valid sessions permanent', () => {
     const migration = readFileSync(
       new URL(
@@ -209,6 +397,38 @@ describe('self-hosted-auth persistent refresh session', () => {
     expect(dropNotNull).toBeGreaterThan(revokeExpired)
     expect(clearDeadline).toBeGreaterThan(dropNotNull)
     expect(migration.slice(clearDeadline)).toContain('WHERE revoked_at IS NULL')
+  })
+})
+
+describe('deployment-stable content-key broker', () => {
+  it('keeps decrypted leases out of the recreated control-plane process', () => {
+    const composition = readFileSync(
+      new URL(
+        '../services/control-plane/src/self-hosted-auth-composition.ts',
+        import.meta.url,
+      ),
+      'utf8',
+    )
+    const compose = readFileSync(
+      new URL('../infra/self-hosted/compose.yml', import.meta.url),
+      'utf8',
+    )
+    const lifecycle = readFileSync(
+      new URL('../infra/self-hosted/self-hosted.sh', import.meta.url),
+      'utf8',
+    )
+
+    expect(composition).toContain('HttpContentKeyLeaseStore')
+    expect(composition).not.toContain('new ContentKeyLeaseManager')
+    expect(compose).toContain('content-key-broker:')
+    expect(compose).toContain('read_only: true')
+    expect(compose).toContain('CONTENT_KEY_BROKER_URL:')
+    expect(lifecycle).toContain(
+      'compose up -d --wait --wait-timeout 600 --no-recreate content-key-broker',
+    )
+    expect(lifecycle).toContain(
+      'compose up -d --wait --wait-timeout 600 --no-deps',
+    )
   })
 })
 

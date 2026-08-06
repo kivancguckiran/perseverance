@@ -171,6 +171,20 @@ describe('production session API contract', () => {
     })
   })
 
+  it('preserves terminal production failure codes for the client', () => {
+    expect(
+      productionTimelineEvent(
+        storedEvent({
+          eventType: 'turn.completed',
+          payload: { outcome: 'failed', errorCode: 'RUNTIME_FAILED' },
+        }),
+      ),
+    ).toMatchObject({
+      type: 'turn.completed',
+      payload: { status: 'failed', errorCode: 'RUNTIME_FAILED' },
+    })
+  })
+
   it('normalizes protected Codex activity through the shared adapter', () => {
     const event = productionCodexNotificationEvent(
       storedEvent({ eventType: 'codex.notification', sequence: 9 }),

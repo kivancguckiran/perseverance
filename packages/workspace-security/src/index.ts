@@ -708,6 +708,7 @@ export interface EncryptionContextV1 extends WorkspaceSecurityScope {
     | 'attachment'
     | 'backup'
     | 'corpus_snapshot'
+    | 'codex_rollout'
     | 'push_subscription'
     | 'provider_credential'
   recordId: string

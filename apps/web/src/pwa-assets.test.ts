@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
-import { serviceWorkerUrl } from './pwa-runtime'
+import {
+  pwaUpdateCheckIntervalMs,
+  serviceWorkerUrl,
+  shouldCheckForPwaUpdate,
+} from './pwa-runtime'
 
 const publicDirectory = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -145,6 +149,20 @@ describe('production PWA assets and cache boundary', () => {
     expect(harness.skipWaiting).not.toHaveBeenCalled()
     harness.listeners.get('message')?.({ data: { type: 'SKIP_WAITING' } })
     expect(harness.skipWaiting).toHaveBeenCalledOnce()
+  })
+
+  it('checks for a waiting release while the app is online and visible', () => {
+    expect(pwaUpdateCheckIntervalMs).toBe(60_000)
+    expect(
+      shouldCheckForPwaUpdate({ online: true, visibilityState: 'visible' }),
+    ).toBe(true)
+    expect(
+      shouldCheckForPwaUpdate({ online: false, visibilityState: 'visible' }),
+    ).toBe(false)
+    expect(
+      shouldCheckForPwaUpdate({ online: true, visibilityState: 'hidden' }),
+    ).toBe(false)
+    expect(serviceWorkerSource).toContain('__PERSISTENT_RELEASE_ID__')
   })
 
   it('accepts only opaque content-free push payloads', async () => {

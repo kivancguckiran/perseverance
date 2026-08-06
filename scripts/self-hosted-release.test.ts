@@ -67,6 +67,26 @@ describe('self-hosted release dağıtım dosyaları', () => {
     expect(broker?.body).toContain('start_period: 30s')
   })
 
+  it('content-key broker internal, read-only ve deployment-stable kalır', () => {
+    const services = extractComposeServices(
+      read('infra/self-hosted/compose.yml'),
+    )
+    const keyBroker = services.find(
+      (service) => service.name === 'content-key-broker',
+    )
+    expect(keyBroker?.body).toContain('read_only: true')
+    expect(keyBroker?.body).toContain('cap_drop:')
+    expect(keyBroker?.body).toContain('no-new-privileges:true')
+    expect(keyBroker?.body).toContain('- content-key-broker')
+    expect(keyBroker?.body).not.toMatch(/^\s+ports:/m)
+    const lifecycle = read('infra/self-hosted/self-hosted.sh')
+    expect(lifecycle).toContain('--no-recreate content-key-broker')
+    expect(lifecycle).toContain('--no-deps')
+    expect(lifecycle).toContain('content_key_broker_bundle_hash')
+    expect(lifecycle).toContain('compose ps -q --all content-key-broker')
+    expect(lifecycle).toContain('content-key-broker.mjs | awk')
+  })
+
   it('yalnız workspace-agent nested sandbox için seccomp filtresini gevşetir', () => {
     const services = extractComposeServices(
       read('infra/self-hosted/compose.yml'),
@@ -216,6 +236,7 @@ describe('self-hosted release dağıtım dosyaları', () => {
       'bash=5.3.9-r1',
       'git=2.54.0-r0',
       'openssh-client-default=10.3_p1-r0',
+      'python3=3.14.5-r0',
       'ripgrep=15.1.0-r0',
     ])
       expect(dockerfile).toContain(tool)

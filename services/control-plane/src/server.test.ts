@@ -238,6 +238,47 @@ describe('scoped usage and cost API', () => {
   })
 })
 
+describe('Codex account rate-limit API', () => {
+  it('reads the scoped app-server account without exposing account identity', async () => {
+    const client = new FakeRuntimeClient()
+    const instance = await buildControlPlane({
+      eventStore: new SqliteEventStore(':memory:'),
+      runtimeClientFactory: () => client,
+    })
+    try {
+      const response = await instance.inject({
+        method: 'GET',
+        url: '/v1/workspaces/wsp_test/codex-rate-limits',
+        headers,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({
+        status: 'available',
+        authMode: 'chatgpt',
+        rateLimits: {
+          limitId: 'codex',
+          primary: { usedPercent: 25 },
+          planType: 'plus',
+        },
+      })
+      expect(response.body).not.toMatch(/email|token|credential|authorization/i)
+      expect(client.requests).toEqual([
+        'account/read',
+        'account/rateLimits/read',
+      ])
+
+      const foreign = await instance.inject({
+        method: 'GET',
+        url: '/v1/workspaces/wsp_other/codex-rate-limits',
+        headers,
+      })
+      expect(foreign.statusCode).toBe(400)
+    } finally {
+      await instance.close()
+    }
+  })
+})
+
 describe('commercial admission and billing API', () => {
   it('audits soft warnings, denies hard quota before provider work, and exposes no credentials', async () => {
     const store = new SqliteEventStore(':memory:')
@@ -1861,6 +1902,26 @@ class FakeRuntimeClient implements WorkspaceRuntimeClient {
       return {
         account: { type: 'chatgpt' },
         requiresOpenaiAuth: true,
+      } as TResult
+    }
+    if (method === 'account/rateLimits/read') {
+      return {
+        rateLimits: {
+          limitId: 'codex',
+          limitName: null,
+          primary: {
+            usedPercent: 25,
+            windowDurationMins: 300,
+            resetsAt: 1_730_947_200,
+          },
+          secondary: null,
+          credits: null,
+          individualLimit: null,
+          planType: 'plus',
+          rateLimitReachedType: null,
+        },
+        rateLimitsByLimitId: null,
+        rateLimitResetCredits: null,
       } as TResult
     }
     if (method === 'model/list') {
@@ -3776,6 +3837,10 @@ describe('session, turn and live event flow', () => {
         },
       ],
     })
+    expect(
+      (client.turnStartParams.at(-1) as { input: Array<{ text?: string }> })
+        .input[0]?.text,
+    ).toContain('existing files and colliding paths are an update target')
   })
 
   it('accepts more than five attachments in one turn', async () => {

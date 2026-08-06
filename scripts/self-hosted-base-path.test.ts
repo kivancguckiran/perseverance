@@ -182,6 +182,7 @@ describe('dağıtım dosyaları base farkındalığı', () => {
     const compose = read('infra/self-hosted/compose.yml')
     expect(compose).toContain('BASE_PATH: ${SELF_HOSTED_BASE_PATH:-}')
     expect(compose).toContain('PWA_ID: ${SELF_HOSTED_PWA_ID:-}')
+    expect(compose).toContain('SOURCE_COMMIT: ${SELF_HOSTED_SOURCE_COMMIT}')
   })
 
   it("web SSR sunucusu base doğrular ve placeholder'ı origin+base ile ikame eder", () => {
@@ -189,6 +190,12 @@ describe('dağıtım dosyaları base farkındalığı', () => {
     expect(server).toContain("const basePath = process.env.BASE_PATH ?? ''")
     expect(server).toContain('`${publicOrigin}${basePath}`')
     expect(server).toContain('BASE_PATH geçersiz')
+    expect(server).toContain(
+      'serviceWorker.replaceAll(releaseMarker, sourceCommit)',
+    )
+    expect(server).toContain(
+      "'cache-control': 'no-cache, no-store, must-revalidate'",
+    )
     // Kök health endpoint'leri korunur.
     expect(server).toContain(
       "request.url === '/healthz' || request.url === '/readyz'",
@@ -221,11 +228,10 @@ describe('dağıtım dosyaları base farkındalığı', () => {
     expect(script).toContain(
       'update_env_value SELF_HOSTED_PWA_ID "${target_pwa_id}"',
     )
-    expect(
-      script.match(
-        /compose up -d --wait --wait-timeout 600 --force-recreate proxy/g,
-      ),
-    ).toHaveLength(4)
+    expect(script).toContain(
+      'compose up -d --wait --wait-timeout 600 --no-deps --force-recreate proxy',
+    )
+    expect(script.match(/recreate_proxy$/gm)).toHaveLength(4)
     const lib = read('infra/self-hosted/lib.sh')
     expect(lib).toContain('write_current_release_state()')
     expect(lib).toContain("printf 'SELF_HOSTED_BASE_PATH=%s\\n'")

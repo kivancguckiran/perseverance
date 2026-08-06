@@ -75,14 +75,17 @@ it could not run. State skipped verification explicitly.
   not local runtime configuration; preserve them unless their owning document
   is intentionally changed.
 
-## Remote deployment
+## Deployment
 
-- Use `pnpm deploy:remote -- <pushed-ref>` and follow
-  `docs/operations/remote-deploy.md`.
-- The deployment target is reached over the operator-configured SSH transport.
-  The wrapper owns clean detached release creation, mandatory backup
-  verification, the canonical `self-hosted.sh upgrade`, container health
-  checks, and public `<base-path>/readyz` validation.
-- Do not deploy from a mutable or dirty remote checkout, bypass the encrypted
+- From an operator machine, run `pnpm deploy:remote -- <pushed-ref>` and follow
+  `docs/operations/remote-deploy.md`. The target is reached over the configured
+  SSH transport.
+- On the installation host, run `pnpm deploy:self-hosted -- <pushed-ref>` and
+  follow `docs/operations/self-hosted-deploy.md`; this mode has no SSH hop.
+- The same-host wrapper owns clean detached release creation, mandatory backup
+  verification, the canonical `self-hosted.sh upgrade`, container health checks,
+  and public `<base-path>/readyz` validation. The remote wrapper submits the same
+  release lifecycle over the configured transport.
+- Do not deploy from a mutable or dirty checkout, bypass the encrypted
   backup, copy secrets into a release, or replace the canonical self-hosted
   lifecycle with ad hoc `docker compose` commands.

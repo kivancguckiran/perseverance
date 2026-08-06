@@ -9,6 +9,8 @@ workspace data-plane boundary.
   scheduling, and browser realtime delivery.
 - Workspace Agent supervises the real, pinned `codex app-server` process and adapts
   its versioned JSONL protocol. It is not a model agent.
+- The self-hosted content-key broker owns active decrypted-key leases in memory and
+  survives routine application service replacement; it is not durable key storage.
 - Raw upstream envelopes are stored before conversion to versioned normalized events.
 - Completed items and final snapshots are authoritative and reconcile transient deltas.
 - Unknown protocol values are retained as `codex.unknown` rather than rejected.
@@ -26,6 +28,8 @@ workspace data-plane boundary.
   fixtures, or snapshots.
 - Conversation data is encrypted at rest with passphrase-derived user key material;
   workspace files remain outside that encryption boundary.
+- Decrypted content keys never enter durable storage. The internal-only broker loses
+  them on host/broker restart, restore, expiry, or explicit revocation.
 
 ## Event and output behavior
 
@@ -40,6 +44,7 @@ provided by the upstream protocol.
 ```text
 apps/web/                    responsive PWA and timeline
 services/control-plane/      tenant-scoped API and orchestration
+services/content-key-broker/ memory-only self-hosted decrypted-key leases
 agents/workspace-agent/      app-server supervision and workspace adapter
 packages/*                   shared contracts, events, persistence, and security
 infra/self-hosted/           supported deployment profile

@@ -81,6 +81,29 @@ try {
      VALUES ($1,$1,$2,'Self-hosted workspace') ON CONFLICT DO NOTHING`,
     [organizationId, workspaceId],
   )
+  // Upgrade backfill: the configured administrator receives only the special
+  // support role in user-owned organizations. Production authorization keeps
+  // this role off every ordinary content route.
+  await pool.query(
+    `INSERT INTO persistent_codex.organization_memberships
+       (organization_id,issuer,subject,role,status)
+     SELECT DISTINCT w.organization_id,$1,$2,'support','active'
+     FROM persistent_codex.workspaces w
+     WHERE w.organization_id <> $3
+     ON CONFLICT (organization_id,issuer,subject)
+     DO UPDATE SET role='support', status='active'`,
+    [issuer, adminSubject, organizationId],
+  )
+  await pool.query(
+    `INSERT INTO persistent_codex.workspace_membership_overrides
+       (organization_id,workspace_id,issuer,subject,access)
+     SELECT w.organization_id,w.workspace_id,$1,$2,'allow'
+     FROM persistent_codex.workspaces w
+     WHERE w.organization_id <> $3
+     ON CONFLICT (organization_id,workspace_id,issuer,subject)
+     DO UPDATE SET access='allow', updated_at=now()`,
+    [issuer, adminSubject, organizationId],
+  )
   await pool.query(
     `INSERT INTO persistent_codex.regions(region_id,state,control_plane_role)
      VALUES ($1,'ready','active') ON CONFLICT DO NOTHING`,
@@ -138,6 +161,7 @@ process.stdout.write(
     organizationId,
     workspaceId,
     adminSubject,
+    supportMembershipsBackfilled: true,
     regionId,
     nodeId,
     billingPlan: 'self-hosted@32',
